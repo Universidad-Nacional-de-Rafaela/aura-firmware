@@ -1,5 +1,14 @@
 # aura-firmware
 
+> **Congelado desde el 2026-09-25.** Los primeros dispositivos de AURA no usan esta mesh: van por
+> **LoRaWAN**, con ChirpStack (ver
+> [`IC-lorawan-test`](https://github.com/Universidad-Nacional-de-Rafaela/IC-lorawan-test)). El
+> firmware se conserva como referencia y como material de estudio de ESP-NOW. Implementa la
+> versión 1.x del contrato MQTT de AURA (`enviado_a_mesh`, comandos de hasta 180 B), que la
+> plataforma ya no acepta: conectarlo tal cual a AURA no funciona.
+>
+> `main` está protegida: los cambios entran solo por pull request.
+
 Firmware de la malla de nodos ESP32 del proyecto **AURA** (Administración Unificada
 de Recursos y Accesos), Universidad Nacional de Rafaela.
 
