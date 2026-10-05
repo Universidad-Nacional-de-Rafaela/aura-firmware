@@ -1,4 +1,4 @@
-#include "../comun/protocolo_aura.h"
+#include "../protocolo_aura.h"
 #include "aserciones.h"
 
 int main() {

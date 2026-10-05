@@ -15,8 +15,8 @@
 #include <WiFi.h>
 #include <esp_now.h>
 #include <esp_wifi.h>
-#include "../comun/protocolo_aura.h"
-#include "../comun/buffer_circular.h"
+#include "../../comun/protocolo_aura.h"
+#include "../../comun/buffer_circular.h"
 
 // ===== CONFIGURACION =====
 // Cambiar por las MAC reales antes de flashear.

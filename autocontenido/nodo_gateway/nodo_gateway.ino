@@ -1,3 +1,4 @@
+// GENERADO por herramientas/generar_autocontenidos.sh: no editar. Fuente: infraestructura/nodo_gateway/
 /*
  * AURA - nodo gateway del piso (XIAO ESP32S3)
  *
@@ -19,9 +20,9 @@
 #include <esp_wifi.h>
 #include <HTTPClient.h>
 #include <ArduinoMqttClient.h>
-#include "../comun/protocolo_aura.h"
-#include "../comun/buffer_circular.h"
-#include "../comun/ingest_id.h"
+#include "protocolo_aura.h"
+#include "buffer_circular.h"
+#include "ingest_id.h"
 
 // ===== CONFIGURACION =====
 #define MODO_SIN_BACKEND 1

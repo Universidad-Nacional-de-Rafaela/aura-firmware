@@ -1,4 +1,4 @@
-#include "../comun/buffer_circular.h"
+#include "../buffer_circular.h"
 #include "aserciones.h"
 
 static TramaAura hacer(uint16_t seq) {

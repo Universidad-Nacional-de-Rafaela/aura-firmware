@@ -1,3 +1,4 @@
+// GENERADO por herramientas/generar_autocontenidos.sh: no editar. Fuente: dispositivos/sensor_ejemplo/
 /*
  * AURA - nodo sensor (XIAO ESP32S3)
  *
@@ -20,8 +21,8 @@
 #include <WiFi.h>
 #include <esp_now.h>
 #include <esp_wifi.h>
-#include "../comun/protocolo_aura.h"
-#include "../comun/buffer_circular.h"
+#include "protocolo_aura.h"
+#include "buffer_circular.h"
 
 // ===== CONFIGURACION =====
 // MAC del nodo de sala.

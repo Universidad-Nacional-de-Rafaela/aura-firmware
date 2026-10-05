@@ -8,13 +8,13 @@ test: $(TESTS)
 	  echo "== $$t =="; ./$$t || exit 1; \
 	done
 
-test_protocolo: test_protocolo.cpp ../comun/protocolo_aura.h
+test_protocolo: test_protocolo.cpp ../protocolo_aura.h
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
-test_buffer: test_buffer.cpp ../comun/buffer_circular.h ../comun/protocolo_aura.h
+test_buffer: test_buffer.cpp ../buffer_circular.h ../protocolo_aura.h
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
-test_ingest_id: test_ingest_id.cpp ../comun/ingest_id.h
+test_ingest_id: test_ingest_id.cpp ../ingest_id.h
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
 clean:
