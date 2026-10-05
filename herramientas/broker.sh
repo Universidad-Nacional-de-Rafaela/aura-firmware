@@ -11,11 +11,19 @@ case "$1" in
   ver)        # todo lo que pasa por el broker, en vivo
     docker exec -it $C mosquitto_sub -h localhost -t '#' -v ;;
 
-  datos)      # solo telemetria
+  datos)      # telemetria por MQTT: solo la publica el lorawan-bridge
+    echo "OJO: la mesh NO publica aca (contrato v3.0): su telemetria va por REST."
+    echo "Para la mesh en banco, mirar la salida de herramientas/ingesta_falsa.py."
     docker exec -it $C mosquitto_sub -h localhost -t 'devices/+/data' -v ;;
 
   estado)     # solo los status de los nodos
     docker exec -it $C mosquitto_sub -h localhost -t 'devices/+/status' -v ;;
+
+  respuestas) # transmitido / recibido / aplicado / rechazado de cada comando
+    docker exec -it $C mosquitto_sub -h localhost -t 'devices/+/response' -v ;;
+
+  alertas)    # alerts/<device_id>/<tipo>
+    docker exec -it $C mosquitto_sub -h localhost -t 'alerts/#' -v ;;
 
   retenidos)  # que quedo pegado en el broker
     echo "Mensajes retenidos:"
@@ -29,7 +37,7 @@ case "$1" in
     done
     echo "Listo. OJO: un nodo vivo va a volver a publicar el suyo enseguida." ;;
 
-  comando)    # baja un comando a la mesh:  ./broker.sh comando <uuid> '<json>'
+  comando)    # baja un comando:  ./broker.sh comando <uuid> '{"command":"set_config","params":{"intervalo_s":30},"command_id":"c-1"}'
     [ -z "$2" ] || [ -z "$3" ] && { echo "uso: $0 comando <device-uuid> '<json>'"; exit 1; }
     docker exec $C mosquitto_pub -h localhost -t "devices/$2/command" -m "$3"
     echo "enviado a devices/$2/command" ;;
@@ -48,6 +56,6 @@ case "$1" in
     docker restart $C && echo "broker reiniciado" ;;
 
   *)
-    echo "uso: $0 {ver|datos|estado|retenidos|limpiar|comando|log|problemas|reiniciar}"
+    echo "uso: $0 {ver|datos|estado|respuestas|alertas|retenidos|limpiar|comando|log|problemas|reiniciar}"
     exit 1 ;;
 esac

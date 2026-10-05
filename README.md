@@ -26,20 +26,37 @@ Según [ADR-003](docs/adr/ADR-003-dos-transportes-mesh-interior-lorawan-exterior
 
 | Carpeta | Qué hay | Quién la mantiene |
 |---|---|---|
-| [`comun/`](comun/) | Trama de la mesh, buffer circular, `ingest_id`, y sus tests de host | cátedra |
-| [`infraestructura/`](infraestructura/) | `nodo_gateway` y `nodo_sala` de la mesh | cátedra |
+| [`comun/`](comun/) | Trama de la mesh, `nodo_mesh.h` (la biblioteca de los nodos), cola persistente, `ingest_id`, radio ESP-NOW, y sus tests de host | cátedra |
+| [`infraestructura/`](infraestructura/) | `nodo_gateway` y `nodo_sala` de la mesh, con sus `config_local.h.example` | cátedra |
 | [`dispositivos/`](dispositivos/) | **Una carpeta por dispositivo, con todo adentro** (firmware, ficha, bibliotecas, tests), nombrada con su código de ubicación (`E1-PB-LECA-HFR01`); y el mapa de códigos | cada grupo |
 | [`ejemplos/`](ejemplos/) | `plantilla_dispositivo/` y `sensor_ejemplo/` | cátedra |
-| [`herramientas/`](herramientas/) | `broker.sh`, `leer_mac/`, `generar_autocontenidos.sh` | cátedra |
+| [`herramientas/`](herramientas/) | `broker.sh`, `ingesta_falsa.py`, `leer_mac/`, `generar_autocontenidos.sh` | cátedra |
 | [`autocontenido/`](autocontenido/) | Copia de cada sketch con los headers de `comun/` al lado, para abrir en el IDE. **Se genera, no se edita** | — |
-| [`docs/`](docs/) | Copia publicada del contrato, ADRs y el histórico de la mesh v1 | cátedra |
+| [`docs/`](docs/) | Copia publicada del contrato, ADRs, el diseño de la mesh v2 y el histórico de la v1 | cátedra |
 
 ## Estado
 
-> ⚠️ **`infraestructura/` y `ejemplos/sensor_ejemplo/` implementan la versión 1.x del contrato**, que
-> AURA ya no acepta (telemetría por MQTT, `enviado_a_mesh`, sin cola persistente en el nodo).
-> Sirven como referencia de ESP-NOW y para el banco, pero **no se conectan a AURA tal cual**.
-> Su actualización a la v3.0 está pendiente (contrato §10).
+La mesh implementa la **versión 3.0 del contrato** (trama ESP-NOW v2):
+
+- La telemetría entra a AURA por `POST /api/v1/telemetry/ingest`, de a un evento, y el gateway
+  confirma la muestra al nodo **solo** si AURA dice que la persistió.
+- Cada nodo guarda sus muestras en flash con su `ingest_id` antes de enviarlas, y las conserva
+  hasta esa confirmación: un corte del gateway, del WiFi o de AURA no pierde datos, dentro de
+  la capacidad de la cola (24 h a una muestra por minuto).
+- `set_config` llega al nodo, que responde con el resultado y la configuración vigente
+  (`aplicado` o `rechazado`). Hay reportes de estado, alertas de sonda una vez por cambio y
+  offline inferido.
+
+Un dispositivo de la mesh se arma sobre [`comun/nodo_mesh.h`](comun/nodo_mesh.h): ver
+[`ejemplos/sensor_ejemplo/`](ejemplos/sensor_ejemplo/) y la plantilla. El diseño está en
+[`docs/mesh-v2/`](docs/mesh-v2/).
+
+> ⚠️ El backend de AURA todavía **no acepta `aplicado`** y el endpoint REST tiene dos defectos
+> documentados (contrato §6 y §10). El gateway ya los contempla, pero hasta que el backend se
+> corrija, `aplicado` se descarta del lado de AURA.
+
+Para el banco sin backend: [`herramientas/ingesta_falsa.py`](herramientas/ingesta_falsa.py)
+hace de API, con modos para simular la caída y el defecto de `201` con errores.
 
 ## Sumar un dispositivo
 
@@ -60,10 +77,15 @@ arduino-cli compile --fqbn "esp32:esp32:XIAO_ESP32S3:CDCOnBoot=cdc" infraestruct
 Los sketches incluyen `comun/` con rutas relativas (`../../comun/…`), y así compilan tanto en
 `arduino-cli` como en el IDE 2. Si preferís abrir una carpeta suelta, usá la de `autocontenido/`.
 
-Tests de host de `comun/`, sin placa:
+Bibliotecas: las de cada `bibliotecas.txt` (ArduinoJson para todo lo que usa la mesh).
+Cada sketch lee su configuración (MAC, red, UUID) de un `config_local.h` que no se versiona:
+copiá el `config_local.h.example` de su carpeta. Sin él compila, pero no transmite.
+
+Tests de host, sin placa:
 
 ```bash
 make -C comun/tests
+make -C infraestructura/nodo_gateway/tests
 ```
 
 ## Seguridad
