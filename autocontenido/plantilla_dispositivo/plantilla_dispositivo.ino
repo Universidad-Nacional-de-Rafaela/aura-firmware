@@ -1,10 +1,10 @@
-// GENERADO por herramientas/generar_autocontenidos.sh: no editar. Fuente: dispositivos/plantilla_dispositivo/
+// GENERADO por herramientas/generar_autocontenidos.sh: no editar. Fuente: ejemplos/plantilla_dispositivo/
 /*
  * AURA - plantilla de dispositivo
  *
- * Punto de partida para el firmware de un dispositivo nuevo. Copiar esta carpeta a
- * dispositivos/<nombre_del_dispositivo>/ y renombrar el .ino con el mismo nombre que
- * la carpeta (Arduino lo exige). Ver CONTRIBUTING.md en la raíz del repo.
+ * Punto de partida para un dispositivo nuevo. Copiar esta carpeta a dispositivos/<CÓDIGO>/
+ * (el código se arma con el mapa de dispositivos/README.md) y renombrar el .ino igual que la
+ * carpeta, por ejemplo E1-PB-LECA-HFR01.ino (Arduino lo exige). Ver CONTRIBUTING.md.
  *
  * Reglas del contrato de AURA (docs/CONTRATO_MQTT.md) que conviene tener presentes
  * desde la primera línea:

@@ -1,4 +1,4 @@
-// GENERADO por herramientas/generar_autocontenidos.sh: no editar. Fuente: dispositivos/sensor_ejemplo/
+// GENERADO por herramientas/generar_autocontenidos.sh: no editar. Fuente: ejemplos/sensor_ejemplo/
 /*
  * AURA - nodo sensor (XIAO ESP32S3)
  *
