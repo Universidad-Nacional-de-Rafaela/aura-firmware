@@ -1,0 +1,19 @@
+// Copiar este archivo como config_local.h (en la misma carpeta) y completar.
+// config_local.h está en el .gitignore: NUNCA se commitea. Este repo es público.
+
+#pragma once
+
+// MAC del gateway de la mesh: a dónde se reenvía todo lo que sube.
+#define MAC_GATEWAY  {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+
+// MAC de la placa en la que DEBE correr este sketch (herramientas/leer_mac).
+#define MAC_ESPERADA {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+
+// Los nodos de la habitación que cuelgan de esta sala: lo que baja solo se
+// reenvía a estos. Uno por llave.
+#define HIJOS { \
+  {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, \
+}
+
+// 1 = probar nodo + sala sin gateway (no sube ni barre canales).
+#define MODO_BANCO 0

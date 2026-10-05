@@ -48,9 +48,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Tests de comun/ y de cada dispositivo que los tenga
+      - name: Tests de comun/, de infraestructura/ y de cada dispositivo que los tenga
         run: |
-          for mk in comun/tests/Makefile dispositivos/*/tests/Makefile; do
+          for mk in comun/tests/Makefile infraestructura/*/tests/Makefile dispositivos/*/tests/Makefile; do
             [ -f "$mk" ] || continue
             echo "== $(dirname "$mk") =="
             make -C "$(dirname "$mk")"
