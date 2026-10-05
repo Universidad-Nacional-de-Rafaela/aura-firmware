@@ -1,18 +1,19 @@
-# <Nombre del dispositivo>
+# Fnnn — <descripción corta>
 
 > Plantilla: reemplazar todo lo que está entre `< >` y borrar esta línea.
 
 | | |
 |---|---|
-| **Grupo** | <integrantes, con su usuario de GitHub> |
+| **Autores** | <grupo, con sus usuarios de GitHub> |
 | **Materia y año** | <IC III / IC IV, 2026> |
-| **Estado** | <en desarrollo / probado en banco / instalado en …> |
+| **Estado** | <en desarrollo / probado en banco / en uso> |
 | **Transporte** | <mesh ESP-NOW (interior) / LoRaWAN (exterior)>, según [ADR-003](../../docs/adr/ADR-003-dos-transportes-mesh-interior-lorawan-exterior.md) |
 | **Contrato que implementa** | [`CONTRATO_MQTT.md`](../../docs/CONTRATO_MQTT.md) v<3.0> |
 
 ## Qué hace
 
-<Una o dos oraciones: qué mide o qué acciona, y dónde se instala.>
+<Una o dos oraciones: qué mide o qué acciona. Dónde está instalado no va acá: lo dicen las
+fichas de `dispositivos/` que usan este firmware.>
 
 ## Hardware
 
@@ -20,6 +21,9 @@
 |---|---|---|
 | Placa | Seeed XIAO ESP32S3 | — |
 | <sensor> | <modelo> | <GPIO> |
+
+Variantes que acepta con opciones de `config_local.h` (por ejemplo, otra pantalla):
+<ninguna / `#define PANTALLA_SSD1306` …>.
 
 ## Lo que envía a AURA
 

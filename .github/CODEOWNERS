@@ -3,9 +3,10 @@
 # comun/ e infraestructura/ son de todos los dispositivos: un cambio ahí puede dejar a
 # todos sin llegar a AURA. Lo revisa la cátedra.
 #
-# Cada grupo agrega acá su carpeta de dispositivos/ con sus usuarios de GitHub, en el
-# mismo PR en que la crea. Ejemplo:
-#   /dispositivos/heladera_freezer/  @usuario1 @usuario2
+# Cada grupo agrega acá su carpeta de firmware/ y las fichas de sus dispositivos, con sus
+# usuarios de GitHub, en el mismo PR en que las crea. Ejemplo:
+#   /firmware/F001_temperatura_dos_sondas/   @usuario1 @usuario2
+#   /dispositivos/E1-PB-LECA-HFR01/          @usuario1 @usuario2
 
 *                     @mwanzenried
 /comun/               @mwanzenried
@@ -13,3 +14,6 @@
 /docs/                @mwanzenried
 /.github/             @mwanzenried
 /herramientas/        @mwanzenried
+/ejemplos/            @mwanzenried
+/dispositivos/README.md @mwanzenried
+/firmware/README.md   @mwanzenried

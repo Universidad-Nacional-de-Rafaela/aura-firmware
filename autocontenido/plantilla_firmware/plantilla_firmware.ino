@@ -1,10 +1,10 @@
-// GENERADO por herramientas/generar_autocontenidos.sh: no editar. Fuente: dispositivos/plantilla_dispositivo/
+// GENERADO por herramientas/generar_autocontenidos.sh: no editar. Fuente: ejemplos/plantilla_firmware/
 /*
- * AURA - plantilla de dispositivo
+ * AURA - plantilla de firmware
  *
- * Punto de partida para el firmware de un dispositivo nuevo. Copiar esta carpeta a
- * dispositivos/<nombre_del_dispositivo>/ y renombrar el .ino con el mismo nombre que
- * la carpeta (Arduino lo exige). Ver CONTRIBUTING.md en la raíz del repo.
+ * Punto de partida para un firmware nuevo. Copiar esta carpeta a firmware/Fnnn_<descripcion>/
+ * con el número que sigue en firmware/README.md, y renombrar el .ino igual que la carpeta
+ * (Arduino lo exige). Ver CONTRIBUTING.md en la raíz del repo.
  *
  * Reglas del contrato de AURA (docs/CONTRATO_MQTT.md) que conviene tener presentes
  * desde la primera línea:
@@ -44,7 +44,7 @@ float leerMedicion() {
 
 void setup() {
   Serial.begin(115200);
-  Serial.println("plantilla_dispositivo: reemplazar leerMedicion() y el envío");
+  Serial.println("plantilla_firmware: reemplazar leerMedicion() y el envío");
 }
 
 void loop() {
