@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  FQBN: esp32:esp32:XIAO_ESP32S3:CDCOnBoot=cdc
+  ESP32_CORE: esp32:esp32@3.3.11
+  ESP32_INDEX: https://espressif.github.io/arduino-esp32/package_esp32_index.json
+
+jobs:
+  secretos:
+    name: Sin secretos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Ningún archivo de configuración local versionado
+        run: |
+          prohibidos=$(git ls-files | grep -E '(^|/)(config_local\.h|credenciales\.h|\.env)$' || true)
+          if [ -n "$prohibidos" ]; then
+            echo "::error::Estos archivos no se versionan (este repo es público):"
+            echo "$prohibidos"
+            exit 1
+          fi
+      # Reglas propias en .gitleaks.toml: las de por defecto no detectan claves de WiFi ni de LoRaWAN.
+      - name: gitleaks sobre toda la historia
+        run: |
+          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.21.2 \
+            detect --source /repo --config /repo/.gitleaks.toml --redact --verbose --no-banner
+
+  tests-host:
+    name: Tests de host
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tests de comun/ y de cada dispositivo que los tenga
+        run: |
+          for mk in comun/tests/Makefile dispositivos/*/tests/Makefile; do
+            [ -f "$mk" ] || continue
+            echo "== $(dirname "$mk") =="
+            make -C "$(dirname "$mk")"
+          done
+
+  compilar:
+    name: Compilar sketches
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: autocontenido/ está al día
+        run: |
+          herramientas/generar_autocontenidos.sh
+          if [ -n "$(git status --porcelain autocontenido)" ]; then
+            echo "::error::autocontenido/ no coincide con las fuentes. Correr herramientas/generar_autocontenidos.sh y commitear."
+            git status --porcelain autocontenido
+            exit 1
+          fi
+      - uses: arduino/setup-arduino-cli@v2
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.arduino15
+            ~/Arduino/libraries
+          key: arduino-${{ env.ESP32_CORE }}-${{ hashFiles('**/bibliotecas.txt') }}
+      - name: Core ESP32 y bibliotecas
+        run: |
+          arduino-cli config init --overwrite --additional-urls "$ESP32_INDEX"
+          arduino-cli core update-index
+          arduino-cli core install "$ESP32_CORE"
+          libs=$(cat infraestructura/*/bibliotecas.txt dispositivos/*/bibliotecas.txt 2>/dev/null \
+                 | sed 's/#.*//' | tr -d '\r' | awk 'NF' | sort -u)
+          if [ -n "$libs" ]; then
+            echo "$libs" | xargs -d '\n' arduino-cli lib install
+          fi
+      - name: Compilar
+        run: |
+          fallos=0
+          for sketch in infraestructura/*/ dispositivos/*/ herramientas/*/ autocontenido/*/; do
+            nombre=$(basename "$sketch")
+            [ -f "$sketch/$nombre.ino" ] || continue
+            echo "::group::$sketch"
+            if ! arduino-cli compile --fqbn "$FQBN" "$sketch"; then
+              echo "::error::No compila: $sketch"
+              fallos=1
+            fi
+            echo "::endgroup::"
+          done
+          exit $fallos
