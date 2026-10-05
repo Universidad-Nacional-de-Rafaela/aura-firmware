@@ -85,7 +85,7 @@ Parámetros del broker AURA:
 
 ⚠️ **Sin TLS ni credenciales.** Aceptable en la red de laboratorio; **no** en el despliegue
 del campus. Cualquiera en la red puede publicar en `devices/+/command` y accionar
-dispositivos, o en `devices/+/data` e inyectar mediciones. Ver §10, pendiente 8.
+dispositivos, o en `devices/+/data` e inyectar mediciones. Ver §10, pendiente 11.
 
 Del lado LoRaWAN la radio sí está cifrada: cada dispositivo tiene su propia clave AES (OTAA)
 y el gateway no puede leer ni falsificar el contenido. La debilidad está del bridge para acá.
@@ -496,7 +496,7 @@ más de una vez, así que todo consumidor debe ser idempotente.
 | Nodo mesh → gateway de la mesh | el nodo **guarda cada muestra** en memoria no volátil y la reenvía hasta recibir la confirmación de AURA 🔧 | sobrevive a cortes del gateway, del WiFi y de AURA, dentro de la capacidad de la cola del nodo |
 | Gateway de la mesh → AURA | `ingest_id` generado **en el nodo**, un UUID por muestra, guardado junto con ella antes del primer envío 🔧 | igual en cada reintento y después de reiniciar cualquier placa |
 | Backend (REST) | `ingest_id` con `unique=True` en `ts_telemetry` (`models/telemetry.py`) | deduplicación real en base |
-| Backend (MQTT) | ⚠️ **ninguno**: `_process_device_data` no lee `ingest_id` | pendiente 3 de §10 |
+| Backend (MQTT) | ⚠️ **ninguno**: `_process_device_data` no lee `ingest_id` | pendiente 6 de §10 |
 
 En la mesh el `ingest_id` lo genera el nodo y no el gateway. La v1.x lo derivaba en el gateway
 a partir de `(MAC, boot_id, seq)`; con una cola persistente en el nodo eso ya no alcanza, porque
