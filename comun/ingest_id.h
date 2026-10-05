@@ -1,41 +1,46 @@
 #pragma once
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
+#include <stdbool.h>
 
-// FNV-1a de 32 bits. Solo se usa para llenar los ultimos 4 bytes del UUID
-// con algo que dependa de todo lo anterior; no es criptografico.
-static inline uint32_t aura_fnv1a(const uint8_t* datos, int len) {
-  uint32_t h = 2166136261u;
-  for (int i = 0; i < len; i++) {
-    h ^= datos[i];
-    h *= 16777619u;
+#ifndef AURA_INGEST_ID_BYTES
+#define AURA_INGEST_ID_BYTES 16
+#endif
+
+// El ingest_id de una muestra de la mesh es un UUID v4 que genera el NODO al
+// tomar la muestra, y que se guarda con ella antes del primer envio (contrato
+// §5). Asi es igual en cada reintento y despues de reiniciar cualquier placa,
+// que es lo que permite al backend deduplicar en ts_telemetry.
+//
+// La v1 lo derivaba en el gateway de (MAC, boot_id, seq): con una cola
+// persistente en el nodo eso ya no alcanza, porque la misma muestra puede
+// reenviarse despues de reiniciar el gateway, con otro boot_id.
+
+// Fuente de azar: esp_random() en la placa, un generador fijo en los tests.
+typedef uint32_t (*AuraAzar)(void);
+
+static inline void aura_ingest_id_nuevo(uint8_t id[AURA_INGEST_ID_BYTES], AuraAzar azar) {
+  for (int i = 0; i < AURA_INGEST_ID_BYTES; i += 4) {
+    uint32_t r = azar();
+    id[i]     = (uint8_t)(r >> 24);
+    id[i + 1] = (uint8_t)(r >> 16);
+    id[i + 2] = (uint8_t)(r >> 8);
+    id[i + 3] = (uint8_t)(r);
   }
-  return h;
+  id[6] = (uint8_t)((id[6] & 0x0F) | 0x40);  // version 4
+  id[8] = (uint8_t)((id[8] & 0x3F) | 0x80);  // variante RFC 9562
 }
 
-// Arma un UUID determinístico a partir de (mac, boot_id, seq).
-// La misma terna produce siempre la misma cadena: eso es lo que permite
-// reintentar sin duplicar en el backend.
 // salida debe tener al menos 37 bytes (36 + terminador).
-static inline void aura_ingest_id(const uint8_t mac[6], uint32_t boot_id,
-                                  uint16_t seq, char salida[37]) {
-  uint8_t b[16];
-  for (int i = 0; i < 6; i++) b[i] = mac[i];
-  b[6]  = (uint8_t)(boot_id >> 24);
-  b[7]  = (uint8_t)(boot_id >> 16);
-  b[8]  = (uint8_t)(boot_id >> 8);
-  b[9]  = (uint8_t)(boot_id);
-  b[10] = (uint8_t)(seq >> 8);
-  b[11] = (uint8_t)(seq);
-
-  uint32_t h = aura_fnv1a(b, 12);
-  b[12] = (uint8_t)(h >> 24);
-  b[13] = (uint8_t)(h >> 16);
-  b[14] = (uint8_t)(h >> 8);
-  b[15] = (uint8_t)(h);
-
+static inline void aura_ingest_id_texto(const uint8_t b[AURA_INGEST_ID_BYTES], char salida[37]) {
   snprintf(salida, 37,
            "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
            b[0],b[1],b[2],b[3], b[4],b[5], b[6],b[7],
            b[8],b[9], b[10],b[11],b[12],b[13],b[14],b[15]);
+}
+
+static inline bool aura_ingest_id_igual(const uint8_t a[AURA_INGEST_ID_BYTES],
+                                        const uint8_t b[AURA_INGEST_ID_BYTES]) {
+  return memcmp(a, b, AURA_INGEST_ID_BYTES) == 0;
 }
