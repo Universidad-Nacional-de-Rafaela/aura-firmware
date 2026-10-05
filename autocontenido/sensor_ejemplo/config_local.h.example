@@ -1,0 +1,11 @@
+// Copiar este archivo como config_local.h (en la misma carpeta) y completar.
+// config_local.h está en el .gitignore: NUNCA se commitea. Este repo es público.
+
+#pragma once
+
+// MAC del padre: el nodo de sala, o el gateway si el sensor le llega directo.
+#define MAC_PADRE    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+// MAC del gateway de la mesh: destino final de la telemetría.
+#define MAC_GATEWAY  {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+// MAC de la placa en la que DEBE correr este sketch (herramientas/leer_mac).
+#define MAC_ESPERADA {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}

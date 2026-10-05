@@ -4,12 +4,11 @@
 
 #pragma once
 
-// Cada cuánto mide, en milisegundos.
-#define INTERVALO_MUESTRA_MS 60000UL
-
-// Mesh ESP-NOW: MAC del padre (nodo de sala o gateway) y de esta placa.
-// #define MAC_PADRE    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
-// #define MAC_ESPERADA {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+// Mesh ESP-NOW: MAC del padre (nodo de sala, o el gateway si le llega directo),
+// del gateway de la mesh (destino final) y de esta placa (herramientas/leer_mac).
+#define MAC_PADRE    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+#define MAC_GATEWAY  {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+#define MAC_ESPERADA {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
 
 // LoRaWAN: las credenciales OTAA las da la cátedra al dar de alta el dispositivo.
 // #define LORAWAN_DEV_EUI  0x0000000000000000

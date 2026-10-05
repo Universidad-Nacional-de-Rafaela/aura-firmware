@@ -1,254 +1,110 @@
 /*
- * AURA - nodo sensor (XIAO ESP32S3)
+ * AURA - nodo sensor de ejemplo (XIAO ESP32S3), contrato v3.0
  *
- * Manda su muestra al padre (el nodo de sala) por ESP-NOW. No conoce AURA:
- * se identifica por MAC y no sabe que es un UUID ni MQTT.
+ * Muestra el uso de comun/nodo_mesh.h con lo minimo: una medicion, un
+ * parametro configurable y nada de hardware extra. Con la placa pelada, lo
+ * unico fisico que se puede medir es la temperatura interna del chip, y se
+ * publica con ese nombre (temp_chip_c): es un dato real, no se hace pasar por
+ * la temperatura de ningun otro lado. Alcanza para validar la cadena de punta
+ * a punta: apretando el chip con el dedo se ve subir el valor en la base.
  *
- * SIN BIBLIOTECAS EXTERNAS. Con la placa pelada, lo unico fisico que se puede
- * medir es la temperatura interna del chip (temperatureRead(), incluida en el
- * core). Alcanza para validar la cadena de punta a punta: apretando el chip
- * con el dedo se ve subir el valor hasta la base de datos.
+ * No conoce AURA: se identifica por MAC, y el gateway la traduce a su
+ * device_id. Las MAC van en config_local.h (ver config_local.h.example).
  *
- * El lux va simulado con una rampa, para no romper el contrato con AURA
- * (el gateway publica este nodo como type "lux"). Cuando haya un BH1750,
- * se reemplaza lux_simulado() y listo.
+ * set_config acepta {"intervalo_s": 5..86400}, guardado en flash.
  *
  * IDE: Placa "XIAO_ESP32S3". USB CDC On Boot: ENABLED, si no el monitor
- * serie no muestra nada.
+ * serie no muestra nada. Biblioteca: ArduinoJson (ver bibliotecas.txt).
  */
 
-#include <WiFi.h>
-#include <esp_now.h>
-#include <esp_wifi.h>
-#include "../../comun/protocolo_aura.h"
-#include "../../comun/buffer_circular.h"
+#if __has_include("config_local.h")
+#include "config_local.h"
+#endif
 
-// ===== CONFIGURACION =====
-// MAC del nodo de sala.
-uint8_t MAC_PADRE[6] = {0xE0, 0x72, 0xA1, 0xF7, 0xF5, 0x48};
+#include <Preferences.h>
+#include "../../comun/nodo_mesh.h"
 
-// MAC de la placa en la que DEBE correr este sketch.
-const uint8_t MAC_ESPERADA[6] = {0xE0, 0x72, 0xA1, 0xF7, 0xEF, 0xE4};
+// Valores por defecto si no hay config_local.h. En cero = sin configurar: el
+// nodo mide y guarda, pero no envia nada.
+#ifndef MAC_PADRE
+#define MAC_PADRE    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+#endif
+#ifndef MAC_GATEWAY
+#define MAC_GATEWAY  {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+#endif
+#ifndef MAC_ESPERADA
+#define MAC_ESPERADA {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+#endif
 
-// Cada cuanto emite. 3000 para ver movimiento rapido en el banco,
-// 60000 para dejarlo corriendo sin inundar la base.
-const unsigned long INTERVALO_MUESTRA = 10000;  // 10 s
-// 4 s, no 1,5: el gateway publica por MQTT en el mismo loop en que despacha
-// los ACK, y una publicacion TCP lenta puede demorarlos. Un timeout corto
-// hacia retransmitir de gusto.
-const unsigned long TIMEOUT_ACK       = 4000;
-const unsigned long SIN_ACK_MAX       = 60000;  // 1 min sin ACK -> barrer canales
+const uint8_t mac_padre[6]    = MAC_PADRE;
+const uint8_t mac_gateway[6]  = MAC_GATEWAY;
+const uint8_t mac_esperada[6] = MAC_ESPERADA;
 
-BufferCircular pendientes;
+// ===== Configuracion remota =====
+const uint32_t INTERVALO_MIN_S = 5;
+const uint32_t INTERVALO_MAX_S = 86400;
+uint32_t intervalo_s = 60;
 
-uint8_t  mi_mac[6];
-uint16_t seq_actual = 0;
+Preferences prefs;
 
-volatile bool     ack_recibido = false;
-volatile uint16_t ack_seq      = 0;
+// Valida TODO antes de aplicar nada: un comando mal armado no puede dejar el
+// nodo inutilizable (contrato §3.3).
+bool aplicar_config(JsonObjectConst params, String& motivo) {
+  if (params.isNull() || params.size() == 0) { motivo = "sin_parametros"; return false; }
+  for (JsonPairConst p : params) {
+    if (strcmp(p.key().c_str(), "intervalo_s") != 0) {
+      motivo = String("parametro_desconocido:") + p.key().c_str();
+      return false;
+    }
+  }
+  JsonVariantConst v = params["intervalo_s"];
+  if (!v.is<uint32_t>()) { motivo = "intervalo_s_no_es_entero"; return false; }
+  uint32_t nuevo = v.as<uint32_t>();
+  if (nuevo < INTERVALO_MIN_S || nuevo > INTERVALO_MAX_S) { motivo = "intervalo_s_fuera_de_rango"; return false; }
 
+  intervalo_s = nuevo;
+  prefs.putUInt("intervalo_s", intervalo_s);
+  Serial.printf("config aplicada: intervalo_s=%lu\n", (unsigned long)intervalo_s);
+  return true;
+}
+
+void describir_config(JsonObject out) {
+  out["intervalo_s"] = intervalo_s;
+}
+
+// ===== Programa =====
 unsigned long ultima_muestra = 0;
-unsigned long ultimo_ack_ok  = 0;
+bool primera = true;
 
-// Rampa lenta de 0 a 500 y vuelta, para que en el monitor de la sala se vea
-// que el valor cambia y no parezca congelado.
-float lux_simulado() {
-  unsigned long fase = (millis() / 1000) % 120;
-  float x = (fase < 60) ? fase : (120 - fase);
-  return x * (500.0f / 60.0f);
-}
-
-// ===== RECEPCION =====
-void mandar_ack(const uint8_t destino[6], uint16_t seq) {
-  TramaAura ack;
-  aura_trama_init(&ack, AURA_TIPO_ACK, mi_mac, destino, seq, NULL, 0);
-  esp_now_send(destino, (const uint8_t*)&ack, aura_trama_bytes(&ack));
-}
-
-void on_recv(const esp_now_recv_info_t* info, const uint8_t* datos, int len) {
-  if (!aura_trama_valida(datos, len)) return;
-
-  // Salto anterior: a quien hay que confirmarle. Aca coincide siempre con
-  // MAC_PADRE, pero se usa el mismo criterio que en los otros nodos.
-  const uint8_t* salto_anterior = info->src_addr;
-
-  const TramaAura* t = (const TramaAura*)datos;
-
-  if (t->tipo == AURA_TIPO_ACK) {
-    if (aura_es_para_mi(t, mi_mac)) {
-      ack_seq = t->seq;
-      ack_recibido = true;
-    }
-    return;
-  }
-
-  // Comandos que bajan de AURA. El ACK va al padre (el salto anterior), no
-  // al origen: las confirmaciones son salto a salto.
-  if (t->tipo == AURA_TIPO_COMANDO && aura_es_para_mi(t, mi_mac)) {
-    mandar_ack(salto_anterior, t->seq);
-
-    char json[AURA_PAYLOAD_MAX + 1];
-    memcpy(json, t->payload, t->largo);
-    json[t->largo] = '\0';
-    Serial.printf("comando recibido: %s\n", json);
-  }
-}
-
-// Verificacion de placa: con varias placas identicas es facilisimo flashear
-// el sketch equivocado, y el sintoma (no llega nada) parece un problema de
-// radio. Esto lo detecta en el arranque y lo dice con todas las letras.
-void verificar_placa() {
-  if (memcmp(mi_mac, MAC_ESPERADA, 6) == 0) return;
-
-  Serial.println();
-  Serial.println("****************************************************");
-  Serial.println("*** PLACA EQUIVOCADA                             ***");
-  Serial.printf ("*** esta placa es  %02X:%02X:%02X:%02X:%02X:%02X            ***\n",
-                 mi_mac[0], mi_mac[1], mi_mac[2], mi_mac[3], mi_mac[4], mi_mac[5]);
-  Serial.printf ("*** este sketch es para %02X:%02X:%02X:%02X:%02X:%02X       ***\n",
-                 MAC_ESPERADA[0], MAC_ESPERADA[1], MAC_ESPERADA[2],
-                 MAC_ESPERADA[3], MAC_ESPERADA[4], MAC_ESPERADA[5]);
-  Serial.println("*** No va a llegar nada. Revisa la etiqueta.     ***");
-  Serial.println("****************************************************");
-  Serial.println();
-}
-
-// ===== ENVIO =====
-bool enviar_con_ack(const TramaAura* t) {
-  ack_recibido = false;
-  if (esp_now_send(MAC_PADRE, (const uint8_t*)t, aura_trama_bytes(t)) != ESP_OK) return false;
-
-  unsigned long inicio = millis();
-  while (millis() - inicio < TIMEOUT_ACK) {
-    if (ack_recibido && ack_seq == t->seq) {
-      ultimo_ack_ok = millis();
-      return true;
-    }
-    delay(10);
-  }
-  return false;
-}
-
-// ===== RECUPERACION DE CANAL =====
-// ESP-NOW solo transmite en el canal activo. Si el AP cambia de canal, el
-// padre deja de escucharnos sin que aparezca ningun error: hay que buscarlo.
-void buscar_padre_por_canales() {
-  // Se recuerda el canal actual: si el barrido fracasa hay que volver aca.
-  // Sin esto la radio quedaba abandonada en el canal 13, hablandole a nadie.
-  uint8_t canal_original;
-  wifi_second_chan_t sec;
-  esp_wifi_get_channel(&canal_original, &sec);
-
-  Serial.printf("enlace perdido, barriendo canales... (estoy en el %u)\n", canal_original);
-
-  for (uint8_t canal = 1; canal <= 13; canal++) {
-    esp_wifi_set_channel(canal, WIFI_SECOND_CHAN_NONE);
-    delay(120);
-
-    TramaAura ping;
-    aura_trama_init(&ping, AURA_TIPO_TELEMETRIA, mi_mac, MAC_PADRE, seq_actual, NULL, 0);
-    ack_recibido = false;
-    esp_now_send(MAC_PADRE, (const uint8_t*)&ping, aura_trama_bytes(&ping));
-
-    unsigned long inicio = millis();
-    while (millis() - inicio < 300) {
-      if (ack_recibido) {
-        Serial.printf("padre encontrado en canal %d\n", canal);
-        ultimo_ack_ok = millis();
-        return;
-      }
-      delay(10);
-    }
-  }
-  esp_wifi_set_channel(canal_original, WIFI_SECOND_CHAN_NONE);
-  Serial.printf("no se encontro al padre en ningun canal, vuelvo al canal %u\n", canal_original);
-}
-
-// ===== SETUP =====
 void setup() {
   Serial.begin(115200);
   delay(1000);
 
-  WiFi.mode(WIFI_STA);
-  // Sin esto el receptor se apaga por intervalos (modem-sleep) y se pierden
-  // los ACK aunque el envio funcione: la falla se ve como asimetrica.
-  WiFi.setSleep(false);
-  esp_wifi_get_mac(WIFI_IF_STA, mi_mac);
+  prefs.begin("sensor", false);
+  intervalo_s = prefs.getUInt("intervalo_s", intervalo_s);
+  if (intervalo_s < INTERVALO_MIN_S || intervalo_s > INTERVALO_MAX_S) intervalo_s = 60;
 
-  buffer_init(&pendientes);
-  ultimo_ack_ok = millis();
-
-  if (esp_now_init() != ESP_OK) {
-    Serial.println("fallo esp_now_init");
-    delay(2000);
-    ESP.restart();
-  }
-  esp_now_register_recv_cb(on_recv);
-
-  esp_now_peer_info_t peer;
-  memset(&peer, 0, sizeof(peer));
-  memcpy(peer.peer_addr, MAC_PADRE, 6);
-  peer.channel = 0;  // 0 = canal actual
-  peer.encrypt = false;
-  esp_now_add_peer(&peer);
-
-  verificar_placa();
-
-  Serial.printf("nodo_sensor listo, mi MAC %02X:%02X:%02X:%02X:%02X:%02X\n",
-                mi_mac[0], mi_mac[1], mi_mac[2], mi_mac[3], mi_mac[4], mi_mac[5]);
-  Serial.printf("padre configurado:      %02X:%02X:%02X:%02X:%02X:%02X\n",
-                MAC_PADRE[0], MAC_PADRE[1], MAC_PADRE[2],
-                MAC_PADRE[3], MAC_PADRE[4], MAC_PADRE[5]);
-  Serial.printf("temperatura interna inicial: %.1f C\n", temperatureRead());
+  NodoMeshCallbacks cb = {aplicar_config, describir_config, NULL, "red"};
+  nodo_mesh_iniciar(mac_padre, mac_gateway, mac_esperada, cb);
+  Serial.printf("sensor_ejemplo listo, intervalo %lu s\n", (unsigned long)intervalo_s);
 }
 
-// ===== LOOP =====
 void loop() {
-  unsigned long ahora = millis();
+  if (primera || millis() - ultima_muestra >= intervalo_s * 1000UL) {
+    primera = false;
+    ultima_muestra = millis();
 
-  if (ahora - ultima_muestra >= INTERVALO_MUESTRA) {
-    ultima_muestra = ahora;
-
-    float temp = temperatureRead();   // medicion real, sin componentes
-    float lux  = lux_simulado();      // rampa, hasta que haya un BH1750
-
-    // pend y desc viajan DENTRO del dato: corriendo con fuente y sin monitor
-    // serie, esta es la unica forma de saber si los ACK estan volviendo.
-    char json[110];
-    int n = snprintf(json, sizeof(json),
-                     "{\"lux\":%.1f,\"temp_c\":%.1f,\"pend\":%u,\"desc\":%lu,\"lux_sim\":true}",
-                     lux, temp, buffer_cantidad(&pendientes),
-                     (unsigned long)buffer_descartados(&pendientes));
-
-    TramaAura t;
-    aura_trama_init(&t, AURA_TIPO_TELEMETRIA, mi_mac, MAC_PADRE,
-                    seq_actual++, (const uint8_t*)json, (uint8_t)n);
-    buffer_push(&pendientes, &t);
-
-    Serial.printf("muestra %.1f lux  %.1f C  pendientes=%u  descartados=%lu\n",
-                  lux, temp, buffer_cantidad(&pendientes),
-                  (unsigned long)buffer_descartados(&pendientes));
-  }
-
-  // Solo se saca del buffer lo que el padre confirmo.
-  TramaAura t;
-  if (buffer_peek(&pendientes, &t)) {
-    if (enviar_con_ack(&t)) {
-      buffer_pop(&pendientes, &t);
-      Serial.printf("  ack OK del padre  seq=%u  -> quedan %u sin confirmar\n",
-                    t.seq, buffer_cantidad(&pendientes));
-    } else {
-      Serial.printf("  SIN ack  seq=%u  -> quedan %u sin confirmar\n",
-                    t.seq, buffer_cantidad(&pendientes));
-      delay(500);
+    float temp = temperatureRead();
+    // Rango del sensor interno del ESP32-S3. Fuera de esto, no es una medicion.
+    bool ok = !isnan(temp) && temp > -40.0f && temp < 125.0f;
+    nodo_mesh_sonda("temp_chip_c", ok, "fuera_de_rango");
+    if (ok) {
+      JsonDocument values;
+      values["temp_chip_c"] = roundf(temp * 10.0f) / 10.0f;
+      nodo_mesh_medicion(values.as<JsonObjectConst>());
     }
   }
 
-  // Solo se concluye que el enlace murio si hay datos SIN CONFIRMAR.
-  // Estando ocioso, ultimo_ack_ok no se refresca nunca y el barrido se
-  // disparaba solo, rompiendo un enlace que estaba perfecto.
-  if (buffer_cantidad(&pendientes) > 0 && millis() - ultimo_ack_ok > SIN_ACK_MAX)
-    buscar_padre_por_canales();
-
-  delay(50);
+  nodo_mesh_loop();
+  delay(20);
 }

@@ -2,3 +2,4 @@
 # El CI las instala antes de compilar. Ejemplo:
 # OneWire@2.3.8
 # DallasTemperature@3.11.0
+ArduinoJson@7.4.3

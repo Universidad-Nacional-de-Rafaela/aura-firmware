@@ -29,7 +29,8 @@ hardware), se copia esa carpeta con el código nuevo, y la ficha dice de cuál e
 3. **Armá el código del dispositivo** con el mapa. Si te falta una abreviatura (un recinto
    nuevo, un tipo nuevo), la agregás a su tabla en el mismo PR.
 4. **Pedí el alta del dispositivo** en AURA. La cátedra te da el `device_id` (un UUID) y, si es
-   LoRaWAN, las credenciales OTAA. Nada de eso se commitea.
+   LoRaWAN, las credenciales OTAA; si es mesh, le pasás la MAC de tu placa
+   (`herramientas/leer_mac`) para la tabla del gateway. Nada de eso se commitea.
 
 ## 2. Tu carpeta
 
@@ -43,6 +44,15 @@ hardware), se copia esa carpeta con el código nuevo, y la ficha dice de cuál e
    exactamente esas.
 5. Sumá el dispositivo a la tabla *Dispositivos* de `dispositivos/README.md`, y tu carpeta a
    `.github/CODEOWNERS` con los usuarios de GitHub del grupo.
+
+**Si el dispositivo va por la mesh**, la plantilla ya viene armada sobre
+[`comun/nodo_mesh.h`](comun/nodo_mesh.h). Esa biblioteca se ocupa de la cola en flash, del
+`ingest_id`, de reintentar hasta que AURA confirma, de `set_config` y de las alertas. A vos te
+queda escribir la medición y dos funciones: `aplicar_config()`, que valida y guarda los
+parámetros, y `describir_config()`, que devuelve la configuración vigente e incluye
+`intervalo_s`. Tu nodo no conoce su `device_id`: se identifica por MAC, y la cátedra lo agrega a
+la tabla del gateway. [`ejemplos/sensor_ejemplo/`](ejemplos/sensor_ejemplo/) es el ejemplo
+completo más chico.
 
 Si usás código de `comun/`, incluilo con ruta relativa (`#include "../../comun/protocolo_aura.h"`)
 y corré `herramientas/generar_autocontenidos.sh` antes de commitear. Si tu lógica se puede probar

@@ -1,3 +1,5 @@
 test_protocolo
 test_buffer
 test_ingest_id
+test_cola
+test_nodo_logica
