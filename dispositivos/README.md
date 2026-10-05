@@ -1,11 +1,12 @@
-# Dispositivos instalados
+# Dispositivos
 
-Una carpeta por **placa instalada**, con su ficha (`README.md`): dónde está, qué firmware lleva,
-quién es responsable. El código de la carpeta dice **dónde está y qué es**, de un vistazo.
+**Una carpeta por dispositivo, con todo adentro**: su firmware (`<CÓDIGO>.ino`), su ficha
+(`README.md`: dónde está, qué hardware usa, qué envía, cómo se configura), sus bibliotecas y sus
+tests. El código de la carpeta dice **dónde está y qué es**, de un vistazo.
 
-El código de un dispositivo **no es su firmware**: los cinco dispositivos de un laboratorio
-pueden usar cinco firmwares distintos, y un mismo firmware puede estar en muchos lugares. El
-firmware está en [`../firmware/`](../firmware/), y cada ficha dice cuál usa.
+Si otro dispositivo necesita el mismo firmware, se copia la carpeta con su propio código, y su
+ficha dice de cuál está basado (*Basado en*). Para empezar uno nuevo, copiá
+[`../ejemplos/plantilla_dispositivo/`](../ejemplos/plantilla_dispositivo/).
 
 ## Formato del código
 
@@ -71,6 +72,6 @@ que monitorea, o lo que acciona. Una placa que mide varias magnitudes del ambien
 
 ## Dispositivos
 
-| Código | Qué es | Firmware | Estado |
+| Código | Qué es | Responsable | Estado |
 |---|---|---|---|
-| [`E1-PB-LECA-HFR01`](E1-PB-LECA-HFR01/) | Heladera-freezer del LabECA | `F001` | en desarrollo |
+| [`E1-PB-LECA-HFR01`](E1-PB-LECA-HFR01/) | Heladera-freezer del LabECA | grupo de IC IV 2026 | en desarrollo |

@@ -8,7 +8,7 @@
 # incrustados, y el sketch deja de compilar ('BufferCircular' was not declared).
 #
 # NO editar autocontenido/ a mano: se regenera. La fuente de verdad son las
-# carpetas de infraestructura/, firmware/ y ejemplos/, y los headers de comun/.
+# carpetas de infraestructura/, dispositivos/ y ejemplos/, y los headers de comun/.
 #
 # Uso: herramientas/generar_autocontenidos.sh   (desde cualquier carpeta)
 
@@ -18,7 +18,7 @@ cd "$raiz"
 rm -rf autocontenido
 mkdir -p autocontenido
 
-for sketch in infraestructura/*/ firmware/*/ ejemplos/*/; do
+for sketch in infraestructura/*/ dispositivos/*/ ejemplos/*/; do
   nombre="$(basename "$sketch")"
   [ -f "$sketch/$nombre.ino" ] || continue
   destino="autocontenido/$nombre"

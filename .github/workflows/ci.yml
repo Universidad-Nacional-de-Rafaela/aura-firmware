@@ -36,11 +36,11 @@ jobs:
             detect --source /repo --config /repo/.gitleaks.toml --redact --verbose --no-banner
 
   nombres:
-    name: Códigos y registro
+    name: Códigos de dispositivos
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: dispositivos/ respeta el mapa y firmware/ el registro
+      - name: dispositivos/ respeta el mapa
         run: python3 herramientas/validar_dispositivos.py
 
   tests-host:
@@ -48,9 +48,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Tests de comun/ y de cada firmware que los tenga
+      - name: Tests de comun/ y de cada dispositivo que los tenga
         run: |
-          for mk in comun/tests/Makefile firmware/*/tests/Makefile; do
+          for mk in comun/tests/Makefile dispositivos/*/tests/Makefile; do
             [ -f "$mk" ] || continue
             echo "== $(dirname "$mk") =="
             make -C "$(dirname "$mk")"
@@ -81,7 +81,7 @@ jobs:
           arduino-cli config init --overwrite --additional-urls "$ESP32_INDEX"
           arduino-cli core update-index
           arduino-cli core install "$ESP32_CORE"
-          libs=$(cat infraestructura/*/bibliotecas.txt firmware/*/bibliotecas.txt ejemplos/*/bibliotecas.txt 2>/dev/null \
+          libs=$(cat infraestructura/*/bibliotecas.txt dispositivos/*/bibliotecas.txt ejemplos/*/bibliotecas.txt 2>/dev/null \
                  | sed 's/#.*//' | tr -d '\r' | awk 'NF' | sort -u)
           if [ -n "$libs" ]; then
             echo "$libs" | xargs -d '\n' arduino-cli lib install
@@ -89,7 +89,7 @@ jobs:
       - name: Compilar
         run: |
           fallos=0
-          for sketch in infraestructura/*/ firmware/*/ ejemplos/*/ herramientas/*/ autocontenido/*/; do
+          for sketch in infraestructura/*/ dispositivos/*/ ejemplos/*/ herramientas/*/ autocontenido/*/; do
             nombre=$(basename "$sketch")
             [ -f "$sketch/$nombre.ino" ] || continue
             echo "::group::$sketch"

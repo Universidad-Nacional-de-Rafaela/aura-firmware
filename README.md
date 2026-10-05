@@ -2,8 +2,8 @@
 
 Firmware de los dispositivos del proyecto **AURA** (Administración Unificada de Recursos y
 Accesos), Universidad Nacional de Rafaela. Acá vive el código que corre **en las placas**: la
-infraestructura de la mesh que mantiene la cátedra, el firmware que desarrollan los grupos de
-Ingeniería en Computación III y IV, y la ficha de cada dispositivo instalado.
+infraestructura de la mesh que mantiene la cátedra, y una carpeta por cada dispositivo que
+desarrollan los grupos de Ingeniería en Computación III y IV, con su firmware y su ficha.
 
 La plataforma (backend y web) está en otro repositorio. Lo único que une a los dos es el
 **contrato**: [`docs/CONTRATO_MQTT.md`](docs/CONTRATO_MQTT.md). Si un dispositivo no lo
@@ -28,9 +28,8 @@ Según [ADR-003](docs/adr/ADR-003-dos-transportes-mesh-interior-lorawan-exterior
 |---|---|---|
 | [`comun/`](comun/) | Trama de la mesh, buffer circular, `ingest_id`, y sus tests de host | cátedra |
 | [`infraestructura/`](infraestructura/) | `nodo_gateway` y `nodo_sala` de la mesh | cátedra |
-| [`firmware/`](firmware/) | **Un firmware por carpeta**, `Fnnn_descripcion`, con su registro en `firmware/README.md` | cada grupo |
-| [`dispositivos/`](dispositivos/) | **Una ficha por placa instalada**, con su código de ubicación (`E1-PB-LECA-HFR01`), y el mapa de códigos | cada grupo |
-| [`ejemplos/`](ejemplos/) | `plantilla_firmware/` y `sensor_ejemplo/` | cátedra |
+| [`dispositivos/`](dispositivos/) | **Una carpeta por dispositivo, con todo adentro** (firmware, ficha, bibliotecas, tests), nombrada con su código de ubicación (`E1-PB-LECA-HFR01`); y el mapa de códigos | cada grupo |
+| [`ejemplos/`](ejemplos/) | `plantilla_dispositivo/` y `sensor_ejemplo/` | cátedra |
 | [`herramientas/`](herramientas/) | `broker.sh`, `leer_mac/`, `generar_autocontenidos.sh` | cátedra |
 | [`autocontenido/`](autocontenido/) | Copia de cada sketch con los headers de `comun/` al lado, para abrir en el IDE. **Se genera, no se edita** | — |
 | [`docs/`](docs/) | Copia publicada del contrato, ADRs y el histórico de la mesh v1 | cátedra |
@@ -42,12 +41,12 @@ Según [ADR-003](docs/adr/ADR-003-dos-transportes-mesh-interior-lorawan-exterior
 > Sirven como referencia de ESP-NOW y para el banco, pero **no se conectan a AURA tal cual**.
 > Su actualización a la v3.0 está pendiente (contrato §10).
 
-## Sumar un firmware o un dispositivo
+## Sumar un dispositivo
 
-Ver [`CONTRIBUTING.md`](CONTRIBUTING.md). En corto: un **firmware** es código y se nombra con un
-número único (`F001_…`); un **dispositivo** es una placa instalada y se nombra por dónde está
-(`E1-PB-LECA-HFR01`, con el mapa de [`dispositivos/README.md`](dispositivos/README.md)). Se suman
-por fork y pull request. El CI compila, corre los tests, valida los códigos y busca secretos.
+Ver [`CONTRIBUTING.md`](CONTRIBUTING.md). En corto: cada dispositivo es una carpeta con todo
+adentro, nombrada por dónde está y qué es (`E1-PB-LECA-HFR01`, con el mapa de
+[`dispositivos/README.md`](dispositivos/README.md)). Se suma por fork y pull request. El CI
+compila, corre los tests, valida los códigos y busca secretos.
 
 ## Compilar
 

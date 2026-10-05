@@ -1,9 +1,9 @@
 /*
- * AURA - plantilla de firmware
+ * AURA - plantilla de dispositivo
  *
- * Punto de partida para un firmware nuevo. Copiar esta carpeta a firmware/Fnnn_<descripcion>/
- * con el número que sigue en firmware/README.md, y renombrar el .ino igual que la carpeta
- * (Arduino lo exige). Ver CONTRIBUTING.md en la raíz del repo.
+ * Punto de partida para un dispositivo nuevo. Copiar esta carpeta a dispositivos/<CÓDIGO>/
+ * (el código se arma con el mapa de dispositivos/README.md) y renombrar el .ino igual que la
+ * carpeta, por ejemplo E1-PB-LECA-HFR01.ino (Arduino lo exige). Ver CONTRIBUTING.md.
  *
  * Reglas del contrato de AURA (docs/CONTRATO_MQTT.md) que conviene tener presentes
  * desde la primera línea:
@@ -43,7 +43,7 @@ float leerMedicion() {
 
 void setup() {
   Serial.begin(115200);
-  Serial.println("plantilla_firmware: reemplazar leerMedicion() y el envío");
+  Serial.println("plantilla_dispositivo: reemplazar leerMedicion() y el envío");
 }
 
 void loop() {
