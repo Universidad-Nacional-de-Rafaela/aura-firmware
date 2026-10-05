@@ -1,0 +1,17 @@
+// Copiar este archivo como config_local.h (en la misma carpeta) y completar.
+// config_local.h está en el .gitignore: NUNCA se commitea. Si contiene una clave,
+// un AppKey o una MAC de producción y llega a GitHub, este repo es público.
+
+#pragma once
+
+// Cada cuánto mide, en milisegundos.
+#define INTERVALO_MUESTRA_MS 60000UL
+
+// Mesh ESP-NOW: MAC del padre (nodo de sala o gateway) y de esta placa.
+// #define MAC_PADRE    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+// #define MAC_ESPERADA {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+
+// LoRaWAN: las credenciales OTAA las da la cátedra al dar de alta el dispositivo.
+// #define LORAWAN_DEV_EUI  0x0000000000000000
+// #define LORAWAN_JOIN_EUI 0x0000000000000000
+// #define LORAWAN_APP_KEY  {0x00, ...}

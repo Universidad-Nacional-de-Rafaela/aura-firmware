@@ -1,0 +1,48 @@
+# Reglas de gitleaks para este repo. Se suman a las reglas por defecto, que no detectan los
+# secretos típicos del firmware: claves de WiFi, claves AES de LoRaWAN y de ESP-NOW, y
+# contraseñas de MQTT (verificado: con las reglas por defecto, "no leaks found").
+#
+# Los marcadores de posición ("CAMBIAR", claves en cero) no se reportan.
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "aura-clave-wifi"
+description = "Clave de WiFi en el código"
+regex = '''(?i)(?:wifi_?pass(?:word)?|ssid_?pass|wifi_?clave)\s*(?:=|\s)\s*"([^"]{4,})"'''
+secretGroup = 1
+keywords = ["wifi", "ssid"]
+[rules.allowlist]
+regexTarget = "match"
+regexes = ['''(?i)"(?:CAMBIAR|TU_CLAVE|xxx+|\*+)"''']
+
+[[rules]]
+id = "aura-clave-aes-bytes"
+description = "Clave AES de 16 bytes (AppKey/NwkKey de LoRaWAN, PMK/LMK de ESP-NOW) como arreglo"
+regex = '''(?i)(?:app_?key|nwk_?key|pmk|lmk|aes_?key)[^=\n]*=\s*\{\s*((?:0x[0-9a-f]{2}\s*,\s*){15}0x[0-9a-f]{2})'''
+secretGroup = 1
+keywords = ["key", "pmk", "lmk"]
+[rules.allowlist]
+regexTarget = "match"
+regexes = ['''(?i)\{\s*(?:0x00\s*,\s*){15}0x00''']
+
+[[rules]]
+id = "aura-clave-aes-hex"
+description = "Clave AES de 16 bytes (AppKey/NwkKey/PMK/LMK) como cadena hexadecimal"
+regex = '''(?i)(?:app_?key|nwk_?key|pmk|lmk|aes_?key)[^\n]{0,20}?["']([0-9a-f]{32})["']'''
+secretGroup = 1
+keywords = ["key", "pmk", "lmk"]
+[rules.allowlist]
+regexTarget = "secret"
+regexes = ['''^0{32}$''']
+
+[[rules]]
+id = "aura-contrasena"
+description = "Contraseña o token asignado en código o configuración"
+regex = '''(?i)(?:password|passwd|contrase(?:n|ñ)a|mqtt_?pass|api_?token|secret)\s*[:=]\s*["']?([^\s"';,]{6,})'''
+secretGroup = 1
+keywords = ["pass", "contrase", "token", "secret"]
+[rules.allowlist]
+regexTarget = "secret"
+regexes = ['''(?i)^(?:CAMBIAR|TU_CLAVE|changeme|x+|\*+|<[^>]*>|\$\{?[A-Z_]+\}?)$''']

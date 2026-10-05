@@ -1,74 +1,74 @@
 # aura-firmware
 
-> **Congelado desde el 2026-09-25.** Los primeros dispositivos de AURA no usan esta mesh: van por
-> **LoRaWAN**, con ChirpStack (ver
-> [`IC-lorawan-test`](https://github.com/Universidad-Nacional-de-Rafaela/IC-lorawan-test)). El
-> firmware se conserva como referencia y como material de estudio de ESP-NOW. Implementa la
-> versión 1.x del contrato MQTT de AURA (`enviado_a_mesh`, comandos de hasta 180 B), que la
-> plataforma ya no acepta: conectarlo tal cual a AURA no funciona.
->
-> `main` está protegida: los cambios entran solo por pull request.
+Firmware de los dispositivos del proyecto **AURA** (Administración Unificada de Recursos y
+Accesos), Universidad Nacional de Rafaela. Acá vive el código que corre **en las placas**: la
+infraestructura de la mesh que mantiene la cátedra y el firmware de cada dispositivo que
+desarrollan los grupos de Ingeniería en Computación III y IV.
 
-Firmware de la malla de nodos ESP32 del proyecto **AURA** (Administración Unificada
-de Recursos y Accesos), Universidad Nacional de Rafaela.
+La plataforma (backend y web) está en otro repositorio. Lo único que une a los dos es el
+**contrato**: [`docs/CONTRATO_MQTT.md`](docs/CONTRATO_MQTT.md). Si un dispositivo no lo
+respeta, AURA no falla: descarta el mensaje en silencio.
 
-AURA busca responder a la demanda de soluciones tecnológicas que permitan gestionar
-recursos, garantizar seguridad, optimizar consumos energéticos e hídricos y mejorar
-la experiencia de estudiantes, docentes y personal administrativo.
+## Dos transportes
 
-## La malla
+Según [ADR-003](docs/adr/ADR-003-dos-transportes-mesh-interior-lorawan-exterior.md):
 
-Tres roles de nodo, encadenados por ESP-NOW, con salida a MQTT y a la API por WiFi:
+- **Interior → mesh ESP-NOW.** El dispositivo habla con un nodo de sala o directo con el
+  gateway de la mesh, que es el único con WiFi.
+  ```
+  dispositivo --ESP-NOW--> nodo_sala --ESP-NOW--> nodo_gateway --WiFi--> AURA
+  ```
+- **Exterior o lejos → LoRaWAN**, por el gateway LoRa y ChirpStack. El banco del aula y un
+  nodo de ejemplo están en
+  [`IC-lorawan-test`](https://github.com/Universidad-Nacional-de-Rafaela/IC-lorawan-test).
 
-```
-nodo_sensor  --ESP-NOW-->  nodo_sala  --ESP-NOW-->  nodo_gateway  --WiFi-->  MQTT / API
-```
+## Estructura
 
-| Sketch | Rol |
-|---|---|
-| `firmware/nodo_sensor/` | Mide y emite lecturas hacia el nodo de sala |
-| `firmware/nodo_sala/` | Reenvía lo de los sensores de su sala hacia el gateway |
-| `firmware/nodo_gateway/` | Único nodo con WiFi: publica en MQTT y postea a la API |
+| Carpeta | Qué hay | Quién la mantiene |
+|---|---|---|
+| [`comun/`](comun/) | Trama de la mesh, buffer circular, `ingest_id`, y sus tests de host | cátedra |
+| [`infraestructura/`](infraestructura/) | `nodo_gateway` y `nodo_sala` de la mesh | cátedra |
+| [`dispositivos/`](dispositivos/) | **Una carpeta por dispositivo**, más `plantilla_dispositivo/` y `sensor_ejemplo/` | cada grupo |
+| [`herramientas/`](herramientas/) | `broker.sh`, `leer_mac/`, `generar_autocontenidos.sh` | cátedra |
+| [`autocontenido/`](autocontenido/) | Copia de cada sketch con los headers de `comun/` al lado, para abrir en el IDE. **Se genera, no se edita** | — |
+| [`docs/`](docs/) | Copia publicada del contrato, ADRs y el histórico de la mesh v1 | cátedra |
 
-Código compartido en `firmware/comun/` (protocolo, buffer circular, IDs de ingesta).
+## Estado
+
+> ⚠️ **`infraestructura/` y `sensor_ejemplo/` implementan la versión 1.x del contrato**, que
+> AURA ya no acepta (telemetría por MQTT, `enviado_a_mesh`, sin cola persistente en el nodo).
+> Sirven como referencia de ESP-NOW y para el banco, pero **no se conectan a AURA tal cual**.
+> Su actualización a la v3.0 está pendiente (contrato §10).
+
+## Agregar un dispositivo
+
+Ver [`CONTRIBUTING.md`](CONTRIBUTING.md). En corto: fork, copiar `dispositivos/plantilla_dispositivo/`,
+completar su README, y abrir un pull request. El CI compila, corre los tests y busca secretos;
+si algo falla, el PR no se puede mergear.
 
 ## Compilar
 
-Arduino IDE, placa **XIAO_ESP32S3**, con **USB CDC On Boot: Enabled** (sin eso el
-monitor serie queda mudo). Única biblioteca externa: **ArduinoMqttClient**, y solo
-la usa el gateway.
-
-Si los `#include` relativos a `../comun/` molestan, en `firmware/monolitico/` hay
-copias autocontenidas de cada sketch, listas para pegar en el IDE. **No se editan
-a mano**: se regeneran con `firmware/generar_monolitico.sh`.
-
-## Configuración
-
-Antes de flashear el gateway hay que completar en `firmware/nodo_gateway/nodo_gateway.ino`:
-
-- `WIFI_SSID` / `WIFI_PASS` — la red a la que se conecta el gateway
-- `MQTT_HOST` / `API_BASE` — dónde corren el broker y la API
-- `TENANT_ID`, `GATEWAY_DEVICE_ID`
-- `MAC_ESPERADA` y las MAC de los saltos vecinos — se leen con
-  `firmware/utilidades/leer_mac/`
-
-Los valores versionados son marcadores de posición. **No commitear credenciales reales.**
-
-## Tests
-
-Los headers de `comun/` se testean en la máquina de desarrollo, sin placa:
+Placa **XIAO_ESP32S3** con **USB CDC On Boot: Enabled** (sin eso el monitor serie queda mudo),
+core `esp32:esp32` 3.3.11. Con `arduino-cli`:
 
 ```bash
-cd firmware/tests_host && make
+arduino-cli compile --fqbn "esp32:esp32:XIAO_ESP32S3:CDCOnBoot=cdc" infraestructura/nodo_gateway
 ```
 
-## Utilidades
+Los sketches incluyen `comun/` con rutas relativas (`../../comun/…`), y así compilan tanto en
+`arduino-cli` como en el IDE 2. Si preferís abrir una carpeta suelta, usá la de `autocontenido/`.
 
-- `firmware/utilidades/broker.sh {ver|datos|estado|retenidos|limpiar|comando|log|problemas}`
-  — inspección del broker Mosquitto sin instalar clientes MQTT locales.
-- `firmware/utilidades/leer_mac/` — imprime la MAC de la placa por serie.
+Tests de host de `comun/`, sin placa:
 
-## Documentación
+```bash
+make -C comun/tests
+```
 
-`docs/superpowers/` contiene el diseño de la malla, el plan de implementación y el
-estado del banco de pruebas.
+## Seguridad
+
+**Este repositorio es público.** Credenciales de WiFi, claves de LoRaWAN (AppKey), tokens y
+MAC de producción van en `config_local.h`, que está en el `.gitignore`. El CI rechaza cualquier
+PR que los versione. Si algo se filtra igual, avisá a la cátedra: borrarlo en un commit nuevo
+**no alcanza**, porque queda en la historia; hay que cambiar la clave.
+
+`main` está protegida: los cambios entran solo por pull request.

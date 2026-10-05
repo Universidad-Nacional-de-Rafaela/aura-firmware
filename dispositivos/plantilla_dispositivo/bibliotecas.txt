@@ -1,0 +1,4 @@
+# Bibliotecas de Arduino que necesita este dispositivo, una por línea, con versión.
+# El CI las instala antes de compilar. Ejemplo:
+# OneWire@2.3.8
+# DallasTemperature@3.11.0

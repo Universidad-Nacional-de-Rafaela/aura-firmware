@@ -1,0 +1,15 @@
+# Quién revisa qué. GitHub pide la revisión automáticamente al abrir un PR.
+#
+# comun/ e infraestructura/ son de todos los dispositivos: un cambio ahí puede dejar a
+# todos sin llegar a AURA. Lo revisa la cátedra.
+#
+# Cada grupo agrega acá su carpeta de dispositivos/ con sus usuarios de GitHub, en el
+# mismo PR en que la crea. Ejemplo:
+#   /dispositivos/heladera_freezer/  @usuario1 @usuario2
+
+*                     @mwanzenried
+/comun/               @mwanzenried
+/infraestructura/     @mwanzenried
+/docs/                @mwanzenried
+/.github/             @mwanzenried
+/herramientas/        @mwanzenried

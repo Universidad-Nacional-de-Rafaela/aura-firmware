@@ -1,1 +1,11 @@
 CLAUDE.md
+
+# Configuración local de cada placa: credenciales, MAC, claves. Este repo es público.
+config_local.h
+credenciales.h
+.env
+
+# Compilación
+build/
+*.bin
+*.elf
