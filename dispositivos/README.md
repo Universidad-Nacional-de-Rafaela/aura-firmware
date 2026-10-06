@@ -74,4 +74,4 @@ que monitorea, o lo que acciona. Una placa que mide varias magnitudes del ambien
 
 | Código | Qué es | Responsable | Estado |
 |---|---|---|---|
-| [`E1-PB-LECA-HFR01`](E1-PB-LECA-HFR01/) | Heladera-freezer del LabECA | grupo de IC IV 2026 | en desarrollo |
+| [`E1-PB-LECA-HFR01`](E1-PB-LECA-HFR01/) | Heladera-freezer del LabECA | Bernardo Del Barco, Vainstub Tomás, Juan Cruz Sotelo, Facundo Grassino | en desarrollo |
