@@ -1,0 +1,16 @@
+// Copiar a config_local.h junto al sketch que se carga. No versionar valores reales.
+#pragma once
+#define ICIV_PARENT_MAC {0,0,0,0,0,0} // MAC de sala; gateway si se usa enlace directo
+#define ICIV_GATEWAY_MAC {0,0,0,0,0,0}
+#define ICIV_CHANNEL 1 // mismo canal que sala y WiFi del gateway
+#define ICIV_FRIDGE_PIN D2
+#define ICIV_FREEZER_PIN D3
+#define ICIV_ALARM_LED_PIN D0
+#define ICIV_OFFLINE_LED_PIN D1
+#define ICIV_POWER_PIN -1 // deshabilitado hasta definir modulo; p.ej. D6
+#define ICIV_POWER_PRESENT_LEVEL HIGH
+#define ICIV_POWER_PIN_MODE INPUT // INPUT_PULLUP solo si lo requiere el circuito
+// El RTC debe estar ajustado previamente. No inventar hora si perdio alimentacion.
+#define ICIV_SET_RTC_FROM_BUILD 0
+// 0 si RTC esta en UTC; -10800 si mantiene hora local de Argentina.
+#define ICIV_RTC_UTC_OFFSET_SECONDS 0
