@@ -29,11 +29,12 @@ Según [ADR-003](docs/adr/ADR-003-dos-transportes-mesh-interior-lorawan-exterior
 
 | Carpeta | Qué hay | Quién la mantiene |
 |---|---|---|
-| [`comun/`](comun/) | Trama de la mesh, `nodo_mesh.h` (la biblioteca de las hojas), cola persistente, `ingest_id`, radio ESP-WIFI-MESH, y sus tests de host | cátedra |
+| [`comun/`](comun/) | Trama de la mesh, `nodo_mesh.h` (la biblioteca de las hojas), cola persistente, `ingest_id`, radio ESP-WIFI-MESH, y sus tests de host; `python/aura_sdk/`, la biblioteca de los conectores | cátedra |
 | [`infraestructura/`](infraestructura/) | `nodo_raiz` y `nodo_relevo` de la mesh, con sus `config_local.h.example` | cátedra |
+| [`conectores/`](conectores/) | **Un conector por dispositivo**: el código que procesa sus datos dentro de AURA (valida, guarda, alerta, predice), en Python | cada grupo |
 | [`dispositivos/`](dispositivos/) | **Una carpeta por dispositivo, con todo adentro** (firmware, ficha, bibliotecas, tests), nombrada con su código de ubicación (`E1-PB-LECA-HFR01`); y el mapa de códigos | cada grupo |
-| [`ejemplos/`](ejemplos/) | `plantilla_dispositivo/`, `sensor_ejemplo/` (una medición) y `actuador_ejemplo/` (un comando) | cátedra |
-| [`herramientas/`](herramientas/) | `broker.sh`, `ack_falso.py`, `leer_mac/`, `generar_autocontenidos.sh` | cátedra |
+| [`ejemplos/`](ejemplos/) | Firmware: `plantilla_dispositivo/`, `sensor_ejemplo/` (una medición) y `actuador_ejemplo/` (un comando). Conectores: `plantilla_conector/` y `conector_ejemplo/` | cátedra |
+| [`herramientas/`](herramientas/) | `broker.sh`, `ack_falso.py`, `correr_conector.py`, `leer_mac/`, `generar_autocontenidos.sh`, validadores | cátedra |
 | [`autocontenido/`](autocontenido/) | Copia de cada sketch con los headers de `comun/` al lado, para abrir en el IDE. **Se genera, no se edita** | — |
 | [`docs/`](docs/) | Copia publicada del contrato, ADRs, el diseño de la mesh ([`mesh-wifi/`](docs/mesh-wifi/)) y el [histórico](docs/historico/) de la mesh ESP-NOW | cátedra |
 
@@ -66,8 +67,8 @@ y la plantilla. El diseño está en [`docs/mesh-wifi/`](docs/mesh-wifi/).
 
 ## Sumar un dispositivo
 
-Ver [`CONTRIBUTING.md`](CONTRIBUTING.md). En corto: cada dispositivo es una carpeta con todo
-adentro, nombrada por dónde está y qué es (`E1-PB-LECA-HFR01`, con el mapa de
+Ver [`CONTRIBUTING.md`](CONTRIBUTING.md). En corto: cada dispositivo es una carpeta con su
+firmware en `dispositivos/` y su conector en `conectores/`, con todo adentro, nombrada por dónde está y qué es (`E1-PB-LECA-HFR01`, con el mapa de
 [`dispositivos/README.md`](dispositivos/README.md)). Se suma por fork y pull request. El CI
 compila, corre los tests, valida los códigos y busca secretos.
 

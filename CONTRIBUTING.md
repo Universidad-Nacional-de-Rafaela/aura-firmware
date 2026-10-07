@@ -22,7 +22,7 @@ hardware), se copia esa carpeta con el código nuevo, y la ficha dice de cuál e
 
 ## 1. Antes de escribir código
 
-1. **Leé el contrato**: [`docs/CONTRATO_MQTT.md`](docs/CONTRATO_MQTT.md). Como mínimo §2.5 (un
+1. **Leé el contrato**: [`docs/CONTRATO_MQTT.md`](docs/CONTRATO_MQTT.md). Como mínimo §2.4 (un
    dispositivo es una placa), §3.1 (qué va en `values`), §3.3 (`set_config`) y §3.5 (alertas).
 2. **Definí el transporte** con la cátedra: mesh ESP-WIFI-MESH si está en interior, LoRaWAN si
    está en exterior o lejos ([ADR-003](docs/adr/ADR-003-dos-transportes-mesh-interior-lorawan-exterior.md),
@@ -69,7 +69,35 @@ y corré `herramientas/generar_autocontenidos.sh` antes de commitear. Si tu lóg
 sin placa (formato de trama, validación de rangos, cola), poné los tests en
 `dispositivos/<CÓDIGO>/tests/` con un `Makefile`: el CI los corre solo.
 
-## 3. Lo que no se negocia
+## 3. Tu conector
+
+El **conector** es el código que procesa, dentro de AURA, lo que manda tu dispositivo: lo
+valida, lo guarda, alerta y, si querés, predice. Va en `conectores/<CÓDIGO>/`, con el mismo
+código que tu dispositivo (ver [`conectores/README.md`](conectores/README.md)).
+
+1. Copiá [`ejemplos/plantilla_conector/`](ejemplos/plantilla_conector/) a `conectores/<CÓDIGO>/`.
+2. En `conector.toml`: `nombre` igual a la carpeta, tus usuarios de GitHub, y **un bloque
+   `[campos.<nombre>]` por cada campo que manda tu firmware**, con su unidad y su rango físico.
+   Lo que no esté declarado, o esté fuera de rango, AURA no lo guarda.
+3. En `conector.py`, `al_recibir_datos(self, msg, ctx)`: con `msg.values` y `msg.ts` decidís
+   `ctx.guardar_medicion(...)` o `ctx.descartar("motivo")`. Si querés predecir, `predecir(self, ctx)`
+   y `[prediccion]` en el manifiesto.
+4. Tests en `tests/`, con `ContextoDePrueba`: corren sin AURA ni placa.
+   ```bash
+   python3 -m unittest discover -s conectores/<CÓDIGO>/tests
+   ```
+5. En el banco, contra lo que manda tu placa:
+   ```bash
+   herramientas/correr_conector.py conectores/<CÓDIGO> --hw-id mac-<MAC de tu placa> --docker aura-mosquitto
+   ```
+
+Lo que puede usar un conector es solo el `Contexto`: `guardar_medicion`, `descartar`, `serie`,
+`guardar_prediccion`, `alertar`, `config_vigente` y `log`. No tiene acceso a la base, a la red ni
+a archivos, y AURA puede recrearlo en cualquier momento: lo que tenga que recordar lo lee con
+`ctx.serie()`. Si lanza una excepción, no se guarda nada y el dispositivo reenvía la muestra más
+tarde. Python 3.11 o posterior, sin bibliotecas externas por ahora.
+
+## 4. Lo que no se negocia
 
 - **Ninguna credencial en el repo.** WiFi, clave de la mesh, AppKey, tokens, MAC de producción: todo en
   `config_local.h`, que está en el `.gitignore`. Este repo es **público**.
@@ -81,12 +109,12 @@ sin placa (formato de trama, validación de rangos, cola), poné los tests en
 - **No tocar `comun/` ni `infraestructura/` en el mismo PR que tu dispositivo.** Si necesitás
   un cambio ahí, abrí un issue o un PR aparte: afecta a todos los dispositivos.
 
-## 4. Si el equipo se muda
+## 5. Si el equipo se muda
 
 Su carpeta se renombra con el código nuevo (también el `.ino`), y la ficha anota el anterior en
 *Códigos anteriores*. En AURA conserva su `device_id`, así que el historial no se corta.
 
-## 5. El pull request
+## 6. El pull request
 
 Abrilo contra `main` de este repo. La plantilla del PR trae un checklist. El CI:
 
@@ -95,6 +123,7 @@ Abrilo contra `main` de este repo. La plantilla del PR trae un checklist. El CI:
 | Sin secretos | Rechaza `config_local.h` versionados y corre `gitleaks` sobre toda la historia |
 | Códigos de dispositivos | Cada carpeta respeta el formato y el mapa, tiene su ficha y su `.ino` se llama igual |
 | Tests de host | `comun/tests`, `infraestructura/*/tests`, `herramientas/tests` y los `tests/` de cada dispositivo |
+| Conectores | Tests de `aura_sdk`, manifiesto y clase de cada conector, y sus `tests/` |
 | Compilar sketches | Compila cada sketch para XIAO ESP32S3 y verifica que `autocontenido/` esté al día |
 
 Con todo en verde, la cátedra revisa y mergea.

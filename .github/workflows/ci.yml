@@ -56,6 +56,26 @@ jobs:
             make -C "$(dirname "$mk")"
           done
 
+  conectores:
+    name: Conectores
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: aura_sdk
+        run: python3 -m unittest discover -s comun/python/tests -v
+      - name: Manifiestos y clases
+        run: python3 herramientas/validar_conectores.py
+      - name: Tests de cada conector
+        run: |
+          for t in ejemplos/*conector*/tests conectores/*/tests; do
+            [ -d "$t" ] || continue
+            echo "== $t =="
+            python3 -m unittest discover -s "$t" -v
+          done
+
   compilar:
     name: Compilar sketches
     runs-on: ubuntu-latest
