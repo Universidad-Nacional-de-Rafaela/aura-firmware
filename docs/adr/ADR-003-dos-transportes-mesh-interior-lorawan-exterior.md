@@ -1,6 +1,10 @@
 # ADR-003 — Dos transportes: mesh ESP-NOW en interior, LoRaWAN en exterior
 
 **Estado:** propuesta · **Fecha:** 2026-10-05 · **Decide:** Matías Wanzenried
+**Reemplazado en parte por:** [ADR-004](ADR-004-mqtt-punto-comun-de-ingesta-con-ack-de-persistencia.md)
+(el punto 3: la telemetría de la mesh pasa a MQTT, con `ack` de persistencia del backend).
+**Reemplazado en parte por:** [ADR-006](ADR-006-esp-wifi-mesh-reemplaza-a-esp-now-en-interior.md)
+(la tecnología de la mesh: ESP-WIFI-MESH en lugar de ESP-NOW). El criterio interior/exterior sigue.
 **Reemplaza en parte a:** [ADR-002](ADR-002-lorawan-reemplaza-a-la-mesh-espnow.md) (el punto 3,
 "la mesh queda congelada"). Los puntos 1 y 2 de ADR-002 siguen vigentes para los dispositivos de
 exterior.

@@ -444,7 +444,11 @@ static inline void nodo_mesh_loop() {
 
   // Al unirse o volver a la mesh se reporta: sin el reporte, el raiz no conoce
   // el intervalo y no puede inferir offline.
-  if (radio_reconecto()) nodo_mesh_reportar();
+  if (radio_reconecto()) {
+    Serial.printf("[MESH] unida a la mesh, capa %d, tipo %s\n", radio_capa(),
+                  esp_mesh_get_type() == MESH_LEAF ? "hoja" : "NO ES HOJA");
+    nodo_mesh_reportar();
+  }
 
   nodo_mesh_enviar_evento();
   nodo_mesh_procesar_recibidas();   // un comando no espera a la proxima vuelta
