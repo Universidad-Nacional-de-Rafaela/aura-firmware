@@ -2,10 +2,8 @@
 #include "aserciones.h"
 
 static TramaAura hacer(uint16_t seq) {
-  const uint8_t A[6] = {0xAA,0,0,0,0,1};
-  const uint8_t B[6] = {0xBB,0,0,0,0,2};
   TramaAura t;
-  aura_trama_init(&t, AURA_TIPO_TELEMETRIA, A, B, seq, NULL, 0);
+  aura_trama_init(&t, AURA_TIPO_TELEMETRIA, seq, NULL, 0);
   return t;
 }
 
