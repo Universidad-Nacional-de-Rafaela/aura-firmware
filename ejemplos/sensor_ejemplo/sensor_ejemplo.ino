@@ -1,5 +1,5 @@
 /*
- * AURA - nodo sensor de ejemplo (XIAO ESP32S3), contrato v3.0
+ * AURA - nodo sensor de ejemplo (XIAO ESP32S3), contrato v4.0, ESP-WIFI-MESH
  *
  * Muestra el uso de comun/nodo_mesh.h con lo minimo: una medicion, un
  * parametro configurable y nada de hardware extra. Con la placa pelada, lo
@@ -8,8 +8,10 @@
  * la temperatura de ningun otro lado. Alcanza para validar la cadena de punta
  * a punta: apretando el chip con el dedo se ve subir el valor en la base.
  *
- * No conoce AURA: se identifica por MAC, y el gateway la traduce a su
- * device_id. Las MAC van en config_local.h (ver config_local.h.example).
+ * No conoce AURA: es una hoja de la mesh y se identifica por la MAC de su
+ * placa (hw_id "mac-..."). Los datos de la mesh van en config_local.h (ver
+ * config_local.h.example). Sin config_local.h compila, mide y guarda en la
+ * cola, pero no envia: sirve para desarrollar la medicion sin la mesh.
  *
  * set_config acepta {"intervalo_s": 5..86400}, guardado en flash.
  *
@@ -23,22 +25,6 @@
 
 #include <Preferences.h>
 #include "../../comun/nodo_mesh.h"
-
-// Valores por defecto si no hay config_local.h. En cero = sin configurar: el
-// nodo mide y guarda, pero no envia nada.
-#ifndef MAC_PADRE
-#define MAC_PADRE    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
-#endif
-#ifndef MAC_GATEWAY
-#define MAC_GATEWAY  {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
-#endif
-#ifndef MAC_ESPERADA
-#define MAC_ESPERADA {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
-#endif
-
-const uint8_t mac_padre[6]    = MAC_PADRE;
-const uint8_t mac_gateway[6]  = MAC_GATEWAY;
-const uint8_t mac_esperada[6] = MAC_ESPERADA;
 
 // ===== Configuracion remota =====
 const uint32_t INTERVALO_MIN_S = 5;
@@ -85,7 +71,7 @@ void setup() {
   if (intervalo_s < INTERVALO_MIN_S || intervalo_s > INTERVALO_MAX_S) intervalo_s = 60;
 
   NodoMeshCallbacks cb = {aplicar_config, describir_config, NULL, "red"};
-  nodo_mesh_iniciar(mac_padre, mac_gateway, mac_esperada, cb);
+  nodo_mesh_iniciar(cb);
   Serial.printf("sensor_ejemplo listo, intervalo %lu s\n", (unsigned long)intervalo_s);
 }
 

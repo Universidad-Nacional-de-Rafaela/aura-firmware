@@ -9,3 +9,7 @@ credenciales.h
 build/
 *.bin
 *.elf
+
+# Python
+__pycache__/
+*.pyc

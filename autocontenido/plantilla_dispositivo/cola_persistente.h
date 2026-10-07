@@ -2,8 +2,8 @@
 #include "protocolo_aura.h"
 
 // Cola de muestras del nodo en memoria no volatil (contrato §5): cada muestra
-// se guarda ANTES del primer envio y sale de la cola solo cuando el gateway
-// confirma que AURA la persistio. Sobrevive a cortes del gateway, del WiFi, de
+// se guarda ANTES del primer envio y sale de la cola solo cuando el raiz
+// confirma que AURA la recibio (ack). Sobrevive a cortes del raiz, del WiFi, de
 // AURA y del propio nodo, dentro de su capacidad.
 //
 // Formato: una cabecera y AURA_COLA_CAP ranuras de MuestraAura, en anillo. El
@@ -125,7 +125,7 @@ static inline bool cola_peek(const ColaPersistente* q, MuestraAura* salida) {
   return q->alm.leer(q->alm.ctx, cola_offset_ranura(q->cab.inicio), salida, sizeof(*salida));
 }
 
-// Saca la mas vieja. Se llama solo cuando el gateway confirmo esa muestra.
+// Saca la mas vieja. Se llama solo cuando el raiz confirmo esa muestra.
 static inline bool cola_pop(ColaPersistente* q) {
   if (q->cab.cantidad == 0) return false;
   CabeceraCola c = q->cab;

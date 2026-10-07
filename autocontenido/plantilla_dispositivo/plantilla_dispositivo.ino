@@ -6,9 +6,9 @@
  * (el código se arma con el mapa de dispositivos/README.md) y renombrar el .ino igual que la
  * carpeta, por ejemplo E1-PB-LECA-HFR01.ino (Arduino lo exige). Ver CONTRIBUTING.md.
  *
- * Viene armada para la mesh ESP-NOW (interior) con comun/nodo_mesh.h, que se ocupa de la
- * cola en flash, el ingest_id, los reintentos hasta que AURA confirma, set_config y las
- * alertas. Lo que completa el grupo está marcado con TODO. Para LoRaWAN (exterior), ver
+ * Viene armada para la mesh ESP-WIFI-MESH (interior) con comun/nodo_mesh.h, que se ocupa
+ * de la mesh, la cola en flash, el ingest_id, los reintentos hasta que AURA confirma,
+ * set_config y las alertas. El dispositivo es una HOJA de la mesh. Lo que completa el grupo está marcado con TODO. Para LoRaWAN (exterior), ver
  * IC-lorawan-test.
  *
  * Reglas del contrato de AURA (docs/CONTRATO_MQTT.md) que conviene tener presentes
@@ -20,6 +20,8 @@
  *   - Los parámetros configurables se validan contra un rango antes de aplicarlos
  *     y se guardan en memoria no volátil (aplicar_config()).
  *   - Nada de credenciales ni MAC en este archivo: van en config_local.h, que no se versiona.
+ *     Sin config_local.h compila, mide y guarda, pero no envía: sirve para desarrollar
+ *     la medición antes de tener los datos de la mesh.
  *
  * IDE: placa "XIAO_ESP32S3", USB CDC On Boot: ENABLED (si no, el monitor serie
  * no muestra nada). Bibliotecas: las de bibliotecas.txt.
@@ -30,22 +32,7 @@
 #endif
 
 #include <Preferences.h>
-#include "nodo_mesh.h"
-
-// Valores por defecto si no hay config_local.h. Nunca poner acá valores reales.
-#ifndef MAC_PADRE
-#define MAC_PADRE    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
-#endif
-#ifndef MAC_GATEWAY
-#define MAC_GATEWAY  {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
-#endif
-#ifndef MAC_ESPERADA
-#define MAC_ESPERADA {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
-#endif
-
-const uint8_t mac_padre[6]    = MAC_PADRE;
-const uint8_t mac_gateway[6]  = MAC_GATEWAY;
-const uint8_t mac_esperada[6] = MAC_ESPERADA;
+#include "nodo_mesh.h"   // la mesh se configura en config_local.h
 
 // Nombre del campo en "values", con unidad (contrato §3.1). TODO: el de tu medición.
 const char* CAMPO = "temp_c";
@@ -110,7 +97,7 @@ void setup() {
   // Alimentación: "red", "bateria" o "desconocida". Si cambia en marcha,
   // llamar a nodo_mesh_alimentacion("bateria").
   NodoMeshCallbacks cb = {aplicar_config, describir_config, NULL, "red"};
-  nodo_mesh_iniciar(mac_padre, mac_gateway, mac_esperada, cb);
+  nodo_mesh_iniciar(cb);
 }
 
 void loop() {

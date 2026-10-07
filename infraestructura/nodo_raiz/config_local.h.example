@@ -1,0 +1,27 @@
+// Copiar este archivo como config_local.h (en la misma carpeta) y completar.
+// config_local.h está en el .gitignore: NUNCA se commitea. Este repo es público:
+// la clave del WiFi, las IP internas y la clave de la mesh van acá.
+
+#pragma once
+
+// Mesh del edificio: identificador (6 bytes) y clave (8 a 63 caracteres).
+// Son los mismos que se les dan a los grupos para sus hojas.
+#define MESH_ID     {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+#define MESH_CLAVE  "CAMBIAR"
+
+// Canal del WiFi del edificio. La mesh entera trabaja en este canal. 0 = buscar.
+#define MESH_CANAL  0
+
+// WiFi del edificio: solo el raíz lo conoce.
+#define ROUTER_SSID  "CAMBIAR"
+#define ROUTER_CLAVE "CAMBIAR"
+
+// Broker AURA. Si la máquina toma IP por DHCP puede cambiar y hay que reflashear.
+#define MQTT_HOST "192.168.0.100"
+#define MQTT_PORT 1883
+
+// Si la red bloquea pool.ntp.org, el servidor NTP de la universidad.
+#define NTP_SERVIDOR "pool.ntp.org"
+
+// MAC de la placa en la que DEBE correr este sketch (herramientas/leer_mac).
+#define MAC_ESPERADA {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}

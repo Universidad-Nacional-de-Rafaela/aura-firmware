@@ -4,10 +4,14 @@
 
 #pragma once
 
-// Mesh ESP-NOW: MAC del padre (nodo de sala, o el gateway si le llega directo),
-// del gateway de la mesh (destino final) y de esta placa (herramientas/leer_mac).
-#define MAC_PADRE    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
-#define MAC_GATEWAY  {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+// Mesh ESP-WIFI-MESH (interior): los datos los da la cátedra. El dispositivo es
+// una HOJA: no lleva la clave del WiFi del edificio, solo la de la mesh.
+#define MESH_ID     {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+#define MESH_CLAVE  "CAMBIAR"
+#define MESH_CANAL  0   // canal del WiFi del edificio; 0 = buscar en todos
+
+// MAC de esta placa (herramientas/leer_mac). Es también su identidad en AURA:
+// hw_id "mac-" + esta MAC en minúsculas.
 #define MAC_ESPERADA {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
 
 // LoRaWAN: las credenciales OTAA las da la cátedra al dar de alta el dispositivo.

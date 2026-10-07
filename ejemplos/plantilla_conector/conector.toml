@@ -1,0 +1,19 @@
+# Manifiesto del conector. Copiar esta carpeta a conectores/<CÓDIGO>/ y completar.
+# Ver CONTRIBUTING.md, "Tu conector".
+nombre  = "plantilla_conector"          # TODO: el código de tu dispositivo, igual que la carpeta
+version = "0.1.0"
+sdk     = ">=1,<2"
+autores = ["TODO-usuario-github"]       # TODO: los usuarios de GitHub del grupo
+clase   = "conector:ConectorPlantilla"  # TODO: si renombrás la clase, acá también
+
+# TODO: un bloque por cada campo que manda tu firmware en "values", con la unidad en el nombre
+# y su rango físico. Lo que no esté acá, o esté fuera de rango, no se guarda.
+[campos.temp_c]
+unidad = "°C"
+min = -55
+max = 125
+
+# Opcional: si tu conector predice, cada cuánto y hasta dónde. Si no, borrá este bloque.
+# [prediccion]
+# cada      = "15m"
+# horizonte = "6h"

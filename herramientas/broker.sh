@@ -11,19 +11,20 @@ case "$1" in
   ver)        # todo lo que pasa por el broker, en vivo
     docker exec -it $C mosquitto_sub -h localhost -t '#' -v ;;
 
-  datos)      # telemetria por MQTT: solo la publica el lorawan-bridge
-    echo "OJO: la mesh NO publica aca (contrato v3.0): su telemetria va por REST."
-    echo "Para la mesh en banco, mirar la salida de herramientas/ingesta_falsa.py."
-    docker exec -it $C mosquitto_sub -h localhost -t 'devices/+/data' -v ;;
+  datos)      # telemetria de la mesh (raiz) y de LoRaWAN (bridge), por hw_id
+    docker exec -it $C mosquitto_sub -h localhost -t 'hw/+/data' -v ;;
+
+  acks)       # lo que AURA (o herramientas/ack_falso.py) confirma
+    docker exec -it $C mosquitto_sub -h localhost -t 'hw/+/ack' -v ;;
 
   estado)     # solo los status de los nodos
-    docker exec -it $C mosquitto_sub -h localhost -t 'devices/+/status' -v ;;
+    docker exec -it $C mosquitto_sub -h localhost -t 'hw/+/status' -v ;;
 
   respuestas) # transmitido / recibido / aplicado / rechazado de cada comando
-    docker exec -it $C mosquitto_sub -h localhost -t 'devices/+/response' -v ;;
+    docker exec -it $C mosquitto_sub -h localhost -t 'hw/+/response' -v ;;
 
-  alertas)    # alerts/<device_id>/<tipo>
-    docker exec -it $C mosquitto_sub -h localhost -t 'alerts/#' -v ;;
+  alertas)    # hw/<hw_id>/alerts/<tipo>
+    docker exec -it $C mosquitto_sub -h localhost -t 'hw/+/alerts/#' -v ;;
 
   retenidos)  # que quedo pegado en el broker
     echo "Mensajes retenidos:"
@@ -37,10 +38,10 @@ case "$1" in
     done
     echo "Listo. OJO: un nodo vivo va a volver a publicar el suyo enseguida." ;;
 
-  comando)    # baja un comando:  ./broker.sh comando <uuid> '{"command":"set_config","params":{"intervalo_s":30},"command_id":"c-1"}'
-    [ -z "$2" ] || [ -z "$3" ] && { echo "uso: $0 comando <device-uuid> '<json>'"; exit 1; }
-    docker exec $C mosquitto_pub -h localhost -t "devices/$2/command" -m "$3"
-    echo "enviado a devices/$2/command" ;;
+  comando)    # baja un comando:  ./broker.sh comando mac-e072a1f7efe4 '{"command":"set_config","params":{"intervalo_s":30},"command_id":"c-1"}'
+    [ -z "$2" ] || [ -z "$3" ] && { echo "uso: $0 comando <hw_id> '<json>'   (hw_id: mac-<12 hex> de la placa)"; exit 1; }
+    docker exec $C mosquitto_pub -h localhost -t "hw/$2/command" -q 1 -m "$3"
+    echo "enviado a hw/$2/command" ;;
 
   log)        # log interno del broker
     docker exec $C sh -c 'tail -40 /mosquitto/log/mosquitto.log' ;;
@@ -56,6 +57,6 @@ case "$1" in
     docker restart $C && echo "broker reiniciado" ;;
 
   *)
-    echo "uso: $0 {ver|datos|estado|respuestas|alertas|retenidos|limpiar|comando|log|problemas|reiniciar}"
+    echo "uso: $0 {ver|datos|acks|estado|respuestas|alertas|retenidos|limpiar|comando|log|problemas|reiniciar}"
     exit 1 ;;
 esac

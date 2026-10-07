@@ -46,3 +46,13 @@ keywords = ["pass", "contrase", "token", "secret"]
 [rules.allowlist]
 regexTarget = "secret"
 regexes = ['''(?i)^(?:CAMBIAR|TU_CLAVE|changeme|x+|\*+|<[^>]*>|\$\{?[A-Z_]+\}?)$''']
+
+[[rules]]
+id = "aura-clave-mesh-o-router"
+description = "Clave de la mesh ESP-WIFI-MESH o del WiFi del edificio (MESH_CLAVE, ROUTER_CLAVE)"
+regex = '''(?i)(?:mesh_?clave|router_?clave|router_?pass(?:word)?)\s*(?:=|\s)\s*"([^"]{4,})"'''
+secretGroup = 1
+keywords = ["clave", "router"]
+[rules.allowlist]
+regexTarget = "match"
+regexes = ['''(?i)"(?:CAMBIAR|TU_CLAVE|xxx+|\*+)"''']
