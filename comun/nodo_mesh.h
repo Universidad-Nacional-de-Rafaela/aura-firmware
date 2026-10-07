@@ -1,22 +1,28 @@
 #pragma once
-// Biblioteca de nodo de la mesh de AURA (contrato v3.0). Es lo que usa un
-// dispositivo de un grupo para hablar con AURA por la mesh, sin saber nada de
-// MQTT, REST ni UUID: el grupo escribe la medicion y la validacion de su
-// configuracion, y esto se ocupa del resto.
+// Biblioteca de nodo de la mesh de AURA (contrato v4.0, ESP-WIFI-MESH). Es lo
+// que usa un dispositivo de un grupo para hablar con AURA por la mesh, sin
+// saber nada de MQTT ni de UUID: el grupo escribe la medicion y la validacion
+// de su configuracion, y esto se ocupa del resto. El nodo es una HOJA de la
+// mesh: no reenvia trafico de otros.
 //
 //   - Cada medicion se guarda en flash con su ingest_id ANTES del primer envio
-//     y sale de la cola solo cuando el gateway confirma que AURA la persistio.
-//     Sobrevive a cortes del gateway, del WiFi, de AURA y del propio nodo.
+//     y sale de la cola solo cuando el raiz confirma que AURA la recibio (ack).
+//     Sobrevive a cortes del raiz, del WiFi, de AURA y del propio nodo.
 //   - set_config: valida TODO o no aplica nada, y devuelve el resultado con la
-//     configuracion vigente, que es lo que el gateway publica como "aplicado".
+//     configuracion vigente, que es lo que el raiz publica como "aplicado".
 //   - Alertas de sonda una vez por cambio, no una por medicion.
 //
 // Uso minimo (ver ejemplos/sensor_ejemplo):
 //
+//   #include "config_local.h"   // MESH_ID, MESH_CLAVE, MESH_CANAL, MAC_ESPERADA
+//   #include "../../comun/nodo_mesh.h"
 //   NodoMeshCallbacks cb = {aplicar_config, describir_config, NULL, "red"};
-//   nodo_mesh_iniciar(MAC_PADRE, MAC_GATEWAY, MAC_ESPERADA, cb);   // en setup()
-//   nodo_mesh_loop();                                              // en cada loop()
+//   nodo_mesh_iniciar(cb);      // en setup()
+//   nodo_mesh_loop();           // en cada loop()
 //   JsonDocument d; d["temp_c"] = 4.5; nodo_mesh_medicion(d.as<JsonObjectConst>());
+//
+// El nodo no conoce su device_id ni la MAC del raiz: AURA lo identifica por la
+// MAC de su placa (hw_id "mac-...") y la mesh encuentra sola el camino al raiz.
 //
 // Dependencias: ArduinoJson 7 y LittleFS (incluido en el core). Usa la
 // particion de datos de la placa ("spiffs" en el esquema por defecto).
@@ -27,11 +33,29 @@
 #include <sys/time.h>
 #include <time.h>
 #include "protocolo_aura.h"
-#include "radio_mesh.h"
+#include "radio_wifi_mesh.h"
 #include "cola_persistente.h"
 #include "buffer_circular.h"
 #include "ingest_id.h"
 #include "nodo_mesh_logica.h"
+
+// ===== Configuracion de la mesh (config_local.h, que no se versiona) =====
+// En cero: compila, mide y guarda, pero no se une a ninguna mesh.
+#ifndef MESH_ID
+#define MESH_ID {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+#endif
+#ifndef MESH_CLAVE
+#define MESH_CLAVE ""
+#endif
+#ifndef MESH_CANAL
+#define MESH_CANAL 0
+#endif
+#ifndef MESH_ROUTER_SSID
+#define MESH_ROUTER_SSID ""
+#endif
+#ifndef MAC_ESPERADA
+#define MAC_ESPERADA {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+#endif
 
 // ===== Lo que aporta el grupo =====
 
@@ -41,7 +65,7 @@
 typedef bool (*NodoAplicarConfig)(JsonObjectConst params, String& motivo);
 
 // Escribe en out la configuracion vigente. Incluir "intervalo_s": con eso el
-// gateway infiere que el nodo se cayo (contrato §3.2). NULL = sin configuracion.
+// raiz infiere que el nodo se cayo (contrato §3.2). NULL = sin configuracion.
 typedef void (*NodoDescribirConfig)(JsonObject out);
 
 // Comandos propios del dispositivo, ademas de set_config (un actuador, por
@@ -57,30 +81,25 @@ typedef struct {
 
 // ===== Estado interno =====
 #define NODO_MESH_ARCHIVO_COLA "/cola.bin"
-#define NODO_MESH_SIN_ACK_MAX_MS 60000UL   // sin ACK de salto con datos pendientes -> barrer
-#define NODO_MESH_REINTENTO_SALTO_MS 2000UL
+#define NODO_MESH_REINTENTO_SALTO_MS 2000UL   // la mesh no acepto el envio: reintento corto
 #define NODO_MESH_INTENTOS_EVENTO 3
 
 typedef struct {
-  uint8_t  padre[6];
-  uint8_t  gateway[6];
+  bool     configurada;       // MESH_ID distinto de cero
   NodoMeshCallbacks cb;
   ColaPersistente cola;
   bool     cola_ok;
   BufferCircular eventos;     // resultado, reporte y alertas: en RAM, con pocos reintentos
   uint8_t  intentos_evento;
   uint16_t seq;
-  // Muestra en vuelo: enviada al padre, esperando la confirmacion de AURA.
+  // Muestra en vuelo: enviada al raiz, esperando la confirmacion de AURA.
   bool     en_vuelo;
   uint8_t  id_en_vuelo[AURA_INGEST_ID_BYTES];
   unsigned long enviada_en;
   uint32_t intentos;
   unsigned long proximo_envio;
-  unsigned long ultimo_ack_ok;
-  uint8_t  fallos_seguidos;   // envios al padre sin ACK, para detectar que el enlace volvio
-  // Ultimo comando procesado: una retransmision de la sala no se ejecuta dos veces.
+  // Ultimo comando procesado: una retransmision no se ejecuta dos veces.
   bool     hay_ultimo_comando;
-  uint8_t  ultimo_comando_de[6];
   uint16_t ultimo_comando_seq;
   EstadoSondas sondas;
   const char* alimentacion;
@@ -155,8 +174,7 @@ static inline bool nodo_mesh_encolar_evento(uint8_t tipo, JsonDocument& doc) {
   }
   serializeJson(doc, json, sizeof(json));
   TramaAura t;
-  aura_trama_init(&t, tipo, radio_mi_mac(), nodo_mesh.gateway, nodo_mesh.seq++,
-                  (const uint8_t*)json, (uint8_t)n);
+  aura_trama_init(&t, tipo, nodo_mesh.seq++, (const uint8_t*)json, (uint8_t)n);
   buffer_push(&nodo_mesh.eventos, &t);
   return true;
 }
@@ -176,7 +194,7 @@ static inline void nodo_mesh_reportar() {
   nodo_mesh_encolar_evento(AURA_TIPO_REPORTE, d);
 }
 
-// Alerta generica: el gateway la publica en alerts/<device_id>/<tipo>.
+// Alerta generica: el raiz la publica en hw/<hw_id>/alerts/<tipo>.
 static inline void nodo_mesh_alerta(const char* tipo, const char* severity, const char* message,
                              JsonObjectConst details) {
   JsonDocument d;
@@ -269,12 +287,10 @@ static inline void nodo_mesh_resultado(const char* command_id, bool aplicado, co
 }
 
 static inline void nodo_mesh_comando(const RecibidaAura* r) {
-  // Una retransmision (la sala no recibio nuestro ACK) no se ejecuta otra vez.
-  if (nodo_mesh.hay_ultimo_comando && nodo_mesh.ultimo_comando_seq == r->t.seq &&
-      memcmp(nodo_mesh.ultimo_comando_de, r->t.mac_origen, 6) == 0) return;
+  // Los comandos solo vienen del raiz: una retransmision trae el mismo seq.
+  if (nodo_mesh.hay_ultimo_comando && nodo_mesh.ultimo_comando_seq == r->t.seq) return;
   nodo_mesh.hay_ultimo_comando = true;
   nodo_mesh.ultimo_comando_seq = r->t.seq;
-  memcpy(nodo_mesh.ultimo_comando_de, r->t.mac_origen, 6);
 
   char json[AURA_PAYLOAD_MAX + 1];
   aura_payload_texto(&r->t, json, sizeof(json));
@@ -307,13 +323,13 @@ static inline void nodo_mesh_confirmacion(const RecibidaAura* r) {
   uint32_t hora;
   if (!aura_confirmacion_leer(&r->t, id, &hora)) return;
 
-  // La hora del gateway es la unica que tiene el nodo: con ella se completa
+  // La hora del raiz es la unica que tiene el nodo: con ella se completa
   // "ts". Se reajusta si se corrio mas de 2 s (el RTC deriva en meses de uso).
   uint32_t mia = nodo_mesh_ahora();
   if (aura_hora_valida(hora) && (mia == 0 || (mia > hora ? mia - hora : hora - mia) > 2)) {
     struct timeval tv = {(time_t)hora, 0};
     settimeofday(&tv, NULL);
-    Serial.printf("[MESH] hora ajustada por el gateway: %lu\n", (unsigned long)hora);
+    Serial.printf("[MESH] hora ajustada por el raiz: %lu\n", (unsigned long)hora);
   }
 
   // Solo se saca de la cola la muestra que se confirma. Una confirmacion
@@ -336,34 +352,22 @@ static inline void nodo_mesh_confirmacion(const RecibidaAura* r) {
 static inline void nodo_mesh_procesar_recibidas() {
   RecibidaAura r;
   while (radio_recibir(&r)) {
-    if (!aura_es_para_mi(&r.t, radio_mi_mac())) continue;  // una hoja no reenvia
-    radio_mandar_ack(r.de, r.t.seq);                       // al salto anterior
     if (r.t.tipo == AURA_TIPO_CONFIRMACION) nodo_mesh_confirmacion(&r);
     else if (r.t.tipo == AURA_TIPO_COMANDO) nodo_mesh_comando(&r);
   }
 }
 
 // ===== Envio =====
-// Cuando el enlace vuelve despues de una caida, se reporta: el reporte del
-// arranque puede haberse perdido, y sin el el gateway no conoce el intervalo.
-
-static inline bool nodo_mesh_al_padre(const TramaAura* t) {
-  if (radio_enviar_con_ack(nodo_mesh.padre, t)) {
-    nodo_mesh.ultimo_ack_ok = millis();
-    if (nodo_mesh.fallos_seguidos >= NODO_MESH_INTENTOS_EVENTO) nodo_mesh_reportar();
-    nodo_mesh.fallos_seguidos = 0;
-    return true;
-  }
-  if (nodo_mesh.fallos_seguidos < 255) nodo_mesh.fallos_seguidos++;
-  return false;
-}
+// true = la mesh acepto la trama hacia el raiz (con reintentos salto a salto).
+// No es confirmacion de AURA: esa llega aparte, como CONFIRMACION.
+static inline bool nodo_mesh_al_raiz(const TramaAura* t) { return radio_al_raiz(t); }
 
 static inline void nodo_mesh_enviar_evento() {
   TramaAura t;
   if (!buffer_peek(&nodo_mesh.eventos, &t)) return;
-  if (nodo_mesh_al_padre(&t) || ++nodo_mesh.intentos_evento >= NODO_MESH_INTENTOS_EVENTO) {
+  if (nodo_mesh_al_raiz(&t) || ++nodo_mesh.intentos_evento >= NODO_MESH_INTENTOS_EVENTO) {
     if (nodo_mesh.intentos_evento >= NODO_MESH_INTENTOS_EVENTO)
-      Serial.printf("[MESH] !! evento tipo %u descartado sin ACK del padre\n", t.tipo);
+      Serial.printf("[MESH] !! evento tipo %u descartado: la mesh no lo acepto\n", t.tipo);
     buffer_pop(&nodo_mesh.eventos, &t);
     nodo_mesh.intentos_evento = 0;
   }
@@ -382,71 +386,67 @@ static inline void nodo_mesh_enviar_muestra() {
   else nodo_mesh.intentos = 0;
 
   TramaAura t;
-  aura_telemetria_armar(&t, radio_mi_mac(), nodo_mesh.gateway, nodo_mesh.seq++, &m);
-  if (nodo_mesh_al_padre(&t)) {
+  aura_telemetria_armar(&t, nodo_mesh.seq++, &m);
+  if (nodo_mesh_al_raiz(&t)) {
     nodo_mesh.en_vuelo = true;
     memcpy(nodo_mesh.id_en_vuelo, m.ingest_id, AURA_INGEST_ID_BYTES);
     nodo_mesh.enviada_en = millis();
   } else {
     nodo_mesh.en_vuelo = false;
     nodo_mesh.proximo_envio = millis() + NODO_MESH_REINTENTO_SALTO_MS;
-    Serial.println("[MESH] el padre no confirmo el salto, reintento");
+    Serial.println("[MESH] la mesh no acepto la muestra, reintento");
   }
 }
 
 // ===== API =====
-static inline bool nodo_mesh_iniciar(const uint8_t padre[6], const uint8_t gateway[6],
-                              const uint8_t esperada[6], NodoMeshCallbacks cb) {
+static inline bool nodo_mesh_iniciar(NodoMeshCallbacks cb) {
+  static const uint8_t mesh_id[6]  = MESH_ID;
+  static const uint8_t esperada[6] = MAC_ESPERADA;
+
   memset(&nodo_mesh, 0, sizeof(nodo_mesh));
-  memcpy(nodo_mesh.padre, padre, 6);
-  memcpy(nodo_mesh.gateway, gateway, 6);
   nodo_mesh.cb = cb;
   nodo_mesh.alimentacion = cb.alimentacion ? cb.alimentacion : "desconocida";
+  nodo_mesh.configurada = !aura_mac_vacia(mesh_id);
   buffer_init(&nodo_mesh.eventos);
   aura_sondas_init(&nodo_mesh.sondas);
-
-  WiFi.mode(WIFI_STA);
-  // Sin esto la radio duerme por intervalos y se pierden los ACK.
-  WiFi.setSleep(false);
-  if (!radio_iniciar(8)) {
-    Serial.println("[MESH] !! fallo ESP-NOW, reinicio");
-    delay(2000);
-    ESP.restart();
-  }
-  radio_verificar_placa(esperada);
-  radio_agregar_peer(padre);
-  nodo_mesh.ultimo_ack_ok = millis();
-
-  if (aura_mac_vacia(padre) || aura_mac_vacia(gateway))
-    Serial.println("[MESH] AVISO: MAC_PADRE o MAC_GATEWAY sin configurar, no se envia nada");
 
   AlmacenAura alm = {nodo_mesh_fs_leer, nodo_mesh_fs_escribir, NULL};
   nodo_mesh.cola_ok = nodo_mesh_fs_preparar() && cola_abrir(&nodo_mesh.cola, alm, AURA_COLA_CAP);
   if (!nodo_mesh.cola_ok) Serial.println("[MESH] !! no se pudo abrir la cola en flash");
   else if (nodo_mesh.cola.formateada) Serial.println("[MESH] cola nueva (no habia una valida en flash)");
 
-  char m[18];
-  Serial.printf("[MESH] nodo listo, mi MAC %s, ", aura_mac_texto(radio_mi_mac(), m));
-  Serial.printf("padre %s, ", aura_mac_texto(padre, m));
-  Serial.printf("pendientes de confirmar %lu\n", (unsigned long)nodo_mesh_pendientes());
+  if (!nodo_mesh.configurada) {
+    // Sin mesh se puede igual desarrollar la medicion: se guarda en la cola.
+    Serial.println("[MESH] AVISO: MESH_ID sin configurar (config_local.h): se mide y se guarda, no se envia");
+    return nodo_mesh.cola_ok;
+  }
 
-  nodo_mesh_reportar();
+  AuraMeshConfig mc = {{0}, MESH_CLAVE, MESH_CANAL, MESH_ROUTER_SSID, ""};
+  memcpy(mc.mesh_id, mesh_id, 6);
+  if (!radio_iniciar(AURA_ROL_HOJA, &mc, 8)) {
+    Serial.println("[MESH] !! no arranco la mesh, reinicio");
+    delay(2000);
+    ESP.restart();
+  }
+  radio_verificar_placa(esperada);
+
+  const uint8_t* yo = radio_mi_mac();
+  Serial.printf("[MESH] hoja lista, hw_id mac-%02x%02x%02x%02x%02x%02x, pendientes de confirmar %lu\n",
+                yo[0], yo[1], yo[2], yo[3], yo[4], yo[5], (unsigned long)nodo_mesh_pendientes());
+  // El reporte sale cuando la hoja se une a la mesh (radio_reconecto).
   return nodo_mesh.cola_ok;
 }
 
 static inline void nodo_mesh_loop() {
+  if (!nodo_mesh.configurada) return;
   nodo_mesh_procesar_recibidas();
-  if (aura_mac_vacia(nodo_mesh.padre) || aura_mac_vacia(nodo_mesh.gateway)) return;
+  if (!radio_conectada()) return;   // la cola guarda; la mesh se reengancha sola
+
+  // Al unirse o volver a la mesh se reporta: sin el reporte, el raiz no conoce
+  // el intervalo y no puede inferir offline.
+  if (radio_reconecto()) nodo_mesh_reportar();
 
   nodo_mesh_enviar_evento();
   nodo_mesh_procesar_recibidas();   // un comando no espera a la proxima vuelta
   nodo_mesh_enviar_muestra();
-
-  // Solo se concluye que el enlace murio si hay algo SIN CONFIRMAR: estando
-  // ocioso, ultimo_ack_ok no se refresca y el barrido romperia un enlace sano.
-  bool hay_pendiente = nodo_mesh_pendientes() > 0 || buffer_cantidad(&nodo_mesh.eventos) > 0;
-  if (hay_pendiente && millis() - nodo_mesh.ultimo_ack_ok > NODO_MESH_SIN_ACK_MAX_MS) {
-    if (radio_barrer_canales(nodo_mesh.padre, nodo_mesh.seq++)) nodo_mesh_reportar();
-    nodo_mesh.ultimo_ack_ok = millis();   // el proximo barrido, dentro de un minuto
-  }
 }
