@@ -1,7 +1,7 @@
 #pragma once
 #include "protocolo_aura.h"
 
-// 30 tramas x 197 bytes = 5910 bytes de RAM. El ESP32 tiene ~320 KB.
+// 30 tramas x 185 bytes = 5550 bytes de RAM. El ESP32 tiene ~320 KB.
 #define AURA_BUFFER_CAP 30
 
 typedef struct {

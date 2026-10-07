@@ -1,8 +1,5 @@
 // Copiar este archivo como config_local.h (en la misma carpeta) y completar.
 // config_local.h está en el .gitignore: NUNCA se commitea. Este repo es público.
-//
-// Los datos de la mesh los da la cátedra. Este nodo es una HOJA: no lleva la
-// clave del WiFi del edificio, solo la de la mesh.
 
 #pragma once
 
@@ -10,9 +7,8 @@
 #define MESH_ID     {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
 #define MESH_CLAVE  "CAMBIAR"
 
-// Canal del WiFi del edificio, donde trabaja la mesh. 0 = buscar en todos (tarda más).
+// Canal del WiFi del edificio, donde trabaja la mesh. 0 = buscar en todos.
 #define MESH_CANAL  0
 
 // MAC de la placa en la que DEBE correr este sketch (herramientas/leer_mac).
-// Es también su identidad en AURA: hw_id "mac-" + esta MAC en minúsculas.
 #define MAC_ESPERADA {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
