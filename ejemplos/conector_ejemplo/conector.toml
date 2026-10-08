@@ -1,0 +1,18 @@
+# Manifiesto del conector. Ver CONTRIBUTING.md, "Tu conector".
+nombre  = "conector_ejemplo"            # igual a la carpeta
+version = "1.0.0"
+sdk     = ">=1,<2"                      # versiones de aura_sdk con las que funciona
+autores = ["catedra"]                   # usuarios de GitHub del grupo
+clase   = "conector:ConectorEjemplo"    # archivo:Clase
+
+# Cada campo que acepta, con su unidad y su rango físico. Un valor fuera de rango, o un campo
+# que no está acá, no se guarda. Tiene que coincidir con lo que manda el firmware.
+[campos.temp_chip_c]
+unidad = "°C"
+min = -40
+max = 125
+
+# Opcional: cada cuánto AURA llama a predecir(), y hasta dónde predice.
+[prediccion]
+cada      = "15m"
+horizonte = "1h"

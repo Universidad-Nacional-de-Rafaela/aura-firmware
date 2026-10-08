@@ -48,7 +48,7 @@ static inline AuraCambioSonda aura_sonda_cambio(EstadoSondas* e, const char* cam
 
 // ===== Reintento de una muestra sin confirmar =====
 // 15 s, 30 s, 1 min... hasta 5 min. Con AURA caida horas, cada nodo pregunta
-// a lo sumo cada 5 minutos en vez de saturar el gateway.
+// a lo sumo cada 5 minutos en vez de saturar el raiz.
 #define AURA_ESPERA_MIN_MS 15000u
 #define AURA_ESPERA_MAX_MS 300000u
 

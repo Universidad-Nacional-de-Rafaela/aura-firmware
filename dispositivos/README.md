@@ -67,8 +67,8 @@ que monitorea, o lo que acciona. Una placa que mide varias magnitudes del ambien
 | `HOR` | Horno | equipo |
 | `TAB` | Tablero eléctrico (consumo) | equipo |
 | `CRT` | Cortina | actuador |
-| `GWM` | Gateway de la mesh | infraestructura |
-| `SAL` | Nodo de sala de la mesh | infraestructura |
+| `GWM` | Raíz de la mesh (gateway hacia AURA) | infraestructura |
+| `SAL` | Relevo de la mesh (antes, nodo de sala) | infraestructura |
 
 ## Dispositivos
 

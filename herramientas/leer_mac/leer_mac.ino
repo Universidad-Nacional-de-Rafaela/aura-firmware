@@ -1,11 +1,13 @@
 /*
  * AURA - utilidad: leer la MAC de una placa
  *
- * Se flashea en cada ESP32 ANTES de configurar la mesh, para saber que MAC
- * poner en MAC_PADRE, MAC_SENSOR, MAC_GATEWAY y en la TABLA del gateway.
+ * Se flashea en cada XIAO ESP32S3 antes de configurarla, para saber:
+ *   - su hw_id en AURA ("mac-" + la MAC en minusculas): con eso la catedra
+ *     asigna la placa a su dispositivo (contrato v4.0, identidad por placa);
+ *   - el valor de MAC_ESPERADA para su config_local.h.
  *
- * Imprime la MAC de la interfaz STA, que es la que usa ESP-NOW y la misma
- * que hay que cargar en el campo mac_address del dispositivo en AURA.
+ * Imprime la MAC de la interfaz STA, que es la que usa ESP-WIFI-MESH como
+ * direccion del nodo.
  */
 
 #include <WiFi.h>
@@ -22,12 +24,12 @@ void setup() {
 
   Serial.println();
   Serial.println("=== MAC de esta placa ===");
-  Serial.printf("Para AURA (mac_address):  %02X:%02X:%02X:%02X:%02X:%02X\n",
+  Serial.printf("hw_id en AURA:              mac-%02x%02x%02x%02x%02x%02x\n",
                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-  Serial.printf("Para el firmware (C):     {0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X}\n",
+  Serial.printf("MAC_ESPERADA (config_local): {0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X}\n",
                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
   Serial.println();
-  Serial.println("Anotala y pegale una etiqueta a la placa: SENSOR, SALA o GATEWAY.");
+  Serial.println("Anotala y pegale una etiqueta a la placa con su hw_id.");
 }
 
 void loop() {

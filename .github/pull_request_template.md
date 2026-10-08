@@ -5,7 +5,7 @@
 ## Dispositivo
 
 - Carpeta: `dispositivos/<CÓDIGO>/` (nuevo / modificado)
-- Transporte: mesh ESP-NOW / LoRaWAN
+- Transporte: mesh ESP-WIFI-MESH / LoRaWAN
 - Contrato que implementa: v3.0
 
 ## Checklist

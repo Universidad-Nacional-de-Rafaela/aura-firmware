@@ -1,0 +1,2 @@
+# Bibliotecas de Arduino que necesita este sketch, una por línea, con versión.
+# El relevo no usa bibliotecas externas.

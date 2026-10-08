@@ -10,8 +10,8 @@
 | **Responsable** | <grupo, materia y año, con los usuarios de GitHub; o la cátedra> |
 | **Estado** | <en desarrollo / en banco / instalado / fuera de servicio> |
 | **Instalado** | <AAAA-MM-DD, o "todavía no"> |
-| **Transporte** | <mesh ESP-NOW (interior) / LoRaWAN (exterior)>, según [ADR-003](../../docs/adr/ADR-003-dos-transportes-mesh-interior-lorawan-exterior.md) |
-| **Contrato que implementa** | [`CONTRATO_MQTT.md`](../../docs/CONTRATO_MQTT.md) v<3.0> |
+| **Transporte** | <mesh ESP-WIFI-MESH (interior) / LoRaWAN (exterior)>, según [ADR-003](../../docs/adr/ADR-003-dos-transportes-mesh-interior-lorawan-exterior.md) y [ADR-006](../../docs/adr/ADR-006-esp-wifi-mesh-reemplaza-a-esp-now-en-interior.md) |
+| **Contrato que implementa** | [`CONTRATO_MQTT.md`](../../docs/CONTRATO_MQTT.md) v<4.0> |
 | **Basado en** | <ninguno — o el código del dispositivo del que se copió el firmware> |
 | **Códigos anteriores** | <ninguno — o el código que tenía antes de mudarse> |
 
@@ -23,7 +23,7 @@
 
 | Componente | Modelo | Conexión |
 |---|---|---|
-| Placa | Seeed XIAO ESP32S3 | — |
+| Placa | Seeed XIAO ESP32S3, `hw_id` `<mac-…>` (herramientas/leer_mac) | — |
 | <sensor> | <modelo> | <GPIO> |
 
 ## Lo que envía a AURA

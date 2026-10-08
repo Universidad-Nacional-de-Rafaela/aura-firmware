@@ -1,0 +1,14 @@
+// Copiar este archivo como config_local.h (en la misma carpeta) y completar.
+// config_local.h está en el .gitignore: NUNCA se commitea. Este repo es público.
+
+#pragma once
+
+// Identificador de la mesh del edificio (6 bytes) y su clave (8 a 63 caracteres).
+#define MESH_ID     {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+#define MESH_CLAVE  "CAMBIAR"
+
+// Canal del WiFi del edificio, donde trabaja la mesh. 0 = buscar en todos.
+#define MESH_CANAL  0
+
+// MAC de la placa en la que DEBE correr este sketch (herramientas/leer_mac).
+#define MAC_ESPERADA {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}

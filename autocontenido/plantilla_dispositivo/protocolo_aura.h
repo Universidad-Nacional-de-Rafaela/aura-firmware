@@ -4,23 +4,25 @@
 #include <string.h>
 #include <stdbool.h>
 
-// Version de la trama ESP-NOW entre nodos. No es la version del contrato MQTT:
-// la trama es interna de la mesh y AURA no la ve (contrato §7).
-// v2 (contrato v3.0): ingest_id generado en el nodo y confirmacion de punta a punta.
-#define AURA_PROTO_VERSION 2
+// Version de la trama entre los nodos de la mesh. No es la version del contrato
+// MQTT: la trama es interna de la mesh y AURA no la ve (contrato §7).
+// v2 (contrato v3.0, ESP-NOW): ingest_id generado en el nodo y confirmacion de punta a punta.
+// v3 (contrato v4.0, ESP-WIFI-MESH): la cabecera pierde las MAC de origen y destino,
+//    porque las da la mesh (esp_mesh_recv / esp_mesh_send).
+#define AURA_PROTO_VERSION 3
 #define AURA_PAYLOAD_MAX   180
-#define AURA_CABECERA_BYTES 17
+#define AURA_CABECERA_BYTES 5
 
 // Tipos de mensaje. Se transmiten como uint8_t: no cambiar los valores, solo agregar.
 enum {
-  AURA_TIPO_TELEMETRIA   = 1,  // nodo -> gateway: una muestra de la cola del nodo
-  AURA_TIPO_COMANDO      = 2,  // gateway -> nodo: el JSON del backend tal cual
-  AURA_TIPO_ACK          = 3,  // salto a salto: "recibi tu trama", nada mas
-  AURA_TIPO_CONFIRMACION = 4,  // gateway -> nodo: AURA persistio esa muestra
-  AURA_TIPO_RESULTADO    = 5,  // nodo -> gateway: que paso con un comando
-  AURA_TIPO_REPORTE      = 6,  // nodo -> gateway: config vigente y estado de la cola
-  AURA_TIPO_ALERTA       = 7,  // nodo -> gateway: alerts/<id>/<tipo>
-  AURA_TIPO_PING         = 8   // al padre, durante el barrido de canales
+  AURA_TIPO_TELEMETRIA   = 1,  // hoja -> raiz: una muestra de la cola del nodo
+  AURA_TIPO_COMANDO      = 2,  // raiz -> hoja: el JSON del backend tal cual
+  AURA_TIPO_ACK          = 3,  // reservado (v2, ACK de salto de ESP-NOW): sin uso
+  AURA_TIPO_CONFIRMACION = 4,  // raiz -> hoja: AURA confirmo esa muestra (ack)
+  AURA_TIPO_RESULTADO    = 5,  // hoja -> raiz: que paso con un comando
+  AURA_TIPO_REPORTE      = 6,  // hoja -> raiz: config vigente y estado de la cola
+  AURA_TIPO_ALERTA       = 7,  // hoja -> raiz: hw/<hw_id>/alerts/<tipo>
+  AURA_TIPO_PING         = 8   // reservado (v2, barrido de canales): sin uso
 };
 
 // __attribute__((packed)) evita relleno entre campos: emisor y receptor
@@ -28,25 +30,18 @@ enum {
 typedef struct __attribute__((packed)) {
   uint8_t  version;
   uint8_t  tipo;
-  uint8_t  mac_origen[6];    // quien genero el mensaje
-  uint8_t  mac_destino[6];   // destinatario FINAL, no el proximo salto
-  uint16_t seq;              // secuencia por nodo origen, para el ACK de salto
+  uint16_t seq;              // secuencia por nodo origen: descarta repetidos
   uint8_t  largo;            // bytes utiles en payload
   uint8_t  payload[AURA_PAYLOAD_MAX];
 } TramaAura;
 
-static inline void aura_trama_init(TramaAura* t, uint8_t tipo,
-                                   const uint8_t origen[6],
-                                   const uint8_t destino[6],
-                                   uint16_t seq,
+static inline void aura_trama_init(TramaAura* t, uint8_t tipo, uint16_t seq,
                                    const uint8_t* payload, uint8_t largo) {
   memset(t, 0, sizeof(*t));
   t->version = AURA_PROTO_VERSION;
   t->tipo    = tipo;
-  memcpy(t->mac_origen,  origen,  6);
-  memcpy(t->mac_destino, destino, 6);
-  t->seq   = seq;
-  t->largo = (largo > AURA_PAYLOAD_MAX) ? AURA_PAYLOAD_MAX : largo;
+  t->seq     = seq;
+  t->largo   = (largo > AURA_PAYLOAD_MAX) ? AURA_PAYLOAD_MAX : largo;
   if (payload && t->largo) memcpy(t->payload, payload, t->largo);
 }
 
@@ -79,13 +74,8 @@ static inline bool aura_trama_valida(const uint8_t* datos, int len) {
   return aura_trama_validar(datos, len) == AURA_TRAMA_OK;
 }
 
-static inline bool aura_es_para_mi(const TramaAura* t, const uint8_t mi_mac[6]) {
-  return memcmp(t->mac_destino, mi_mac, 6) == 0;
-}
-
-// Sentido de cada tipo. Un relevo (la sala) reenvia lo que sube al gateway y
-// lo que baja al hijo que figura en mac_destino. ACK y PING son de un salto:
-// no suben ni bajan.
+// Sentido de cada tipo: lo que sube lo publica el raiz, lo que baja lo manda
+// el raiz a una hoja. ACK y PING estan reservados: ni suben ni bajan.
 static inline bool aura_tipo_sube(uint8_t tipo) {
   return tipo == AURA_TIPO_TELEMETRIA || tipo == AURA_TIPO_RESULTADO ||
          tipo == AURA_TIPO_REPORTE    || tipo == AURA_TIPO_ALERTA;
@@ -136,15 +126,13 @@ typedef struct __attribute__((packed)) {
   char     values[AURA_VALUES_MAX];  // JSON del objeto values, sin terminador
 } MuestraAura;
 
-static inline bool aura_telemetria_armar(TramaAura* t, const uint8_t origen[6],
-                                         const uint8_t destino[6], uint16_t seq,
-                                         const MuestraAura* m) {
+static inline bool aura_telemetria_armar(TramaAura* t, uint16_t seq, const MuestraAura* m) {
   if (m->largo > AURA_VALUES_MAX) return false;
   uint8_t p[AURA_PAYLOAD_MAX];
   memcpy(p, m->ingest_id, AURA_INGEST_ID_BYTES);
   aura_u32_escribir(p + AURA_INGEST_ID_BYTES, m->ts);
   memcpy(p + AURA_TELEMETRIA_CABECERA, m->values, m->largo);
-  aura_trama_init(t, AURA_TIPO_TELEMETRIA, origen, destino, seq, p,
+  aura_trama_init(t, AURA_TIPO_TELEMETRIA, seq, p,
                   (uint8_t)(AURA_TELEMETRIA_CABECERA + m->largo));
   return true;
 }
@@ -160,19 +148,18 @@ static inline bool aura_telemetria_leer(const TramaAura* t, MuestraAura* m) {
 }
 
 // ===== Confirmacion =====
-// Payload: ingest_id (16 B) | hora del gateway (uint32 LE, 0 = sin hora).
-// La manda el gateway SOLO cuando AURA dijo que la muestra quedo persistida
-// (contrato §6). Lleva la hora porque los nodos no tienen otra forma de saberla.
+// Payload: ingest_id (16 B) | hora del raiz (uint32 LE, 0 = sin hora).
+// La manda el raiz SOLO cuando AURA publico el ack de esa muestra
+// (contrato §3.6). Lleva la hora porque los nodos no tienen otra forma de saberla.
 #define AURA_CONFIRMACION_BYTES (AURA_INGEST_ID_BYTES + 4)
 
-static inline void aura_confirmacion_armar(TramaAura* t, const uint8_t origen[6],
-                                           const uint8_t destino[6], uint16_t seq,
+static inline void aura_confirmacion_armar(TramaAura* t, uint16_t seq,
                                            const uint8_t ingest_id[AURA_INGEST_ID_BYTES],
                                            uint32_t hora) {
   uint8_t p[AURA_CONFIRMACION_BYTES];
   memcpy(p, ingest_id, AURA_INGEST_ID_BYTES);
   aura_u32_escribir(p + AURA_INGEST_ID_BYTES, hora);
-  aura_trama_init(t, AURA_TIPO_CONFIRMACION, origen, destino, seq, p, AURA_CONFIRMACION_BYTES);
+  aura_trama_init(t, AURA_TIPO_CONFIRMACION, seq, p, AURA_CONFIRMACION_BYTES);
 }
 
 static inline bool aura_confirmacion_leer(const TramaAura* t,
