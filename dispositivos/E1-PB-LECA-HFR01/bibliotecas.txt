@@ -3,3 +3,5 @@ DallasTemperature@4.0.6
 U8g2@2.36.19
 RTClib@2.1.4
 Adafruit BusIO@1.17.4
+
+ArduinoJson@7.4.3

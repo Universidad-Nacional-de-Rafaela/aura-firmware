@@ -1,6 +1,6 @@
 #pragma once
 #include "configuracion.h"
-#include "../../comun/nodo_mesh.h"
+#include "nodo_mesh.h"
 #include "mesh_storage.h"
 #include "envio_persistente.h"
 #include "politica_envio.h"

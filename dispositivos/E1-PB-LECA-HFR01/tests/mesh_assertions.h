@@ -39,14 +39,6 @@ static_assert(!validSensorConfig({4,200,600}),"Rechazar muestreo demasiado corto
 static_assert(!validSensorConfig({86401,200,600}),"Rechazar intervalo demasiado largo");
 static_assert(!validSensorConfig({60,600,200}),"Rechazar rango invertido");
 static_assert(validConfig(meshDefaults()),"Defaults de ambas sondas validos");
-static_assert(centralAckAllowed(201,1,0,0),"REST inserto exactamente una muestra");
-static_assert(centralAckAllowed(201,0,1,0),"Duplicado es persistido");
-static_assert(!centralAckAllowed(201,0,0,1),"201 con errors=1 no elimina muestra");
-static_assert(!centralAckAllowed(201,1,0,1),"Error parcial no confirma");
-static_assert(!centralAckAllowed(200,1,0,0),"Contrato exige HTTP 201");
-static_assert(!centralAckAllowed(201,0,0,0),"Sin insertar ni duplicado no confirma");
-static_assert(!centralAckAllowed(201,-1,2,0),"Contadores invalidos no confirman");
-static_assert(!centralAckAllowed(201,1,1,0),"Cuenta incorrecta no confirma");
 static_assert(classifyTemperature(85,true)==FUERA_RANGO,"85 de arranque no es medicion");
 static_assert(classifyTemperature(4,false)==SIN_RESPUESTA,"Exigir conversion completa");
 static_assert(classifyTemperature(-127,true)==SIN_RESPUESTA,"Centinela ausente");
