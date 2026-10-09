@@ -57,7 +57,14 @@
 #define MQTT_HOST "CAMBIAR"
 #endif
 #ifndef MQTT_PORT
-#define MQTT_PORT 1883
+#define MQTT_PORT 1884
+#endif
+// El broker de AURA no acepta anonimos: el raiz entra con su usuario (ACL de aura-app)
+#ifndef MQTT_USUARIO
+#define MQTT_USUARIO "raiz"
+#endif
+#ifndef MQTT_CLAVE
+#define MQTT_CLAVE "CAMBIAR"
 #endif
 #ifndef NTP_SERVIDOR
 #define NTP_SERVIDOR "pool.ntp.org"
@@ -387,13 +394,20 @@ bool conectar_mqtt() {
   String top = topico(radio_mi_mac(), "status");
   const char* lwt = "{\"status\":\"offline\"}";
   mqtt.setId(mi_hw);
+  mqtt.setUsernamePassword(MQTT_USUARIO, MQTT_CLAVE);
   mqtt.beginWill(top, strlen(lwt), true, 1);
   mqtt.print(lwt);
   mqtt.endWill();
 
   if (!mqtt.connect(MQTT_HOST, MQTT_PORT)) {
-    Serial.printf("[MQTT] !! fallo la conexion, error %d. Con WiFi conectado, lo mas probable\n"
-                  "       es aislamiento de clientes en la red de invitados.\n", mqtt.connectError());
+    int err = mqtt.connectError();
+    if (err == MQTT_BAD_USER_NAME_OR_PASSWORD || err == MQTT_NOT_AUTHORIZED) {
+      Serial.printf("[MQTT] !! el broker rechazo usuario o clave (error %d): revisar MQTT_USUARIO\n"
+                    "       y MQTT_CLAVE en config_local.h (MQTT_RAIZ_PASSWORD del .env de aura-app).\n", err);
+    } else {
+      Serial.printf("[MQTT] !! fallo la conexion, error %d. Con WiFi conectado, lo mas probable\n"
+                    "       es aislamiento de clientes en la red de invitados.\n", err);
+    }
     return false;
   }
   mqtt.subscribe("hw/+/ack", 1);
