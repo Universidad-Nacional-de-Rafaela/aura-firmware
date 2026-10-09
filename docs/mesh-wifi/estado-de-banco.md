@@ -41,7 +41,7 @@ Si una placa vieja quedó con la tormenta, se la silencia dejándola en el bootl
 | 1.1 | Flashear `nodo_raiz` y abrir el monitor serie | `[MESH] raiz iniciado`, después `[RAIZ] con IP …` | ✅ 2026-10-09: con IP en 6-8 s |
 | 1.2 | Broker | `[MQTT] conectado y suscripto a hw/+/ack y hw/+/command`; en el broker, `hw/mac-<raíz>/status` retenido con `rol: "raiz"` | ✅ 2026-10-09 |
 | 1.3 | `broker.sh comando mac-aabbccddeeff '{"command":"led"}'` (una MAC que no está) | `rechazado` con `nodo_no_alcanzable` en `hw/mac-aabbccddeeff/response` | ✅ 2026-10-09 |
-| 1.4 | Desenchufar el raíz | el broker publica el LWT: `hw/mac-<raíz>/status` → `offline` | pendiente |
+| 1.4 | Desenchufar el raíz | el broker publica el LWT: `hw/mac-<raíz>/status` → `offline` | ✅ 2026-10-09: `offline` al desenchufarlo; al volver, `online` con los 3 nodos |
 | 1.5 | Dejarlo una hora | `status` cada 60 s, sin reinicios; anotar la RAM libre | pendiente |
 
 La 1.1 y la 1.2 son el riesgo (c) de la spec: que `WiFi.h` de Arduino y `esp_mesh` convivan en el
@@ -59,9 +59,9 @@ es el cliente MQTT de ESP-IDF (`esp-mqtt`, incluido en el core).
 | 2.4 | Telemetría con `ack_falso.py` en modo `ok` | `hw/mac-<hoja>/data` → `ack` `persistido` → en la hoja, `AURA confirmo …, quedan 0` | ✅ 2026-10-09 |
 | 2.5 | `ack_falso.py` en `sin_ack` 3 minutos, después `ok` | la hoja acumula y reintenta (15 s, 30 s, 1 min…); al volver, se vacía y los reintentos salen `duplicado` | pendiente |
 | 2.6 | `set_config {"intervalo_s": 30}` | `transmitido`, `recibido`, `aplicado` con `config`; nuevo `status` | ✅ 2026-10-09 |
-| 2.7 | `actuador_ejemplo` y el comando `led` | el LED prende; `aplicado` | pendiente |
+| 2.7 | `actuador_ejemplo` y el comando `led` | el LED prende; `aplicado` | ✅ 2026-10-09: LED azul (GPIO 8) prendido, `transmitido`/`recibido`/`aplicado`. Tras un reinicio el LED vuelve apagado (no se guarda) |
 | 2.8 | Reiniciar el raíz con la hoja andando | la hoja se reengancha sola y reporta; nada se pierde | ✅ 2026-10-09 con los arreglos 2 y 3: raíz con IP en 7-25 s, la hoja se reengancha en ~80 s y vacía la cola sin perder nada (3 reinicios). Antes: ❌ |
-| 2.9 | Apagar la hoja más de 3 × su intervalo | el raíz publica `offline` con `motivo: "sin_tramas"`; al volver, `online` | pendiente |
+| 2.9 | Apagar la hoja más de 3 × su intervalo | el raíz publica `offline` con `motivo: "sin_tramas"`; al volver, `online` | ✅ 2026-10-09: `offline` `sin_tramas` a los 2 min 14 s de apagarla; `online` 10 s después de volver |
 | 2.10 | `esp_mesh_get_type()` en la hoja | `MESH_LEAF`: no acepta hijos | ✅ 2026-10-09: la hoja informa tipo hoja |
 
 ## Con 3 placas (raíz + relevo + hoja)
