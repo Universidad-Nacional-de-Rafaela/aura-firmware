@@ -421,6 +421,12 @@ static inline bool nodo_mesh_iniciar(NodoMeshCallbacks cb) {
     return nodo_mesh.cola_ok;
   }
 
+  if (!MESH_ROUTER_SSID[0]) {
+    // Sin el SSID la mesh no arranca: mejor seguir midiendo que reiniciar en bucle.
+    Serial.println("[MESH] !! falta MESH_ROUTER_SSID (config_local.h): se mide y se guarda, no se envia");
+    return nodo_mesh.cola_ok;
+  }
+
   AuraMeshConfig mc = {{0}, MESH_CLAVE, MESH_CANAL, MESH_ROUTER_SSID, ""};
   memcpy(mc.mesh_id, mesh_id, 6);
   if (!radio_iniciar(AURA_ROL_HOJA, &mc, 8)) {
