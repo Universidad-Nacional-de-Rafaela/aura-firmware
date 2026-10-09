@@ -1,0 +1,21 @@
+// Copiar a config_local.h junto al sketch que se carga. No versionar valores reales.
+#pragma once
+// Datos de la mesh del edificio: los da la catedra. La hoja no lleva UUID,
+// MAC del raiz ni clave WiFi del edificio.
+#define MESH_ID {0x00,0x00,0x00,0x00,0x00,0x00}
+#define MESH_CLAVE ""
+#define MESH_CANAL 0
+#define MAC_ESPERADA {0x00,0x00,0x00,0x00,0x00,0x00}
+// Si la prueba de banco de catedra lo requiere: solo SSID, no clave de router.
+#define MESH_ROUTER_SSID ""
+#define ICIV_FRIDGE_PIN D2
+#define ICIV_FREEZER_PIN D3
+#define ICIV_ALARM_LED_PIN D0
+#define ICIV_OFFLINE_LED_PIN D1
+#define ICIV_POWER_PIN -1 // deshabilitado hasta definir modulo; p.ej. D6
+#define ICIV_POWER_PRESENT_LEVEL HIGH
+#define ICIV_POWER_PIN_MODE INPUT // INPUT_PULLUP solo si lo requiere el circuito
+// El RTC debe estar ajustado previamente. No inventar hora si perdio alimentacion.
+#define ICIV_SET_RTC_FROM_BUILD 0
+// 0 si RTC esta en UTC; -10800 si mantiene hora local de Argentina.
+#define ICIV_RTC_UTC_OFFSET_SECONDS 0
