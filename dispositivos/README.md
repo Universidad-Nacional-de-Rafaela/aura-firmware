@@ -48,7 +48,6 @@ Las abreviaturas siguen el modelo de ubicaciones de AURA (edificio → piso → 
 | Código | Recinto | Edificio y piso |
 |---|---|---|
 | `LECA` | LabECA | E1, planta baja |
-| `TERR` | Terraza (al aire libre) | E1, azotea |
 | `TERR` | Terraza (al aire libre) | E1 y E2, azotea |
 ### Tipos
 
