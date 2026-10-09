@@ -1,9 +1,9 @@
 // GENERADO por herramientas/generar_autocontenidos.sh: no editar. Fuente: ejemplos/actuador_ejemplo/
 /*
- * AURA - nodo actuador de ejemplo (XIAO ESP32S3), contrato v4.0, ESP-WIFI-MESH
+ * AURA - nodo actuador de ejemplo (ESP32-C3 SuperMini), contrato v4.0, ESP-WIFI-MESH
  *
  * Muestra lo que sensor_ejemplo no tiene: un COMANDO propio del dispositivo,
- * ademas de set_config. Acciona el LED de la placa (GPIO 21, activo en bajo),
+ * ademas de set_config. Acciona el LED de la placa (GPIO 8, activo en bajo),
  * asi que no necesita hardware extra.
  *
  *   {"command": "led", "params": {"encendido": true}, "command_id": "c-1"}
@@ -15,7 +15,7 @@
  *
  * set_config acepta {"intervalo_s": 5..86400}, guardado en flash.
  *
- * IDE: Placa "XIAO_ESP32S3". USB CDC On Boot: ENABLED.
+ * IDE: Placa "Nologo ESP32C3 Super Mini". USB CDC On Boot: ENABLED.
  * Biblioteca: ArduinoJson (ver bibliotecas.txt).
  */
 
@@ -26,7 +26,7 @@
 #include <Preferences.h>
 #include "nodo_mesh.h"
 
-const int PIN_LED = 21;          // LED de usuario de la XIAO ESP32S3
+const int PIN_LED = 8;           // LED azul de la ESP32-C3 SuperMini
 const bool LED_ACTIVO_BAJO = true;
 
 // ===== Configuracion remota =====

@@ -1,6 +1,6 @@
 // GENERADO por herramientas/generar_autocontenidos.sh: no editar. Fuente: infraestructura/nodo_raiz/
 /*
- * AURA - raiz de la mesh (XIAO ESP32S3), contrato v4.0, ESP-WIFI-MESH
+ * AURA - raiz de la mesh (ESP32-C3 SuperMini), contrato v4.0, ESP-WIFI-MESH
  *
  * Unico nodo de la mesh que tiene IP: se asocia al WiFi del edificio y es el
  * adaptador de la mesh en el sentido del contrato (docs/CONTRATO_MQTT.md).
@@ -23,7 +23,7 @@
  * Configuracion en config_local.h, que no se versiona (ver config_local.h.example).
  * Banco sin backend: herramientas/ack_falso.py hace de AURA.
  *
- * IDE: Placa "XIAO_ESP32S3". USB CDC On Boot: ENABLED.
+ * IDE: Placa "Nologo ESP32C3 Super Mini". USB CDC On Boot: ENABLED.
  * Bibliotecas: las de bibliotecas.txt.
  */
 

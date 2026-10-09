@@ -1,4 +1,4 @@
-"""Conector de ejemplo para ejemplos/sensor_ejemplo (temperatura del chip de la XIAO).
+"""Conector de ejemplo para ejemplos/sensor_ejemplo (temperatura del chip de la placa).
 
 Muestra las tres cosas que hace un conector:
   1. guardar lo que llega (al_recibir_datos);

@@ -1,5 +1,5 @@
 /*
- * AURA - relevo de la mesh (XIAO ESP32S3), contrato v4.0, ESP-WIFI-MESH
+ * AURA - relevo de la mesh (ESP32-C3 SuperMini), contrato v4.0, ESP-WIFI-MESH
  *
  * Placa de la catedra que extiende la mesh: se une como nodo intermedio y
  * reenvia el trafico de las hojas (los dispositivos de los grupos) hacia el
@@ -12,7 +12,7 @@
  * Configuracion en config_local.h (ver config_local.h.example): ID, clave y
  * canal de la mesh. No lleva la clave del WiFi del edificio.
  *
- * IDE: Placa "XIAO_ESP32S3". USB CDC On Boot: ENABLED.
+ * IDE: Placa "Nologo ESP32C3 Super Mini". USB CDC On Boot: ENABLED.
  */
 
 #if __has_include("config_local.h")
