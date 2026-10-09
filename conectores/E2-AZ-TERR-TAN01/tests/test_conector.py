@@ -16,7 +16,7 @@ SIN_ECO = 65535   # 0xFFFF: lo que manda el firmware si el sensor no responde
 
 
 def msg(values, minuto=0):
-    return Mensaje(hw_id="eui-19e2db6c14a8178c", values=values, ts=T0 + timedelta(minutes=minuto),
+    return Mensaje(hw_id="eui-0000000000000001", values=values, ts=T0 + timedelta(minutes=minuto),
                    ingest_id=f"id-{minuto}")
 
 
@@ -25,6 +25,9 @@ class ConectorTanques(unittest.TestCase):
         self.manifiesto, self.conector = cargar_conector(CARPETA)
         self.ctx = ContextoDePrueba(self.manifiesto)
         self.umbral = self.conector.UMBRAL_BAJO_MM
+
+    def alertas(self, tipo):
+        return [a for a in self.ctx.alertas if a.tipo == tipo]
 
     def test_guarda_los_tres_tanques(self):
         valores = {"distancia_tanque1_mm": 1500, "distancia_tanque2_mm": 2000, "distancia_tanque3_mm": 3000}
@@ -64,19 +67,47 @@ class ConectorTanques(unittest.TestCase):
         bajo = self.umbral - 500
         for minuto, valor in enumerate([bajo, alto, alto + 100, alto, bajo, bajo]):
             procesar(self.conector, self.ctx, msg({"distancia_tanque1_mm": valor}, minuto))
-        self.assertEqual([(a.tipo, a.severidad) for a in self.ctx.alertas],
+        self.assertEqual([(a.tipo, a.severidad) for a in self.alertas("tanque_bajo")],
                          [("tanque_bajo", "warning"), ("tanque_bajo", "info")])
 
     def test_cada_tanque_alerta_por_separado(self):
         alto = self.umbral + 500
         procesar(self.conector, self.ctx, msg({"distancia_tanque1_mm": alto, "distancia_tanque3_mm": 1000}))
-        self.assertEqual(len(self.ctx.alertas), 1)
-        self.assertIn("Tanque 1", self.ctx.alertas[0].mensaje)
+        self.assertEqual(len(self.alertas("tanque_bajo")), 1)
+        self.assertIn("Tanque 1", self.alertas("tanque_bajo")[0].mensaje)
 
     def test_un_tanque_bajo_desde_la_primera_medicion_alerta(self):
         procesar(self.conector, self.ctx, msg({"distancia_tanque2_mm": self.umbral + 1}))
-        self.assertEqual([a.severidad for a in self.ctx.alertas], ["warning"])
-        self.assertIn("Tanque 2", self.ctx.alertas[0].mensaje)
+        self.assertEqual([a.severidad for a in self.alertas("tanque_bajo")], ["warning"])
+        self.assertIn("Tanque 2", self.alertas("tanque_bajo")[0].mensaje)
+
+    # --- alerta `sensor`: el codec no manda el campo de un sensor que falla ---
+
+    def test_un_sensor_que_deja_de_medir_alerta_una_vez_y_avisa_cuando_vuelve(self):
+        ok = {"distancia_tanque1_mm": 1500, "distancia_tanque2_mm": 2000, "distancia_tanque3_mm": 3000}
+        sin_2 = {"distancia_tanque1_mm": 1500, "distancia_tanque3_mm": 3000}
+        for minuto, valores in enumerate([ok, sin_2, sin_2, ok]):
+            procesar(self.conector, self.ctx, msg(valores, minuto))
+        self.assertEqual([(a.severidad, "Tanque 2" in a.mensaje) for a in self.alertas("sensor")],
+                         [("warning", True), ("info", True)])
+
+    def test_un_sensor_caido_desde_el_primer_mensaje_alerta_una_sola_vez(self):
+        sin_2 = {"distancia_tanque1_mm": 1500, "distancia_tanque3_mm": 3000}
+        for minuto in range(3):
+            procesar(self.conector, self.ctx, msg(sin_2, minuto))
+        self.assertEqual([a.severidad for a in self.alertas("sensor")], ["warning"])
+
+    def test_sin_fallas_no_hay_alerta_de_sensor(self):
+        ok = {"distancia_tanque1_mm": 1500, "distancia_tanque2_mm": 2000, "distancia_tanque3_mm": 3000}
+        for minuto in range(3):
+            procesar(self.conector, self.ctx, msg(ok, minuto))
+        self.assertEqual(self.alertas("sensor"), [])
+
+    def test_si_fallan_los_tres_no_hay_alerta_de_sensor(self):
+        ok = {"distancia_tanque1_mm": 1500, "distancia_tanque2_mm": 2000, "distancia_tanque3_mm": 3000}
+        procesar(self.conector, self.ctx, msg(ok, 0))
+        procesar(self.conector, self.ctx, msg({}, 1))
+        self.assertEqual(self.alertas("sensor"), [])
 
 
 if __name__ == "__main__":
