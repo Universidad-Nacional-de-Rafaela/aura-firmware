@@ -61,9 +61,11 @@ Un dispositivo de la mesh se arma sobre [`comun/nodo_mesh.h`](comun/nodo_mesh.h)
 [`ejemplos/sensor_ejemplo/`](ejemplos/sensor_ejemplo/), [`ejemplos/actuador_ejemplo/`](ejemplos/actuador_ejemplo/)
 y la plantilla. El diseño está en [`docs/mesh-wifi/`](docs/mesh-wifi/).
 
-> ⚠️ El backend de AURA todavía escucha el árbol de la v3.0 y no publica el `ack` (contrato §10,
-> pendientes 1 y 6). Para el banco sin backend, [`herramientas/ack_falso.py`](herramientas/ack_falso.py)
-> hace de AURA, con modos para simular la base caída, `rechazado` y `cuarentena`.
+El backend de aura-app ya escucha el árbol `hw/` de la v4.0 y publica el `ack`. Su broker no
+acepta anónimos: el raíz entra con el usuario `raiz` (ver
+[`infraestructura/nodo_raiz/`](infraestructura/nodo_raiz/)). Para el banco sin backend,
+[`herramientas/ack_falso.py`](herramientas/ack_falso.py) hace de AURA, con modos para simular la
+base caída, `rechazado` y `cuarentena`.
 
 ## Sumar un dispositivo
 

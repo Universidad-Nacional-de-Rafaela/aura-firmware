@@ -17,11 +17,17 @@ su nombre y Enter:
 Usa mosquitto_sub y mosquitto_pub: los del sistema o, con --docker, los del
 contenedor del broker (no hace falta instalar nada). Solo biblioteca estándar.
 
-Uso: herramientas/ack_falso.py [--host localhost] [--puerto 1883] [--docker aura-mosquitto]
+El broker de aura-app no acepta anónimos y solo aura-backend publica hw/+/ack: con
+--docker entra con esa clave, que el contenedor ya tiene. Es para el banco SIN backend:
+con la API de aura-app levantada, cada muestra recibiría dos ack.
+
+Uso: herramientas/ack_falso.py --docker aura-mosquitto-1
+     MQTT_CLAVE=... herramientas/ack_falso.py [--host localhost] [--puerto 1884] [--usuario aura-backend]
 """
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -57,9 +63,19 @@ def decidir(payload, modo, vistos):
     return {"ingest_id": ingest_id, "resultado": "cuarentena" if modo == "cuarentena" else "persistido"}
 
 
-def _cliente(nombre, args):
-    base = ["docker", "exec", "-i", args.docker, nombre] if args.docker else [nombre]
-    return base + ["-h", args.host, "-p", str(args.puerto)]
+def _cliente(nombre, args, entorno=os.environ):
+    """mosquitto_sub/pub con usuario: el broker de aura-app no acepta anónimos.
+
+    Con --docker entra como aura-backend (el único que puede publicar hw/+/ack) con la clave
+    que el contenedor ya tiene en su entorno; así no pasa por la línea de comandos. Sin
+    --docker usa --usuario y la clave de MQTT_CLAVE; sin MQTT_CLAVE se conecta anónimo.
+    """
+    destino = ["-h", args.host, "-p", str(args.puerto)]
+    if args.docker:
+        return ["docker", "exec", "-i", args.docker, "sh", "-c",
+                'exec "$0" -u aura-backend -P "$MQTT_BACKEND_PASSWORD" "$@"', nombre] + destino
+    clave = entorno.get("MQTT_CLAVE")
+    return [nombre] + destino + (["-u", args.usuario, "-P", clave] if clave else [])
 
 
 def _leer_modos(estado):
@@ -76,7 +92,9 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--host", default="localhost")
     ap.add_argument("--puerto", type=int, default=1883)
-    ap.add_argument("--docker", help="contenedor del broker (por ejemplo aura-mosquitto)")
+    ap.add_argument("--docker", help="contenedor del broker (por ejemplo aura-mosquitto-1)")
+    ap.add_argument("--usuario", default="aura-backend",
+                    help="sin --docker: usuario del broker; la clave va en la variable MQTT_CLAVE")
     args = ap.parse_args()
 
     estado = {"modo": "ok"}
