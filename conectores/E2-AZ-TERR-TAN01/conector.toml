@@ -1,0 +1,26 @@
+# Manifiesto del conector de E2-AZ-TERR-TAN01 (nivel de 3 tanques de agua, terraza del Edificio 2).
+# Ver CONTRIBUTING.md, "Tu conector".
+nombre  = "E2-AZ-TERR-TAN01"            # igual a la carpeta
+version = "0.1.0"
+sdk     = ">=1,<2"
+autores = ["forzanijuan22"]             # usuarios de GitHub del grupo (agregá a tus compañeros)
+clase   = "conector:ConectorTanques"
+
+# Un campo por tanque: la distancia del sensor ultrasónico al agua, en mm. Más agua = menos
+# distancia. El rango es el mismo que valida el firmware (DIST_MIN_MM y DIST_MAX_MM de
+# nodo_tanques.ino): un valor fuera de acá no se guarda. Los nombres tienen que coincidir
+# con los que devuelve el codec del device profile en ChirpStack.
+[campos.distancia_tanque1_mm]
+unidad = "mm"
+min = 250
+max = 6000
+
+[campos.distancia_tanque2_mm]
+unidad = "mm"
+min = 250
+max = 6000
+
+[campos.distancia_tanque3_mm]
+unidad = "mm"
+min = 250
+max = 6000
