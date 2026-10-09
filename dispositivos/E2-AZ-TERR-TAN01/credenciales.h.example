@@ -1,0 +1,19 @@
+// Copiar este archivo como credenciales.h (en la misma carpeta) y completar con los datos que
+// da la cátedra. credenciales.h está en el .gitignore: NUNCA se commitea. Este repo es público.
+
+#ifndef CREDENCIALES_H
+#define CREDENCIALES_H
+
+static const uint64_t JOIN_EUI = 0x0000000000000000;
+static const uint64_t DEV_EUI  = 0x0000000000000000;
+
+// La "Application key" de la web de ChirpStack (columna nwk_key en 1.0.x).
+static const uint8_t APP_KEY[] = {
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+};
+
+// Sin NWK_KEY: en LoRaWAN 1.0.x el sketch pasa nullptr en ese argumento de beginOTAA().
+// Un puntero no nulo pondría a RadioLib en modo 1.1 y el join fallaría.
+
+#endif  // CREDENCIALES_H

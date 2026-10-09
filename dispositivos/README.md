@@ -32,6 +32,7 @@ Las abreviaturas siguen el modelo de ubicaciones de AURA (edificio → piso → 
 | Código | Edificio |
 |---|---|
 | `E1` | Edificio 1 |
+| `E2` | Edificio 2 |
 
 ### Pisos
 
@@ -46,7 +47,7 @@ Las abreviaturas siguen el modelo de ubicaciones de AURA (edificio → piso → 
 | Código | Recinto | Edificio y piso |
 |---|---|---|
 | `LECA` | LabECA | E1, planta baja |
-| `TERR` | Terraza (al aire libre) | E1, azotea |
+| `TERR` | Terraza (al aire libre) | E1 y E2, azotea |
 
 ### Tipos
 
@@ -69,9 +70,11 @@ que monitorea, o lo que acciona. Una placa que mide varias magnitudes del ambien
 | `CRT` | Cortina | actuador |
 | `GWM` | Raíz de la mesh (gateway hacia AURA) | infraestructura |
 | `SAL` | Relevo de la mesh (antes, nodo de sala) | infraestructura |
+| `TAN` | Tanque de agua (nivel) | equipo |
 
 ## Dispositivos
 
 | Código | Qué es | Responsable | Estado |
 |---|---|---|---|
 | [`E1-PB-LECA-HFR01`](E1-PB-LECA-HFR01/) | Heladera-freezer del LabECA | grupo de IC IV 2026 | en desarrollo |
+| [`E2-AZ-TERR-TAN01`](E2-AZ-TERR-TAN01/) | Nivel de 3 tanques de agua de la terraza del Edificio 2 | grupo de IC IV 2026 | en desarrollo |
