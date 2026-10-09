@@ -124,6 +124,6 @@ Abrilo contra `main` de este repo. La plantilla del PR trae un checklist. El CI:
 | Códigos de dispositivos | Cada carpeta respeta el formato y el mapa, tiene su ficha y su `.ino` se llama igual |
 | Tests de host | `comun/tests`, `infraestructura/*/tests`, `herramientas/tests` y los `tests/` de cada dispositivo |
 | Conectores | Tests de `aura_sdk`, manifiesto y clase de cada conector, y sus `tests/` |
-| Compilar sketches | Compila cada sketch para XIAO ESP32S3 y verifica que `autocontenido/` esté al día |
+| Compilar sketches | Compila cada sketch para ESP32-C3 SuperMini (o para el FQBN de su `fqbn.txt`) y verifica que `autocontenido/` esté al día |
 
 Con todo en verde, la cátedra revisa y mergea.
