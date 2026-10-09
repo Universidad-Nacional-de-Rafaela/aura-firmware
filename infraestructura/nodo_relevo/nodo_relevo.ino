@@ -48,6 +48,10 @@ void setup() {
     Serial.println("nodo_relevo: MESH_ID sin configurar (config_local.h), no hace nada");
     return;
   }
+  if (!MESH_ROUTER_SSID[0]) {
+    Serial.println("nodo_relevo: falta MESH_ROUTER_SSID (config_local.h), no hace nada");
+    return;
+  }
   AuraMeshConfig mc = {{0}, MESH_CLAVE, MESH_CANAL, MESH_ROUTER_SSID, ""};
   memcpy(mc.mesh_id, mesh_id, 6);
   if (!radio_iniciar(AURA_ROL_RELEVO, &mc, 4)) {
