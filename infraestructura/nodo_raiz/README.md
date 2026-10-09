@@ -25,7 +25,7 @@ Además publica su propio estado en `hw/<raíz>/status` cada 60 s (con LWT `offl
    broker de aura-app escucha en el puerto 1884 y no acepta anónimos: usuario `raiz` y la clave
    `MQTT_RAIZ_PASSWORD` del `.env` de aura-app. Si la clave está mal, el monitor serie dice
    `el broker rechazo usuario o clave`.
-2. Placa `XIAO_ESP32S3`, **USB CDC On Boot: Enabled**. Bibliotecas de `bibliotecas.txt`.
+2. Placa ESP32-C3 SuperMini (`Nologo ESP32C3 Super Mini`, **USB CDC On Boot: Enabled**). Bibliotecas de `bibliotecas.txt`.
 3. En el monitor serie: `con IP …` y `[MQTT] conectado`.
 
 Sin backend, `herramientas/ack_falso.py --docker aura-mosquitto-1` contesta los `ack`

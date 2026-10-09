@@ -1,7 +1,7 @@
 /*
  * AURA - utilidad: leer la MAC de una placa
  *
- * Se flashea en cada XIAO ESP32S3 antes de configurarla, para saber:
+ * Se flashea en cada placa antes de configurarla, para saber:
  *   - su hw_id en AURA ("mac-" + la MAC en minusculas): con eso la catedra
  *     asigna la placa a su dispositivo (contrato v4.0, identidad por placa);
  *   - el valor de MAC_ESPERADA para su config_local.h.

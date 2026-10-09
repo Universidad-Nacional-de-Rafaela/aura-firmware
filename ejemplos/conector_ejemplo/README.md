@@ -1,6 +1,6 @@
 # conector_ejemplo
 
-Conector completo para [`sensor_ejemplo`](../sensor_ejemplo/) (temperatura del chip de la XIAO,
+Conector completo para [`sensor_ejemplo`](../sensor_ejemplo/) (temperatura del chip de la placa,
 campo `temp_chip_c`). Muestra lo que hace un conector:
 
 | Qué | Dónde | Cómo |

@@ -23,7 +23,7 @@
 
 | Componente | Modelo | Conexión |
 |---|---|---|
-| Placa | Seeed XIAO ESP32S3, `hw_id` `<mac-…>` (herramientas/leer_mac) | — |
+| Placa | ESP32-C3 SuperMini, `hw_id` `<mac-…>` (herramientas/leer_mac) | — |
 | <sensor> | <modelo> | <GPIO> |
 
 ## Lo que envía a AURA
