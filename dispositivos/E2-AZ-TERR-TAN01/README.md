@@ -59,7 +59,7 @@ downlink de 2 bytes (segundos, big-endian). Solo valores **no secretos**.
 
 | Parámetro | Rango | Valor en esta placa |
 |---|---|---|
-| `intervalo_s` | 15 a 65535 | 60 (se guarda en memoria no volátil) |
+| `intervalo_s` | 60 a 65535 (se redondea a múltiplos de 60) | 60 (se guarda en memoria no volátil) |
 
 ## Compilar y probar
 
