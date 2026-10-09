@@ -49,7 +49,7 @@ Las abreviaturas siguen el modelo de ubicaciones de AURA (edificio → piso → 
 |---|---|---|
 | `LECA` | LabECA | E1, planta baja |
 | `TERR` | Terraza (al aire libre) | E1, azotea |
-| `TERR` | Terraza (al aire libre) | E2, azotea |
+| `TERR` | Terraza (al aire libre) | E1 y E2, azotea |
 ### Tipos
 
 El tipo dice **sobre qué actúa** el dispositivo: la magnitud que mide en el ambiente, el equipo
