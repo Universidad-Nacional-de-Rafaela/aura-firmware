@@ -43,8 +43,4 @@ static_assert(classifyTemperature(85,true)==FUERA_RANGO,"85 de arranque no es me
 static_assert(classifyTemperature(4,false)==SIN_RESPUESTA,"Exigir conversion completa");
 static_assert(classifyTemperature(-127,true)==SIN_RESPUESTA,"Centinela ausente");
 static_assert(classifyTemperature(-18,true)==SONDA_OK,"Freezer real valido");
-constexpr bool atomicConfig(){ConfigCommand c={};c.mask=4;c.config.sensors[0].min100=700;MeshConfig next={};return !applyPatch(meshDefaults(),c,next);}
-constexpr bool partialConfig(){ConfigCommand c={};c.mask=1;c.config.sensors[0].intervalS=10;MeshConfig next={};return applyPatch(meshDefaults(),c,next)&&next.sensors[1].intervalS==300&&next.recoveryS==300;}
-static_assert(atomicConfig(),"Parche invalido no se aplica");
-static_assert(partialConfig(),"Parche conserva parametros no enviados");
 #endif

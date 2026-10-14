@@ -51,6 +51,8 @@ Para una prueba de banco con el nodo raíz:
 python herramientas/correr_conector.py conectores/E1-PB-LECA-HFR01 --hw-id mac-<MAC de la placa> --docker aura-mosquitto
 ```
 
-Completar con el hw_id real leído en placa, sin subir MAC de producción. El
-runtime dentro de AURA está pendiente según la base recibida; estas pruebas
-comprueban el conector aislado.
+Completar con el hw_id real leído en placa, sin subir MAC de producción.
+Estas pruebas comprueban el conector aislado. Para la prueba integral, la cátedra
+debe confirmar el estado del runtime de AURA y del raíz con el broker autenticado.
+La herramienta del banco debe estar actualizada con el soporte de usuario y clave
+publicado por la cátedra; las credenciales reales no se agregan al repositorio.

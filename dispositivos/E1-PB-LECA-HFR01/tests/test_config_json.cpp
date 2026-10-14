@@ -6,6 +6,9 @@ int main() {
   const char* error;MeshConfig next,current=meshDefaults();JsonDocument d;
   auto patch=[&](const char* json) { assert(!deserializeJson(d,json));bool ok=leerConfig(d.as<JsonObjectConst>(),current,next,error); if(!ok) std::cerr<<error<<": "<<json<<std::endl;return ok; };
   assert(patch("{\"intervalo_s\":120,\"f_s\":600}"));assert(next.sensors[0].intervalS==120&&next.sensors[1].intervalS==600);
+  assert(patch("{\"intervalo_s\":10}"));
+  assert(next.sensors[0].intervalS==10 && next.sensors[1].intervalS==300);
+  assert(next.recoveryS==300 && next.sensors[0].min100==200);
   for(const char* invalid:{"{}","{\"intervalo_s\":true}","{\"intervalo_s\":5.0}","{\"f_s\":4}","{\"f_s\":86401}","{\"f_s\":-1}","{\"r_s\":59}","{\"hlo\":7}","{\"hlo\":\"2\"}","{\"hlo\":true}","{\"hlo\":2.001}","{\"otra\":1}","{\"intervalo_s\":5,\"fhi\":-30}"}) assert(!patch(invalid));
   assert(current.sensors[0].intervalS==60);assert(patch("{\"hlo\":-54.99,\"hhi\":124.99,\"flo\":-54.99,\"fhi\":124.99,\"intervalo_s\":86400,\"f_s\":86400,\"r_s\":86400}"));
   JsonDocument report;describirConfig(next,report["config"].to<JsonObject>());

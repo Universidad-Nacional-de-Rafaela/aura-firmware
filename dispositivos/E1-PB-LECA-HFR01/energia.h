@@ -15,12 +15,7 @@ void readPower(uint32_t now) {
       cutEpoch=readEpoch(); journal.cutAt=cutEpoch; journal.capturePending=1; needsFirst=true;
       // El inicio del corte se conserva localmente incluso con las dos sondas ausentes.
       // No es una medicion de temperatura ni tiene ACK de telemetria.
-      if(!journal.hasPower || journal.powerAcked) {
-        Muestra event={}; newId(event.id); event.kind=ALERTA_ENERGIA; event.state=1;
-        event.temp100=TEMP_INVALIDA; event.measuredAt=cutEpoch;
-        event.flags=POWER_KNOWN|BATTERY|(cutEpoch?CLOCK_VALID:0);
-        journal.firstPower=event; journal.hasPower=1; journal.powerAcked=1;
-      }
+      // journal.cutAt y capturePending se guardan aun sin lecturas validas.
       Serial.printf("[ENERGIA] Inicio del corte UTC=%lu; capturar ambas sondas\n",(unsigned long)cutEpoch);
     }
     if(storageOk) commit();

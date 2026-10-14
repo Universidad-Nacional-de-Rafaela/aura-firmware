@@ -49,7 +49,7 @@ inline bool sensorHead(const Journal& j, int s, Muestra& out) {
 
 inline bool prepararEnvio(const Journal& j, EnvioProtegido& out) {
   Muestra first;
-  if (!nextSample(j,first) || first.kind!=MEDICION) return false;
+  if (!nextSample(j,first)) return false;
   out={}; out.magic=0x49434134; out.activo=1;
   memcpy(out.muestra.ingest_id,first.id,16);
   out.muestra.ts=first.measuredAt && aura_hora_valida(first.measuredAt)?first.measuredAt:0;
@@ -58,7 +58,7 @@ inline bool prepararEnvio(const Journal& j, EnvioProtegido& out) {
   values[campos[first.sensor]]=double(first.temp100)/100;
   Muestra second;
   // Sin hora no se supone que dos registros se midieron juntos.
-  if (first.measuredAt && sensorHead(j,1-first.sensor,second) && second.kind==MEDICION &&
+  if (first.measuredAt && sensorHead(j,1-first.sensor,second) &&
       second.measuredAt==first.measuredAt && (second.flags&POWER_FIRST)==(first.flags&POWER_FIRST)) {
     values[campos[second.sensor]]=double(second.temp100)/100;
     memcpy(out.segundoId,second.id,16);

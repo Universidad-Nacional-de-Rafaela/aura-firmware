@@ -19,11 +19,35 @@ int main(){
  for(int n=1;n<=70;++n){pushSample(j,sample(n));assert(full.save(j));}
  assert(j.count[0]==30&&j.dropped[0]==40);MeshStorage fullReboot;assert(fullReboot.begin(restored));assert(nextSample(restored,next)&&next.id[0]==99);
  assert(acknowledge(restored,first.id));assert(fullReboot.save(restored));MeshStorage afterAck;assert(afterAck.begin(j));assert(j.firstAcked[0]&&j.first[0].id[0]==99);
- // Inicio del corte queda separado incluso si ninguna sonda responde.
- j.firstPower=sample(98);j.firstPower.kind=ALERTA_ENERGIA;j.firstPower.state=1;j.firstPower.temp100=TEMP_INVALIDA;j.firstPower.flags=BATTERY|POWER_KNOWN;j.hasPower=1;
- assert(afterAck.save(j));MeshStorage powerReboot;assert(powerReboot.begin(restored));assert(nextSample(restored,next)&&next.id[0]==98);assert(acknowledge(restored,next.id));assert(powerReboot.save(restored));
- MeshStorage powerAck;assert(powerAck.begin(j));assert(j.hasPower&&j.powerAcked&&j.firstPower.id[0]==98);
- // Cola antigua no se borra ni interpreta con el formato nuevo.
- FakeNvs::reset();FakeNvs::data["iciv_mesh/q0"]={1,2,3};MeshStorage legacy;assert(!legacy.begin(j));assert(FakeNvs::data["iciv_mesh/q0"].size()==3);
- std::cout<<"NVS: registros, ACK sin reescribir FIFO, reinicios, corte, CRC, overflow y legado OK; indice="<<sizeof(QueueIndex)<<", registro="<<sizeof(StoredRecord)<<" bytes\n";
+ // El inicio del corte persiste aun sin sondas, sin crear una falsa medicion.
+ FakeNvs::reset();
+ MeshStorage power;
+ assert(power.begin(j));
+ j.cutAt=1800000000UL;
+ j.powerKnown=1;
+ j.onBattery=1;
+ j.capturePending=1;
+ assert(power.save(j));
+ MeshStorage powerReboot;
+ assert(powerReboot.begin(restored));
+ assert(restored.cutAt==1800000000UL && restored.capturePending);
+ assert(restored.powerKnown && restored.onBattery);
+ assert(!nextSample(restored,next));
+ // Datos ajenos a esta entrega no bloquean el guardado ni se importan.
+ FakeNvs::reset();
+ FakeNvs::data["iciv_mesh/q0"]={1,2,3};
+ FakeNvs::data["iciv_mesh3/index0"]={4,5,6};
+ MeshStorage fresh;
+ assert(fresh.begin(j));
+ assert(j.count[0]==0 && j.count[1]==0 && validConfig(j.config));
+ pushSample(j,sample(1));
+ assert(fresh.save(j));
+ assert(FakeNvs::data["iciv_mesh/q0"]==std::vector<uint8_t>({1,2,3}));
+ assert(FakeNvs::data["iciv_mesh3/index0"]==std::vector<uint8_t>({4,5,6}));
+ // Dos indices corruptos de la entrega actual siguen siendo un error de NVS.
+ FakeNvs::reset();
+ FakeNvs::data["iciv_hfr/index0"]={1,2,3};
+ MeshStorage corrupted;
+ assert(!corrupted.begin(j));
+ std::cout<<"NVS: registros, ACK sin reescribir FIFO, reinicios, corte local, CRC, overflow e inicio limpio OK; indice="<<sizeof(QueueIndex)<<", registro="<<sizeof(StoredRecord)<<" bytes\n";
 }

@@ -20,10 +20,10 @@ inline bool confirmarEnvio(Journal& j, const EnvioProtegido& out, const uint8_t 
 
 inline bool journalContains(const Journal& j,const uint8_t id[16]) {
   for(int s=0;s<2;++s) {
-    if(j.hasFirst[s]&&!j.firstAcked[s]&&j.first[s].kind==MEDICION&&sameId(j.first[s].id,id)) return true;
+    if(j.hasFirst[s]&&!j.firstAcked[s]&&sameId(j.first[s].id,id)) return true;
     for(int n=0;n<j.count[s];++n) {
       const auto& m=j.fifo[s][(j.head[s]+n)%MESH_FIFO_CAP];
-      if(m.kind==MEDICION&&sameId(m.id,id)) return true;
+      if(sameId(m.id,id)) return true;
     }
   }
   return false;
@@ -31,8 +31,8 @@ inline bool journalContains(const Journal& j,const uint8_t id[16]) {
 inline uint32_t pendingMeasurements(const Journal& j,const EnvioProtegido& f) {
   uint32_t n=0;
   for(int s=0;s<2;++s) {
-    if(j.hasFirst[s]&&!j.firstAcked[s]&&j.first[s].kind==MEDICION) ++n;
-    for(int i=0;i<j.count[s];++i) if(j.fifo[s][(j.head[s]+i)%MESH_FIFO_CAP].kind==MEDICION) ++n;
+    if(j.hasFirst[s]&&!j.firstAcked[s]) ++n;
+    n+=j.count[s];
   }
   if(f.activo) {
     if(!journalContains(j,f.muestra.ingest_id)) ++n;

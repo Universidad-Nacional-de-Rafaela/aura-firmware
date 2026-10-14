@@ -30,7 +30,7 @@ UUID de AURA, MAC del padre ni MAC del raíz. La cátedra asigna su hw_id en AUR
 | pantalla.h | OLED y ambos LEDs; alarma local sin depender de AURA. |
 | reloj.h | RTC, UTC y reloj de sistema sincronizable por confirmaciones del raíz. |
 | energia.h | Entrada configurable de batería/red, antirrebote y captura del corte. |
-| almacenamiento.h / mesh_storage.h / mesh_core.h | Journal NVS, FIFO, configuración y primera captura; formato compatible con la versión anterior. No son el protocolo de radio. |
+| almacenamiento.h / mesh_storage.h / mesh_core.h | Journal NVS, FIFO, configuración y primera captura. Guarda solo lecturas; las alertas usan la biblioteca de AURA. |
 | modelo_envio.h / envio_persistente.h | Mensaje completo en vuelo y asociación de las dos lecturas de una misma medición. |
 | adaptador_aura.h | JSON de mediciones y validación/configuración compacta. |
 | politica_envio.h | Presupuesto de reintentos y recuperación espaciada. |
@@ -123,14 +123,14 @@ mantiene la configuración completa. Las limitaciones de integración se detalla
 ## Notas
 
 Capacidad propia: 30 registros ordinarios por sonda + primera captura protegida
-por sonda + inicio del corte local. Un mensaje en vuelo tiene una copia adicional
+por sonda. La hora del inicio del corte se conserva en el índice local. Un mensaje en vuelo tiene una copia adicional
 NVS y otra en la cola oficial de LittleFS. Se conserva su JSON completo para que
 un reinicio entre confirmación y limpieza no cambie los valores del mismo UUID.
 La cola oficial tiene 1440 ranuras según la base, pero este adaptador entrega un
 mensaje por vez: no convierte la capacidad de nuestro journal en 1440 lecturas.
 
 Las primeras lecturas del corte llevan su hora real en ts. Si ambas sondas fallan,
-se conserva localmente journal.cutAt/firstPower y se emite alerta energía, sin
+se conserva localmente journal.cutAt y se emite alerta energía, sin
 telemetría falsa. El raíz de la base fecha esa alerta al publicarla; exportar la
 hora original estructurada a AURA necesita acordarse con la cátedra.
 
@@ -141,17 +141,32 @@ comandos y la mesh gestiona su asociación automáticamente. LED 2/OLED indican
 mesh desconectada o espera de AURA agotada. No hay un ACK intermedio del raíz:
 mesh conectada no demuestra que el raíz ni el broker estén funcionando.
 
-Se conservan los namespaces anteriores y se añade iciv_aura4 para el mensaje en
-vuelo; no se borra NVS ni se reemplaza la tabla de particiones. La base puede
-inicializar LittleFS si no puede montarlo: respaldarlo antes de flashear.
+El almacenamiento de esta entrega usa iciv_hfr para el journal e iciv_aura4 para
+el mensaje en vuelo. No hay migración de formatos experimentales: ninguna versión
+anterior se instaló. Otros namespaces no se consultan ni bloquean el arranque;
+no se borra NVS ni se reemplaza la tabla de particiones. La base puede inicializar
+LittleFS si no puede montarlo: respaldarlo antes de flashear.
 Las alertas de la biblioteca usan RAM y no tienen ACK durable; la protección de
 temperaturas y del corte local no implica entrega garantizada de esas alertas.
 
-La mesh y el runtime central están pendientes de banco/despliegue según el
-contrato recibido. Confirmar alta hw_id, datos de mesh, circuito de alimentación,
-RTC y funcionamiento central. El adaptador usa structs internos expuestos por
-nodo_mesh.h: revisar compatibilidad cuando cambie la biblioteca y proponer hooks
-públicos en un PR separado, sin modificar comun/ en el PR de este dispositivo.
+### Dependencia pendiente: API pública de nodo_mesh.h
+
+El [issue #10 de la cátedra](https://github.com/Universidad-Nacional-de-Rafaela/aura-firmware/issues/10)
+sigue pendiente: la biblioteca debe permitir pasar la hora de medición, proteger
+la primera captura de un corte y espaciar los reintentos. Hasta que esa API esté
+publicada, comunicacion.h conserva el acceso provisional al estado interno de
+nodo_mesh, la copia persistente en vuelo y la política propia de reintentos.
+La limpieza de esta entrega no resuelve ese punto. Cuando la cátedra publique la
+API, hay que adaptar esas funciones y retirar las piezas que queden duplicadas.
+No se modifica comun/ para anticipar una API que todavía no está definida.
+
+### Banco
+
+La prueba física se hará cuando la cátedra valide el raíz en placa con el broker
+autenticado. El usuario y la clave MQTT corresponden al raíz y a las herramientas
+del banco; la hoja recibe los datos de la mesh y no se conecta al broker.
+Confirmar con la cátedra el alta del hw_id, los datos de mesh y el estado de AURA;
+el grupo debe definir el circuito de alimentación y ajustar el RTC.
 
 El procesamiento de las mediciones se documenta en el [README del conector](../../conectores/E1-PB-LECA-HFR01/README.md).
 No versionar config_local.h, respaldos, claves ni ejecutables de tests.
