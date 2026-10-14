@@ -393,7 +393,11 @@ bool conectar_mqtt() {
   // Last Will: si esta placa muere, el broker publica offline por ella.
   String top = topico(radio_mi_mac(), "status");
   const char* lwt = "{\"status\":\"offline\"}";
+  // client_id fijo y sesion persistente (contrato §5): mientras el raiz reconecta, el broker le
+  // guarda los ack y command QoS 1. Sin esto, un ack perdido es una muestra que la hoja reenvia
+  // y un comando perdido queda sin respuesta.
   mqtt.setId(mi_hw);
+  mqtt.setCleanSession(false);
   mqtt.setUsernamePassword(MQTT_USUARIO, MQTT_CLAVE);
   mqtt.beginWill(top, strlen(lwt), true, 1);
   mqtt.print(lwt);
