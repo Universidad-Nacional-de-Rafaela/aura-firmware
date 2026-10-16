@@ -1,47 +1,45 @@
 /*
- * Banco LoRaWAN UNRaf - nodo de nivel de tanques (E2-AZ-TERR-TAN01)
+ * E2-AZ-TERR-TAN01 - nivel de 3 tanques de agua, terraza del Edificio 2 (LoRaWAN, clase A)
  *
  * Tres sensores ultrasonicos AJ-SR04M miden la distancia al agua de 3 tanques.
- * Implementa el contrato MQTT v4.0 por LoRaWAN (hw_id = eui-<DevEUI>).
+ * Implementa el contrato MQTT v4.0 por LoRaWAN (hw_id = eui-<DevEUI>). El formato de los
+ * bytes es el mismo esquema que usa el codec de E1-AZ-TERR-TAN01 (lo mantiene la catedra):
+ * medicion en el fPort 1, reporte de comandos en el fPort 2 y comandos con "ref" en el fPort 10.
+ * El par de este sketch es codec.js, en esta carpeta: si cambia el formato de uno, cambia el otro.
  *
- * --- CICLO DE MEDICION (fijo: ningun comando lo cambia) ---
- * Un tanque cada 20 s: tanque 1 en el segundo 0, tanque 2 en el 20 y
- * tanque 3 en el 40 de cada minuto. Al llegar al minuto vuelve al tanque 1.
- * La red (join, uplinks, reintentos) solo trabaja en los huecos entre turnos
- * y nunca ocupa un turno de medicion.
+ * --- CICLO DE MEDICION (fijo: ningun comando lo mueve) ---
+ * Un tanque cada 20 s: tanque 1 en el segundo 0, tanque 2 en el 20 y tanque 3 en el 40 de
+ * cada minuto (el segundo 0 es el arranque de la placa). La red (join, uplinks, reintentos)
+ * y las mediciones pedidas con medir_ahora solo usan los huecos entre turnos.
  *
  * --- MEMORIA ---
- * Las mediciones viven solo en RAM: cada tanque guarda su ultima medicion
- * hasta que la proxima la reemplaza. No se escriben en flash.
- * En flash (NVS) solo van dos cosas, y solo cuando cambian:
+ * Las mediciones viven solo en RAM: cada tanque guarda su ultima medicion hasta que la proxima
+ * la reemplaza. En flash (NVS) solo van dos cosas, y solo cuando cambian:
  *   - el buffer de nonces del join (una vez por join; evita repetir DevNonce)
- *   - intervalo_s (solo cuando llega un set_config con un valor distinto)
+ *   - intervalo_s (solo cuando un set_config lo cambia)
  * La sesion LoRaWAN NO se guarda: tras un reinicio el nodo hace un join nuevo.
  *
- * --- UPLINKS (todos confirmados) ---
- * Puerto 1, telemetria, 10 bytes, igual que antes (el codec no cambia):
- *   [0..1] contador   [2..3] dist tanque 1   [4..5] dist tanque 2
- *   [6..7] dist tanque 3   [8..9] reservado (0)
- *   dist en mm, big-endian. Sin dato: 0xFFFF sin eco, 0xFFFE demasiado cerca,
- *   0xFFFD demasiado lejos (el codec no los pone en values).
- *   Sale justo despues de medir el tanque 3, cada intervalo_s (60 s por
- *   defecto), con la ultima medicion de cada tanque guardada en RAM.
+ * --- SUBIDA (uplinks confirmados) ---
+ * fPort 1, medicion, 6 bytes, big-endian:
+ *   [0..1] distancia tanque 1 en mm   [2..3] tanque 2   [4..5] tanque 3
+ *   Sin medicion valida: 0xFFFF sin eco, 0xFFFE demasiado cerca, 0xFFFD demasiado lejos.
+ *   El codec no pone esos valores en values (contrato 3.1).
+ *   Sale despues de medir el tanque 3, cada intervalo_s, con la ultima medicion de cada
+ *   tanque guardada en RAM; y ademas despues de un medir_ahora, con una medicion nueva.
+ * fPort 2, reporte de un comando (contrato 3.4), 4 bytes:
+ *   [0] ref del comando   [1] resultado: 0 aplicado, 1 fuera de rango, 2 comando desconocido
+ *   [2..3] intervalo_s vigente
  *
- * Puerto 2, reporte bajo demanda (respuesta a un comando, NO es telemetria):
- *   [0] tipo = 0x01   [1] mascara de tanques incluidos
- *   y por cada tanque de la mascara, en orden: dist (2 bytes) + edad_s (2 bytes)
- *   edad_s = segundos desde que se midio (0xFFFF = todavia sin medir).
- *   Devuelve lo que hay en RAM: NO dispara una medicion ni mueve el ciclo.
- *
- * --- DOWNLINKS ---
- *   2 bytes: set_config intervalo_s (big-endian), 60 a 65535.
- *            Ej.: 0x01 0x2C = 300 s. Se redondea hacia arriba a un multiplo
- *            de 60 s, porque la telemetria sale despues del tanque 3.
- *   1 byte : pedido de reporte (comando medir_hora del codec), mascara de tanques
- *            (bit0 = tanque 1, bit1 = tanque 2, bit2 = tanque 3).
- *            Ej.: 0x05 = tanques 1 y 3, 0x07 = todos.
- *   Clase A: el nodo recibe el comando en la ventana que sigue a su proximo
- *   uplink (hasta 1 minuto) y responde enseguida, en un hueco entre turnos.
+ * --- BAJADA (fPort 10; el lorawan-bridge pone el ref) ---
+ *   01 ref         medir_ahora: mide los 3 tanques en el proximo hueco entre turnos, sin
+ *                  mover el ciclo, y manda la medicion por el fPort 1.
+ *   02 ref hi lo   set_config intervalo_s (60 a 43200). Se redondea hacia arriba a un
+ *                  multiplo de 60 s, porque la medicion periodica sale despues del tanque 3;
+ *                  el reporte informa el valor que quedo vigente.
+ *   Cada comando se contesta con un reporte en el fPort 2. Un comando desconocido o mal
+ *   armado se contesta con resultado 2 y no cambia nada.
+ *   Clase A: el nodo recibe el comando en la ventana que sigue a su proximo uplink (hasta
+ *   intervalo_s despues de encolarlo) y lo atiende en el hueco siguiente.
  */
 
 #include <RadioLib.h>
@@ -62,7 +60,6 @@ Preferences almacen;
 
 const char* NVS_ESPACIO   = "lorawan";
 const char* NVS_NONCES    = "nonces";
-// Clave nueva: la version anterior guardaba "intervalo" en milisegundos.
 const char* NVS_INTERVALO = "intervalo_s";
 
 // ===== PINES DEL WIO-SX1262 =====
@@ -82,7 +79,7 @@ LoRaWANNode node(&radio, &Region, SUBBANDA);
 
 // ===== DATA RATE FIJO =====
 const bool    USAR_ADR = false;
-const uint8_t DATARATE = 3;  // DR3 (SF9): dejan lugar para los comandos MAC
+const uint8_t DATARATE = 3;  // DR3 (SF9): deja lugar para los comandos MAC
 
 // ===== SENSORES AJ-SR04M =====
 const uint8_t N_TANQUES = 3;
@@ -100,15 +97,11 @@ const uint16_t SIN_ECO         = 0xFFFF;
 const uint16_t DEMASIADO_CERCA = 0xFFFE;
 const uint16_t DEMASIADO_LEJOS = 0xFFFD;
 
-const uint16_t RESERVADO = 0x0000;
-
-const size_t TAM_PAYLOAD = 10;
-static_assert(TAM_PAYLOAD == 2 + 2 * N_TANQUES + 2,
-              "TAM_PAYLOAD = contador + distancias + reservado");
-
 // ===== CICLO DE MEDICION =====
-const unsigned long PASO_MEDICION_MS = 20000UL;                    // un tanque cada 20 s
+const unsigned long PASO_MEDICION_MS = 20000UL;                       // un tanque cada 20 s
 const unsigned long CICLO_MS         = PASO_MEDICION_MS * N_TANQUES;  // 60 s
+// Lo que puede tardar medir los 3 tanques (5 muestras de hasta ~100 ms cada una), con margen.
+const unsigned long DURACION_MEDIR_TODOS_MS = 3000UL;
 
 // Ultima medicion de cada tanque. SOLO EN RAM: la proxima medicion la pisa.
 struct Medicion {
@@ -118,30 +111,50 @@ struct Medicion {
 };
 Medicion ultima[N_TANQUES];
 
-unsigned long proximaMedicion = 0;  // millis() del proximo turno
-uint8_t       turno           = 0;  // tanque que toca medir (0 = tanque 1)
+unsigned long proximaMedicion = 0;      // millis() del proximo turno
+uint8_t       turno           = 0;      // tanque que toca medir (0 = tanque 1)
+bool          medicionPedida  = false;  // llego un medir_ahora y todavia no se midio
 
-// ===== TELEMETRIA Y REPORTES =====
-const uint8_t PUERTO_TELEMETRIA       = 1;
-const uint8_t PUERTO_REPORTE          = 2;
-const uint8_t TIPO_REPORTE_MEDICIONES = 0x01;
-const uint8_t MASCARA_TODOS           = (1 << N_TANQUES) - 1;
+// ===== PUERTOS Y COMANDOS (iguales a codec.js) =====
+const uint8_t PUERTO_MEDICION = 1;
+const uint8_t PUERTO_REPORTE  = 2;
+const uint8_t PUERTO_COMANDOS = 10;   // CS_FPORT_COMANDOS del lorawan-bridge
 
+const uint8_t CMD_MEDIR_AHORA = 0x01;  // 01 ref
+const uint8_t CMD_SET_CONFIG  = 0x02;  // 02 ref hi lo
+
+const uint8_t RES_APLICADO            = 0;
+const uint8_t RES_FUERA_DE_RANGO      = 1;
+const uint8_t RES_COMANDO_DESCONOCIDO = 2;
+
+const size_t TAM_MEDICION = 2 * N_TANQUES;  // 6 bytes
+const size_t TAM_REPORTE  = 4;
+
+// ===== INTERVALO DE ENVIO (set_config) =====
 const uint16_t INTERVALO_MIN_S = CICLO_MS / 1000UL;  // 60: cada tanque se mide una vez por minuto
-uint16_t       intervaloEnvioS = INTERVALO_MIN_S;    // intervalo_s (set_config)
+const uint16_t INTERVALO_MAX_S = 43200;              // 12 h, igual que el codec
+uint16_t       intervaloEnvioS  = INTERVALO_MIN_S;   // siempre multiplo de INTERVALO_MIN_S
 uint16_t       ciclosDesdeEnvio = 0xFFFF;            // arranca alto: el 1er ciclo ya envia
-uint16_t       contador = 0;
 
+// ===== ENVIOS PENDIENTES =====
 struct EnvioPendiente {
   bool          activo;
-  uint8_t       payload[TAM_PAYLOAD];
-  uint16_t      contador;
+  uint8_t       payload[TAM_MEDICION];
   uint16_t      intentos;
   unsigned long proximoIntento;
 };
-EnvioPendiente telemetria = {};
+EnvioPendiente medicion = {};
 
-uint8_t       reporteMascara        = 0;  // tanques pedidos; 0 = no hay reporte pendiente
+// Reportes de comandos (contrato 3.4). Una cola chica: en clase A llega a lo sumo un
+// comando por uplink, asi que casi nunca hay mas de uno esperando.
+struct Reporte {
+  uint8_t  ref;
+  uint8_t  resultado;
+  uint16_t intervaloS;
+};
+const uint8_t MAX_REPORTES = 4;
+Reporte       reportes[MAX_REPORTES];
+uint8_t       nReportes             = 0;
 uint8_t       reporteIntentos       = 0;
 unsigned long reporteProximoIntento = 0;
 
@@ -164,21 +177,23 @@ uint8_t       fallosUnion    = 0;
 void iniciarSensores();
 uint16_t leerDistanciaMm(uint8_t i);
 void imprimirDistancia(uint8_t i, uint16_t d);
+void guardarMedicion(uint8_t t, uint16_t d, unsigned long instante);
 void medirTurno();
+void medirTodos();
 void cerrarCiclo();
 uint16_t ciclosPorEnvio();
-void armarTelemetria();
+void armarMedicion();
 void atenderRed();
-void intentarTelemetria();
+void intentarMedicion();
 void intentarReporte();
 bool enviarUplink(uint8_t puerto, const uint8_t* payload, size_t tam);
-void procesarBajada(const uint8_t* datos, size_t tam);
+void procesarBajada(uint8_t puerto, const uint8_t* datos, size_t tam);
+void encolarReporte(uint8_t ref, uint8_t resultado);
 unsigned long calcularEspera(uint16_t intento);
 void unirse();
 void fijarDatarate();
 void restaurarNonces();
 void cargarIntervalo();
-void guardarBuffer(const char* clave, const uint8_t* datos, size_t tam);
 long msHasta(unsigned long instante);
 void detener();
 
@@ -188,7 +203,7 @@ void setup() {
   while (!Serial && millis() < 5000) { }
 
   Serial.println();
-  Serial.println(F("=== Banco LoRaWAN UNRaf - nodo de tanques ==="));
+  Serial.println(F("=== E2-AZ-TERR-TAN01 - nivel de 3 tanques (LoRaWAN) ==="));
 
   iniciarSensores();
 
@@ -206,7 +221,7 @@ void setup() {
 
   radio.setDio2AsRfSwitch(true);
 
-  // LoRaWAN 1.0.x: sin NWK_KEY (puntero nulo), ver credenciales.
+  // LoRaWAN 1.0.x: sin NwkKey (puntero nulo).
   node.beginOTAA(JOIN_EUI, DEV_EUI, nullptr, APP_KEY);
 
   almacen.begin(NVS_ESPACIO, false);
@@ -226,7 +241,7 @@ void loop() {
   if (msHasta(proximaMedicion) <= 0) {
     medirTurno();      // la medicion siempre va primero
   } else {
-    atenderRed();      // la red solo usa los huecos entre turnos
+    atenderRed();      // lo demas solo usa los huecos entre turnos
   }
   delay(10);
 }
@@ -241,6 +256,13 @@ void iniciarSensores() {
     ultima[i].instante = 0;
     ultima[i].hecha    = false;
   }
+}
+
+void guardarMedicion(uint8_t t, uint16_t d, unsigned long instante) {
+  ultima[t].dist     = d;       // RAM: pisa la medicion anterior de este tanque
+  ultima[t].instante = instante;
+  ultima[t].hecha    = true;
+  imprimirDistancia(t, d);
 }
 
 // Mide el tanque que toca y avanza al siguiente turno.
@@ -258,12 +280,7 @@ void medirTurno() {
 
   uint8_t t = turno;
   unsigned long inicio = millis();
-  uint16_t d = leerDistanciaMm(t);
-
-  ultima[t].dist     = d;       // RAM: pisa la medicion anterior de este tanque
-  ultima[t].instante = inicio;
-  ultima[t].hecha    = true;
-  imprimirDistancia(t, d);
+  guardarMedicion(t, leerDistanciaMm(t), inicio);
 
   proximaMedicion += PASO_MEDICION_MS;   // se suma al turno anterior, no a millis(): sin deriva
   turno = (turno + 1) % N_TANQUES;
@@ -271,6 +288,18 @@ void medirTurno() {
   if (t == N_TANQUES - 1) {
     cerrarCiclo();
   }
+}
+
+// medir_ahora: mide los 3 tanques en un hueco entre turnos. No toca proximaMedicion ni
+// turno, asi que el ciclo sigue en sus segundos.
+void medirTodos() {
+  Serial.println(F("[MED] medir_ahora: midiendo los 3 tanques"));
+  for (uint8_t t = 0; t < N_TANQUES; t++) {
+    unsigned long inicio = millis();
+    guardarMedicion(t, leerDistanciaMm(t), inicio);
+  }
+  medicionPedida = false;
+  armarMedicion();
 }
 
 uint16_t leerDistanciaMm(uint8_t i) {
@@ -318,47 +347,45 @@ void imprimirDistancia(uint8_t i, uint16_t d) {
   else { Serial.print(d); Serial.println(F(" mm")); }
 }
 
-// ===== TELEMETRIA =====
+// ===== MEDICION PERIODICA =====
 uint16_t ciclosPorEnvio() {
-  return ((uint32_t)intervaloEnvioS + (INTERVALO_MIN_S - 1)) / INTERVALO_MIN_S;
+  return intervaloEnvioS / INTERVALO_MIN_S;
 }
 
 // Se llama al terminar el turno del tanque 3: cierra el minuto.
 void cerrarCiclo() {
   if (ciclosDesdeEnvio < 0xFFFF) ciclosDesdeEnvio++;
   if (ciclosDesdeEnvio >= ciclosPorEnvio()) {
-    armarTelemetria();
+    armarMedicion();
     ciclosDesdeEnvio = 0;
   }
 }
 
-// Toma una foto de lo que hay en RAM y la deja lista para enviar.
-void armarTelemetria() {
-  if (telemetria.activo) {
-    Serial.print(F("[TX] PERDIDO contador="));
-    Serial.print(telemetria.contador);
-    Serial.println(F(": no se pudo entregar antes de la proxima telemetria"));
+// Toma una foto de lo que hay en RAM y la deja lista para enviar por el fPort 1.
+// Si habia una sin entregar, la reemplaza: la nueva trae datos mas recientes.
+void armarMedicion() {
+  if (medicion.activo) {
+    Serial.println(F("[TX] medicion anterior sin entregar: la reemplaza la nueva"));
   }
-
-  telemetria.contador = contador++;
-  telemetria.payload[0] = (telemetria.contador >> 8) & 0xFF;
-  telemetria.payload[1] = telemetria.contador & 0xFF;
   for (uint8_t i = 0; i < N_TANQUES; i++) {
     uint16_t d = ultima[i].hecha ? ultima[i].dist : SIN_ECO;
-    telemetria.payload[2 + 2 * i] = (d >> 8) & 0xFF;
-    telemetria.payload[3 + 2 * i] = d & 0xFF;
+    medicion.payload[2 * i]     = (d >> 8) & 0xFF;
+    medicion.payload[2 * i + 1] = d & 0xFF;
   }
-  telemetria.payload[8] = (RESERVADO >> 8) & 0xFF;
-  telemetria.payload[9] = RESERVADO & 0xFF;
-
-  telemetria.intentos       = 0;
-  telemetria.proximoIntento = millis();
-  telemetria.activo         = true;
+  medicion.intentos       = 0;
+  medicion.proximoIntento = millis();
+  medicion.activo         = true;
 }
 
-// ===== RED: solo en los huecos entre turnos =====
+// ===== RED Y MEDIR_AHORA: solo en los huecos entre turnos =====
 void atenderRed() {
   long libre = msHasta(proximaMedicion);   // ms que faltan para el proximo turno
+
+  // medir_ahora no depende de la red: se mide en cuanto haya un hueco que alcance.
+  if (medicionPedida) {
+    if (libre >= (long)DURACION_MEDIR_TODOS_MS) medirTodos();
+    return;   // hasta medir, no se ocupa el hueco con la red
+  }
 
   if (necesitaUnirse) {
     if (libre >= (long)MARGEN_UNION_MS && msHasta(proximoUnion) <= 0) {
@@ -371,77 +398,60 @@ void atenderRed() {
   if (libre < (long)DURACION_INTENTO_MS) return;
   if (node.timeUntilUplink() > 0) return;   // duty cycle
 
-  if (telemetria.activo && msHasta(telemetria.proximoIntento) <= 0) {
-    intentarTelemetria();
-  } else if (reporteMascara != 0 && msHasta(reporteProximoIntento) <= 0) {
+  // Primero los reportes: confirman el comando y son lo que espera quien lo mando.
+  if (nReportes > 0 && msHasta(reporteProximoIntento) <= 0) {
     intentarReporte();
+  } else if (medicion.activo && msHasta(medicion.proximoIntento) <= 0) {
+    intentarMedicion();
   }
 }
 
-void intentarTelemetria() {
-  telemetria.intentos++;
-  Serial.print(F("[TX] telemetria contador="));
-  Serial.print(telemetria.contador);
-  Serial.print(F(" intento "));
-  Serial.print(telemetria.intentos);
+void intentarMedicion() {
+  medicion.intentos++;
+  Serial.print(F("[TX] medicion, intento "));
+  Serial.print(medicion.intentos);
   Serial.print(F(" ... "));
 
-  if (enviarUplink(PUERTO_TELEMETRIA, telemetria.payload, TAM_PAYLOAD)) {
-    telemetria.activo = false;
+  if (enviarUplink(PUERTO_MEDICION, medicion.payload, TAM_MEDICION)) {
+    medicion.activo = false;
     return;
   }
 
-  unsigned long espera = calcularEspera(telemetria.intentos + 1);
-  telemetria.proximoIntento = millis() + espera;
+  unsigned long espera = calcularEspera(medicion.intentos + 1);
+  medicion.proximoIntento = millis() + espera;
   Serial.print(F("     reintento en "));
   Serial.print(espera / 1000.0, 1);
   Serial.println(F(" s (si hay hueco antes del proximo turno)"));
 }
 
-// Responde un pedido de reporte con lo que hay en RAM. No mide nada.
 void intentarReporte() {
-  uint8_t payload[2 + 4 * N_TANQUES];
-  size_t n = 0;
-  unsigned long ahora = millis();
-
-  payload[n++] = TIPO_REPORTE_MEDICIONES;
-  payload[n++] = reporteMascara;
-  for (uint8_t i = 0; i < N_TANQUES; i++) {
-    if (!(reporteMascara & (1 << i))) continue;
-
-    uint16_t d    = SIN_ECO;
-    uint16_t edad = 0xFFFF;                     // todavia sin medir
-    if (ultima[i].hecha) {
-      d = ultima[i].dist;
-      unsigned long s = (ahora - ultima[i].instante) / 1000UL;
-      edad = (s > 0xFFFE) ? 0xFFFE : (uint16_t)s;
-    }
-    payload[n++] = (d >> 8) & 0xFF;
-    payload[n++] = d & 0xFF;
-    payload[n++] = (edad >> 8) & 0xFF;
-    payload[n++] = edad & 0xFF;
-  }
+  const Reporte& r = reportes[0];
+  uint8_t payload[TAM_REPORTE] = {
+    r.ref, r.resultado, (uint8_t)((r.intervaloS >> 8) & 0xFF), (uint8_t)(r.intervaloS & 0xFF)
+  };
 
   reporteIntentos++;
-  Serial.print(F("[TX] reporte mascara=0x0"));
-  Serial.print(reporteMascara, HEX);
+  Serial.print(F("[TX] reporte ref="));
+  Serial.print(r.ref);
+  Serial.print(F(" resultado="));
+  Serial.print(r.resultado);
   Serial.print(F(" intento "));
   Serial.print(reporteIntentos);
   Serial.print(F(" ... "));
 
-  if (enviarUplink(PUERTO_REPORTE, payload, n)) {
-    reporteMascara  = 0;
-    reporteIntentos = 0;
+  bool entregado = enviarUplink(PUERTO_REPORTE, payload, TAM_REPORTE);
+  if (!entregado && reporteIntentos < MAX_INTENTOS_REPORTE) {
+    reporteProximoIntento = millis() + calcularEspera(reporteIntentos + 1);
     return;
   }
-
-  if (reporteIntentos >= MAX_INTENTOS_REPORTE) {
+  if (!entregado) {
     Serial.println(F("[TX] reporte descartado: sin ACK tras varios intentos"));
-    reporteMascara  = 0;
-    reporteIntentos = 0;
-    return;
   }
-  reporteProximoIntento = millis() + calcularEspera(reporteIntentos + 1);
+  // Saca el primero de la cola (entregado o descartado).
+  for (uint8_t i = 1; i < nReportes; i++) reportes[i - 1] = reportes[i];
+  nReportes--;
+  reporteIntentos       = 0;
+  reporteProximoIntento = millis();
 }
 
 // Un uplink confirmado. Devuelve true si el servidor lo confirmo.
@@ -467,6 +477,11 @@ bool enviarUplink(uint8_t puerto, const uint8_t* payload, size_t tam) {
     return false;
   }
 
+  // Un comando puede llegar aunque el ACK no venga en esa ventana: se procesa igual.
+  if (estado > 0 && rxTam > 0) {
+    procesarBajada(bajada.fPort, rxBuffer, rxTam);
+  }
+
   if (CONFIRMADO && !bajada.confirming) {
     Serial.println(F("sin ACK del servidor"));
     return false;
@@ -475,60 +490,97 @@ bool enviarUplink(uint8_t puerto, const uint8_t* payload, size_t tam) {
   if (estado > 0) {
     Serial.print(F("confirmado, ACK en RX"));
     Serial.println(estado);
-    if (rxTam > 0) {
-      procesarBajada(rxBuffer, rxTam);
-    }
   } else {
     Serial.println(F("enviado (sin downlink)"));
   }
   return true;
 }
 
-// ===== COMANDOS POR DOWNLINK =====
-void procesarBajada(const uint8_t* datos, size_t tam) {
-  if (tam == 2) {
-    // set_config: intervalo_s, big-endian.
-    uint16_t nuevoS = ((uint16_t)datos[0] << 8) | datos[1];
-    if (nuevoS < INTERVALO_MIN_S) {
-      Serial.print(F(">>> set_config RECHAZADO: intervalo_s="));
-      Serial.print(nuevoS);
-      Serial.print(F(" es menor al minimo ("));
-      Serial.print(INTERVALO_MIN_S);
-      Serial.println(F(" s) <<<"));
+// ===== COMANDOS POR DOWNLINK (fPort 10) =====
+void procesarBajada(uint8_t puerto, const uint8_t* datos, size_t tam) {
+  if (puerto != PUERTO_COMANDOS) {
+    Serial.print(F(">>> downlink en el fPort "));
+    Serial.print(puerto);
+    Serial.println(F(", ignorado (los comandos van en el 10) <<<"));
+    return;
+  }
+  if (tam < 2) {
+    // Sin ref no hay a quien contestar.
+    Serial.println(F(">>> comando sin ref, ignorado <<<"));
+    return;
+  }
+
+  uint8_t op  = datos[0];
+  uint8_t ref = datos[1];
+
+  if (op == CMD_MEDIR_AHORA && tam == 2) {
+    medicionPedida = true;
+    encolarReporte(ref, RES_APLICADO);
+    Serial.print(F(">>> medir_ahora ref="));
+    Serial.print(ref);
+    Serial.println(F(": se mide en el proximo hueco entre turnos <<<"));
+    return;
+  }
+
+  if (op == CMD_SET_CONFIG && tam == 4) {
+    uint16_t pedidoS = ((uint16_t)datos[2] << 8) | datos[3];
+    if (pedidoS < INTERVALO_MIN_S || pedidoS > INTERVALO_MAX_S) {
+      // Fuera de rango: no se aplica nada (contrato 3.3).
+      encolarReporte(ref, RES_FUERA_DE_RANGO);
+      Serial.print(F(">>> set_config ref="));
+      Serial.print(ref);
+      Serial.print(F(" RECHAZADO: intervalo_s="));
+      Serial.print(pedidoS);
+      Serial.println(F(" fuera de 60..43200 <<<"));
       return;
     }
+    // Redondeo hacia arriba a un multiplo de 60 (43200 ya es multiplo, no se pasa del maximo).
+    uint16_t nuevoS = ((pedidoS + INTERVALO_MIN_S - 1) / INTERVALO_MIN_S) * INTERVALO_MIN_S;
     intervaloEnvioS = nuevoS;
-    // Flash: solo si el valor cambio de verdad.
-    if (almacen.getUInt(NVS_INTERVALO, 0) != nuevoS) {
+    if (almacen.getUInt(NVS_INTERVALO, 0) != nuevoS) {   // flash: solo si cambio
       almacen.putUInt(NVS_INTERVALO, nuevoS);
     }
-    Serial.print(F(">>> set_config: intervalo_s="));
+    encolarReporte(ref, RES_APLICADO);
+    Serial.print(F(">>> set_config ref="));
+    Serial.print(ref);
+    Serial.print(F(": intervalo_s="));
     Serial.print(nuevoS);
-    Serial.print(F(" (la telemetria sale cada "));
-    Serial.print(ciclosPorEnvio() * INTERVALO_MIN_S);
-    Serial.println(F(" s) <<<"));
-
-  } else if (tam == 1) {
-    // Pedido de reporte: mascara de tanques.
-    uint8_t mascara = datos[0] & MASCARA_TODOS;
-    if (mascara == 0) {
-      Serial.println(F(">>> reporte IGNORADO: la mascara no incluye ningun tanque <<<"));
-      return;
+    if (nuevoS != pedidoS) {
+      Serial.print(F(" (pedido "));
+      Serial.print(pedidoS);
+      Serial.print(F(", redondeado a multiplo de 60)"));
     }
-    if (reporteMascara == 0) {
-      reporteIntentos       = 0;
-      reporteProximoIntento = millis();
-    }
-    reporteMascara |= mascara;
-    Serial.print(F(">>> reporte pedido, mascara=0x0"));
-    Serial.print(reporteMascara, HEX);
-    Serial.println(F(" (se responde en el proximo hueco, sin medir) <<<"));
-
-  } else {
-    Serial.print(F(">>> comando desconocido de "));
-    Serial.print((unsigned)tam);
-    Serial.println(F(" bytes, ignorado <<<"));
+    Serial.println(F(" <<<"));
+    return;
   }
+
+  encolarReporte(ref, RES_COMANDO_DESCONOCIDO);
+  Serial.print(F(">>> comando desconocido ref="));
+  Serial.print(ref);
+  Serial.print(F(" (op 0x"));
+  Serial.print(op, HEX);
+  Serial.print(F(", "));
+  Serial.print((unsigned)tam);
+  Serial.println(F(" bytes) <<<"));
+}
+
+// El reporte lleva el intervalo vigente en el momento en que se atendio el comando.
+// Con la cola llena, el reporte nuevo se pierde (el comando se aplica igual) y AURA ve ese
+// comando como pendiente. No se descarta el primero porque puede estar enviandose.
+void encolarReporte(uint8_t ref, uint8_t resultado) {
+  if (nReportes == MAX_REPORTES) {
+    Serial.print(F("[TX] cola de reportes llena: sin reporte para ref="));
+    Serial.println(ref);
+    return;
+  }
+  if (nReportes == 0) {
+    reporteIntentos       = 0;
+    reporteProximoIntento = millis();
+  }
+  reportes[nReportes].ref        = ref;
+  reportes[nReportes].resultado  = resultado;
+  reportes[nReportes].intervaloS = intervaloEnvioS;
+  nReportes++;
 }
 
 unsigned long calcularEspera(uint16_t intento) {
@@ -554,7 +606,7 @@ void unirse() {
   int estado = node.activateOTAA();
 
   // Unico dato de LoRaWAN que se guarda en flash: el DevNonce, una vez por join.
-  guardarBuffer(NVS_NONCES, node.getBufferNonces(), RADIOLIB_LORAWAN_NONCES_BUF_SIZE);
+  almacen.putBytes(NVS_NONCES, node.getBufferNonces(), RADIOLIB_LORAWAN_NONCES_BUF_SIZE);
 
   if (estado == RADIOLIB_LORAWAN_NEW_SESSION || estado == RADIOLIB_LORAWAN_SESSION_RESTORED) {
     Serial.println(F("OK - join nuevo"));
@@ -572,8 +624,8 @@ void unirse() {
   Serial.print(F("FALLO, codigo "));
   Serial.println(estado);
   Serial.println(F("Si el JoinRequest aparece en ChirpStack pero no vuelve el Accept:"));
-  Serial.println(F("  - claves de credenciales.h distintas a las del device, o"));
-  Serial.println(F("  - DevNonce repetido (correr scripts/reset-nonces.sh)."));
+  Serial.println(F("  - claves de config_local.h distintas a las del device, o"));
+  Serial.println(F("  - DevNonce repetido (pedir a la catedra que resetee los nonces del device)."));
   Serial.print(F("Se reintenta en "));
   Serial.print(espera / 1000UL);
   Serial.println(F(" s; mientras tanto se sigue midiendo."));
@@ -610,15 +662,12 @@ void cargarIntervalo() {
   if (!almacen.isKey(NVS_INTERVALO)) return;
 
   uint32_t s = almacen.getUInt(NVS_INTERVALO, INTERVALO_MIN_S);
-  if (s >= INTERVALO_MIN_S && s <= 65535UL) {
+  // Un valor fuera de rango o que no es multiplo de 60 (de una version anterior) se ignora.
+  if (s >= INTERVALO_MIN_S && s <= INTERVALO_MAX_S && s % INTERVALO_MIN_S == 0) {
     intervaloEnvioS = (uint16_t)s;
     Serial.print(F("intervalo_s recuperado de NVS: "));
     Serial.println(intervaloEnvioS);
   }
-}
-
-void guardarBuffer(const char* clave, const uint8_t* datos, size_t tam) {
-  almacen.putBytes(clave, datos, tam);
 }
 
 // ===== UTILIDADES =====

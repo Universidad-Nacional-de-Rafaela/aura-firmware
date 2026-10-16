@@ -8,7 +8,7 @@ clase   = "conector:ConectorTanques"
 
 # Un campo por tanque: la distancia del sensor ultrasónico al agua, en mm. Más agua = menos
 # distancia. El rango es el mismo que valida el firmware (DIST_MIN_MM y DIST_MAX_MM de
-# nodo_tanques.ino): un valor fuera de acá no se guarda. Los nombres tienen que coincidir
+# E2-AZ-TERR-TAN01.ino): un valor fuera de acá no se guarda. Los nombres tienen que coincidir
 # con los que devuelve el codec (dispositivos/E2-AZ-TERR-TAN01/codec.js).
 [campos.distancia_tanque1_mm]
 unidad = "mm"
