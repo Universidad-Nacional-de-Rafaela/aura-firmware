@@ -6,14 +6,26 @@
  * medidas de cada tanque (conectores/E1-AZ-TERR-TAN01/conector.py). Asi un error en
  * una medida se corrige sin reflashear la placa y la historia se puede recalcular.
  *
- * Payload de 4 bytes, big endian (lo decodifica codec.js en ChirpStack):
- *   byte 0-1  distancia del tanque 1, en cm x 10 (uint16)
- *   byte 2-3  distancia del tanque 2, en cm x 10 (uint16)
- * Sin lectura: 0xFFFF. Nunca se manda un valor inventado.
+ * Los bytes son los del codec.js del device profile aura-tanque-2x-ultrasonico:
  *
- * El nodo es clase C: escucha todo el tiempo y acepta un downlink de 1 byte, 0x01
- * (comando medir_ahora, lo arma codec.js), que hace medir y enviar sin esperar al
- * intervalo. Entre dos envios pasan al menos MIN_ENTRE_ENVIOS_MS.
+ * SUBIDA
+ *   fPort 1, 4 bytes, medicion (big endian):
+ *     0-1  distancia del tanque 1, en cm x 10 (uint16); 0xFFFF = sin lectura
+ *     2-3  lo mismo para el tanque 2
+ *   fPort 2, 4 bytes, reporte de un comando:
+ *     0    ref del comando
+ *     1    resultado: 0 aplicado, 1 fuera de rango, 2 comando desconocido
+ *     2-3  intervalo de lectura vigente, en segundos (uint16)
+ *
+ * BAJADA (fPort 10, el firmware no filtra por puerto)
+ *   01 ref              medir_ahora: mide y envia sin esperar al intervalo
+ *   02 ref hi lo        set_config: intervalo de lectura en s (60 a 43200), en NVS
+ *
+ * El nodo es clase C: escucha todo el tiempo. Cada comando se contesta con un reporte
+ * en el fPort 2; despues de medir_ahora sale ademas la medicion. Un comando que llega
+ * dos veces seguidas con el mismo ref no se vuelve a aplicar: solo se repite el
+ * reporte. Entre dos uplinks, reportes incluidos, pasan al menos MIN_ENTRE_ENVIOS_MS.
+ * Nunca se manda un valor inventado.
  *
  * Las credenciales OTAA van en config_local.h (copiar config_local.h.example). Sin
  * ese archivo el sketch compila y mide (se ve por el monitor serie), pero no se une
@@ -42,6 +54,16 @@ const char* NVS_ESPACIO = "lorawan";
 const char* NVS_NONCES  = "nonces";
 const char* NVS_SESION  = "sesion";
 
+// ===== Configuracion remota (NVS, aparte de la sesion) =====
+Preferences ajustes;
+const char* NVS_AJUSTES   = "config";
+const char* NVS_INTERVALO = "intervalo_s";
+
+const uint16_t INTERVALO_DEFECTO_S = 60;
+const uint16_t INTERVALO_MIN_S     = 60;
+const uint16_t INTERVALO_MAX_S     = 43200;   // 12 h, el uplink interval del device profile
+uint16_t intervaloS = INTERVALO_DEFECTO_S;
+
 // ===== Pines del Wio-SX1262 (conector B2B) =====
 #define PIN_NSS    41
 #define PIN_DIO1   39
@@ -54,6 +76,9 @@ SX1262 radio = new Module(PIN_NSS, PIN_DIO1, PIN_NRST, PIN_BUSY);
 const LoRaWANBand_t REGION   = AU915;
 const uint8_t       SUBBANDA = 2;   // canales 8-15 (au915_1 en ChirpStack)
 LoRaWANNode nodo(&radio, &REGION, SUBBANDA);
+
+const uint8_t PUERTO_MEDICION = 1;
+const uint8_t PUERTO_REPORTE  = 2;
 
 // ===== Sensores JSN-SR04T =====
 const int TRIG[2] = {D1, D5};
@@ -72,17 +97,37 @@ const float DIST_MAX_CM = 600.0;
 const uint16_t SIN_LECTURA = 0xFFFF;
 
 // ===== Temporizacion =====
-const unsigned long INTERVALO_ENVIO_MS     = 60000UL;    // 1 minuto
-const unsigned long REINTENTO_JOIN_MS      = 300000UL;   // 5 minutos
-const unsigned long MIN_ENTRE_ENVIOS_MS    = 10000UL;    // tope a los pedidos de medir_ahora
+const unsigned long REINTENTO_JOIN_MS   = 300000UL;   // 5 minutos
+const unsigned long MIN_ENTRE_ENVIOS_MS = 10000UL;    // entre dos uplinks cualesquiera
+unsigned long ultimaMedicion = 0;
 unsigned long ultimoEnvio = 0;
 unsigned long ultimoIntentoJoin = 0;
 bool unido = false;
-bool pedidoMedir = false;   // llego un medir_ahora y todavia no se envio
+bool pedidoMedir = false;   // llego un medir_ahora y todavia no se midio
 
 // ===== Comandos por downlink =====
 const uint8_t CMD_MEDIR_AHORA = 0x01;
-const size_t  MAX_DOWNLINK    = 64;
+const uint8_t CMD_SET_CONFIG  = 0x02;
+
+const uint8_t RES_APLICADO       = 0;
+const uint8_t RES_FUERA_DE_RANGO = 1;
+const uint8_t RES_DESCONOCIDO    = 2;
+
+const size_t MAX_DOWNLINK = 64;
+
+// Reportes que todavia no salieron. Se mandan en loop(), fuera de sendReceive.
+struct Reporte { uint8_t ref; uint8_t resultado; };
+const int MAX_REPORTES = 4;
+Reporte reportes[MAX_REPORTES];
+int cantReportes = 0;
+
+// El ultimo comando procesado. El ref va de 1 a 255: 0 es "ninguno todavia".
+uint8_t ultimoRef = 0;
+uint8_t ultimoResultado = 0;
+
+unsigned long intervaloMs() {
+  return (unsigned long)intervaloS * 1000UL;
+}
 
 // Distancia en cm, o NAN si el sensor no respondio o la lectura cae fuera de rango.
 float medirDistancia(int trig, int echo) {
@@ -117,6 +162,12 @@ void setup() {
   // el JSN-SR04T tarda en arrancar: sin esto la primera lectura da sin lectura
   delay(500);
 
+  // Un valor guardado fuera de rango (NVS corrupta) no se usa: queda el de fabrica.
+  ajustes.begin(NVS_AJUSTES, false);
+  uint16_t guardado = ajustes.getUShort(NVS_INTERVALO, INTERVALO_DEFECTO_S);
+  if (guardado >= INTERVALO_MIN_S && guardado <= INTERVALO_MAX_S) intervaloS = guardado;
+  Serial.printf("Intervalo de lectura: %u s\n", intervaloS);
+
   pinMode(PIN_ANT_SW, OUTPUT);
   digitalWrite(PIN_ANT_SW, HIGH);
 
@@ -137,7 +188,7 @@ void setup() {
   Serial.println(F("Sin config_local.h: mide pero no se une a la red."));
 #endif
 
-  ultimoEnvio = millis() - INTERVALO_ENVIO_MS;   // la primera medicion sale ya
+  ultimaMedicion = millis() - intervaloMs();   // la primera medicion sale ya
 }
 
 void loop() {
@@ -145,27 +196,75 @@ void loop() {
   if (!unido && millis() - ultimoIntentoJoin >= REINTENTO_JOIN_MS) unirse();
   if (unido) revisarDownlinkClaseC();
 #endif
-  bool tocaEnvio = millis() - ultimoEnvio >= INTERVALO_ENVIO_MS;
-  bool atenderPedido = pedidoMedir && millis() - ultimoEnvio >= MIN_ENTRE_ENVIOS_MS;
-  if (tocaEnvio || atenderPedido) {
+  bool puedeEnviar = millis() - ultimoEnvio >= MIN_ENTRE_ENVIOS_MS;
+
+  // El reporte va antes que la medicion: es lo que confirma el comando.
+  if (unido && cantReportes > 0) {
+    if (puedeEnviar) enviarReporte();
+  } else if (puedeEnviar && (pedidoMedir || millis() - ultimaMedicion >= intervaloMs())) {
     pedidoMedir = false;
-    ultimoEnvio = millis();
+    ultimaMedicion = millis();
     medirYEnviar();
   }
   delay(50);
 }
 
-// Un downlink llega en la ventana de clase C o en RX1/RX2 despues de un uplink.
-// El puerto 0 trae solo comandos MAC de la red, sin datos para la aplicacion.
-void procesarDownlink(const uint8_t* datos, size_t largo, uint8_t puerto) {
-  if (puerto == 0 || largo == 0) return;
-  if (largo == 1 && datos[0] == CMD_MEDIR_AHORA) {
-    Serial.println(F("[RX] medir_ahora"));
-    pedidoMedir = true;
+void encolarReporte(uint8_t ref, uint8_t resultado) {
+  if (cantReportes == MAX_REPORTES) {
+    Serial.printf("[RX] sin lugar para el reporte de ref %u: se descarta\n", ref);
     return;
   }
-  Serial.printf("[RX] comando desconocido (%u bytes, puerto %u): se ignora\n",
-                (unsigned)largo, puerto);
+  reportes[cantReportes++] = {ref, resultado};
+}
+
+// set_config: valida antes de aplicar; si no valida, no cambia nada.
+uint8_t aplicarIntervalo(uint16_t segundos) {
+  if (segundos < INTERVALO_MIN_S || segundos > INTERVALO_MAX_S) return RES_FUERA_DE_RANGO;
+  intervaloS = segundos;
+  ajustes.putUShort(NVS_INTERVALO, intervaloS);
+  return RES_APLICADO;
+}
+
+// Un downlink llega en la ventana de clase C o en RX1/RX2 despues de un uplink.
+// El puerto 0 trae solo comandos MAC de la red, sin datos para la aplicacion.
+// Sin ref (menos de 2 bytes) no hay a quien contestarle: se ignora.
+// Desde aca no se envia nada: se encola el reporte y loop() hace los envios.
+void procesarDownlink(const uint8_t* datos, size_t largo, uint8_t puerto) {
+  if (puerto == 0 || largo == 0) return;
+  if (largo < 2) {
+    Serial.printf("[RX] downlink de %u byte sin ref (puerto %u): se ignora\n",
+                  (unsigned)largo, puerto);
+    return;
+  }
+  uint8_t cmd = datos[0];
+  uint8_t ref = datos[1];
+
+  // El mismo ref dos veces seguidas es el mismo comando repetido: se contesta
+  // de nuevo con el resultado que tuvo, sin volver a aplicarlo.
+  if (ref == ultimoRef) {
+    Serial.printf("[RX] ref %u repetido: se repite el reporte sin aplicar\n", ref);
+    encolarReporte(ref, ultimoResultado);
+    return;
+  }
+
+  uint8_t res;
+  if (cmd == CMD_MEDIR_AHORA) {
+    Serial.printf("[RX] medir_ahora (ref %u)\n", ref);
+    pedidoMedir = true;
+    res = RES_APLICADO;
+  } else if (cmd == CMD_SET_CONFIG && largo >= 4) {
+    uint16_t segundos = (datos[2] << 8) | datos[3];
+    res = aplicarIntervalo(segundos);
+    Serial.printf("[RX] set_config intervalo_s=%u (ref %u): %s\n", segundos, ref,
+                  res == RES_APLICADO ? "aplicado" : "fuera de rango, no se aplica");
+  } else {
+    Serial.printf("[RX] comando desconocido 0x%02X (%u bytes, ref %u)\n",
+                  cmd, (unsigned)largo, ref);
+    res = RES_DESCONOCIDO;
+  }
+  ultimoRef = ref;
+  ultimoResultado = res;
+  encolarReporte(ref, res);
 }
 
 void revisarDownlinkClaseC() {
@@ -176,6 +275,34 @@ void revisarDownlinkClaseC() {
   if (nodo.getDownlinkClassC(datos, &largo, &evento) > 0) {
     procesarDownlink(datos, largo, evento.fPort);
   }
+}
+
+// Manda un uplink, procesa lo que baje en RX1/RX2 y guarda la sesion.
+void enviar(const uint8_t* payload, size_t largo, uint8_t puerto) {
+  Serial.printf("[TX] Enviando %u bytes por el puerto %u... ", (unsigned)largo, puerto);
+  uint8_t bajada[MAX_DOWNLINK];
+  size_t largoBajada = 0;
+  LoRaWANEvent_t eventoBajada;
+  int estado = nodo.sendReceive(payload, largo, puerto, bajada, &largoBajada,
+                                false, NULL, &eventoBajada);
+  if (estado >= RADIOLIB_ERR_NONE) Serial.println(F("OK"));
+  else Serial.printf("ERROR %d\n", estado);
+  if (estado > 0) procesarDownlink(bajada, largoBajada, eventoBajada.fPort);   // > 0: llego un downlink
+  ultimoEnvio = millis();
+
+  guardarBuffer(NVS_SESION, nodo.getBufferSession(), RADIOLIB_LORAWAN_SESSION_BUF_SIZE);
+}
+
+// Saca el primer reporte de la cola antes de enviarlo: si en RX1/RX2 llega otro
+// comando, su reporte se encola atras y sale en la proxima vuelta.
+void enviarReporte() {
+  Reporte r = reportes[0];
+  for (int i = 1; i < cantReportes; i++) reportes[i - 1] = reportes[i];
+  cantReportes--;
+
+  uint8_t payload[4] = {r.ref, r.resultado, (uint8_t)(intervaloS >> 8), (uint8_t)(intervaloS & 0xFF)};
+  Serial.printf("[TX] Reporte ref %u, resultado %u, intervalo %u s\n", r.ref, r.resultado, intervaloS);
+  enviar(payload, sizeof(payload), PUERTO_REPORTE);
 }
 
 void medirYEnviar() {
@@ -201,18 +328,7 @@ void medirYEnviar() {
     Serial.println(F("[TX] Sin unirse a la red: no se envia."));
     return;
   }
-
-  Serial.print(F("[TX] Enviando 4 bytes... "));
-  uint8_t bajada[MAX_DOWNLINK];
-  size_t largoBajada = 0;
-  LoRaWANEvent_t eventoBajada;
-  int estado = nodo.sendReceive(payload, sizeof(payload), 1, bajada, &largoBajada,
-                                false, NULL, &eventoBajada);
-  if (estado >= RADIOLIB_ERR_NONE) Serial.println(F("OK"));
-  else Serial.printf("ERROR %d\n", estado);
-  if (estado > 0) procesarDownlink(bajada, largoBajada, eventoBajada.fPort);   // > 0: llego un downlink
-
-  guardarBuffer(NVS_SESION, nodo.getBufferSession(), RADIOLIB_LORAWAN_SESSION_BUF_SIZE);
+  enviar(payload, sizeof(payload), PUERTO_MEDICION);
 }
 
 #if HAY_CREDENCIALES

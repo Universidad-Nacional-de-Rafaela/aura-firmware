@@ -20,4 +20,4 @@ python3 -m unittest discover -s conectores/E1-AZ-TERR-TAN01/tests
 herramientas/correr_conector.py conectores/E1-AZ-TERR-TAN01 --hw-id eui-<DevEUI> --docker aura-mosquitto
 ```
 
-El segundo necesita el `lorawan-bridge` publicando en el broker de AURA (contrato §10, pendiente 5).
+El segundo necesita el `lorawan-bridge` publicando en el broker de AURA.
