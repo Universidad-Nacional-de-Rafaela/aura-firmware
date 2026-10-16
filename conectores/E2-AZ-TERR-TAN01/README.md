@@ -6,7 +6,7 @@ Va por LoRaWAN (`hw_id` `eui-<DevEUI>`).
 
 | Qué | Cómo |
 |---|---|
-| Guardar | `distancia_tanque1_mm`, `distancia_tanque2_mm` y `distancia_tanque3_mm`, de 250 a 6000 mm. Lo que está fuera de ese rango lo quita AURA, incluidos los valores especiales del firmware cuando un sensor falla |
+| Guardar | `distancia_tanque1_mm`, `distancia_tanque2_mm` y `distancia_tanque3_mm`, de 250 a 6000 mm. Lo que está fuera de ese rango lo quita AURA, incluidos los valores especiales del firmware cuando un sensor falla. `250` significa "250 mm o menos": el agua en la zona ciega del sensor, tanque lleno |
 | Alertar | `tanque_bajo`: `warning` cuando la distancia pasa `UMBRAL_BAJO_MM` y `info` cuando vuelve, una vez por cruce y por tanque |
 | Alertar | `sensor`: `warning` cuando el campo de un tanque falta en un mensaje que trae otro (el codec no manda el de un sensor que falla) e `info` cuando vuelve, una vez por falla y por tanque |
 | Predecir | todavía no |

@@ -22,8 +22,10 @@
  * --- SUBIDA (uplinks confirmados) ---
  * fPort 1, medicion, 6 bytes, big-endian:
  *   [0..1] distancia tanque 1 en mm   [2..3] tanque 2   [4..5] tanque 3
- *   Sin medicion valida: 0xFFFF sin eco, 0xFFFE demasiado cerca, 0xFFFD demasiado lejos.
- *   El codec no pone esos valores en values (contrato 3.1).
+ *   Sin medicion valida: 0xFFFF sin eco, 0xFFFD demasiado lejos (el codec no los pone en
+ *   values, contrato 3.1). 0xFFFE = demasiado cerca: el agua esta dentro de la zona ciega del
+ *   sensor, o sea el tanque esta lleno. No es una falla: el codec lo informa como 250 mm, el
+ *   nivel maximo que el sensor puede medir (saturacion del rango).
  *   Sale despues de medir el tanque 3, cada intervalo_s, con la ultima medicion de cada
  *   tanque guardada en RAM; y ademas despues de un medir_ahora, con una medicion nueva.
  * fPort 2, reporte de un comando (contrato 3.4), 4 bytes:
@@ -88,6 +90,9 @@ const uint8_t PIN_ECHO[N_TANQUES] = {D1, D3, D5};
 
 const uint8_t       N_MUESTRAS       = 5;
 const uint8_t       MIN_VALIDAS      = 3;
+// Con el agua en la zona ciega el AJ-SR04M devuelve ecos cortos mezclados con lecturas sin eco:
+// alcanzan 2 de 5 "demasiado cerca" para decir que el tanque esta lleno y no que el sensor falla.
+const uint8_t       MIN_CERCA        = 2;
 const uint16_t      DIST_MIN_MM      = 250;
 const uint16_t      DIST_MAX_MM      = 6000;
 const unsigned long TIMEOUT_ECO_US   = 38000UL;
@@ -332,7 +337,7 @@ uint16_t leerDistanciaMm(uint8_t i) {
     }
     return validas[nValidas / 2];   // mediana
   }
-  if (nCerca >= MIN_VALIDAS) return DEMASIADO_CERCA;
+  if (nCerca >= MIN_CERCA && nCerca >= nLejos) return DEMASIADO_CERCA;   // tanque lleno
   if (nLejos >= MIN_VALIDAS) return DEMASIADO_LEJOS;
   return SIN_ECO;
 }
@@ -342,7 +347,7 @@ void imprimirDistancia(uint8_t i, uint16_t d) {
   Serial.print(i + 1);
   Serial.print(F(": "));
   if (d == SIN_ECO)              Serial.println(F("sin eco"));
-  else if (d == DEMASIADO_CERCA) Serial.println(F("demasiado cerca (zona ciega)"));
+  else if (d == DEMASIADO_CERCA) Serial.println(F("agua en la zona ciega (tanque lleno, se informa 250 mm)"));
   else if (d == DEMASIADO_LEJOS) Serial.println(F("demasiado lejos"));
   else { Serial.print(d); Serial.println(F(" mm")); }
 }

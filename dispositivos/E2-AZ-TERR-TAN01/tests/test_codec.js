@@ -30,10 +30,24 @@ caso("un sensor sin eco no aparece en values", () => {
   assert.ok(r.warnings[0].includes("tanque 2"));
 });
 
-caso("demasiado cerca, demasiado lejos y fuera de rango no aparecen", () => {
-  const r = decodeUplink({ fPort: 1, bytes: be(0xfffe, 0xfffd, 249) });
+caso("sin eco, demasiado lejos y fuera de rango no aparecen", () => {
+  const r = decodeUplink({ fPort: 1, bytes: be(0xffff, 0xfffd, 249) });
   assert.strictEqual(r.data, undefined);
   assert.ok(r.errors[0].includes("sin lecturas validas"));
+});
+
+caso("zona ciega (tanque lleno) se informa como 250 mm, no como falla", () => {
+  const r = decodeUplink({ fPort: 1, bytes: be(0xfffe, 1200, 0xffff) });
+  assert.deepStrictEqual(r.data, { distancia_tanque1_mm: 250, distancia_tanque2_mm: 1200 });
+  assert.strictEqual(r.errors, undefined);
+});
+
+caso("los tres tanques llenos publican data (no es error)", () => {
+  const r = decodeUplink({ fPort: 1, bytes: be(0xfffe, 0xfffe, 0xfffe) });
+  assert.deepStrictEqual(r.data, {
+    distancia_tanque1_mm: 250, distancia_tanque2_mm: 250, distancia_tanque3_mm: 250,
+  });
+  assert.strictEqual(r.errors, undefined);
 });
 
 caso("los bordes del rango (250 y 6000) son validos", () => {

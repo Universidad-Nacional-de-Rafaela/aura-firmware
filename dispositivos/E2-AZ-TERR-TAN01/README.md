@@ -46,9 +46,15 @@ de cada minuto (el segundo 0 es el arranque de la placa). La medición periódic
 medir el tanque 3, con la última medición de cada tanque, que vive solo en RAM. Ningún comando
 mueve los turnos: la red y `medir_ahora` usan los huecos entre turnos.
 
-La distancia de cada tanque es la mediana de 5 lecturas. Si el sensor no responde o la distancia
-está fuera de rango, el firmware manda un valor especial (`0xFFFF` sin eco, `0xFFFE` demasiado
-cerca, `0xFFFD` demasiado lejos). Ese valor **no es una medición**: el codec no lo pone en `values`.
+La distancia de cada tanque es la mediana de 5 lecturas. Si el sensor no responde o mide más
+lejos que el rango, el firmware manda un valor especial (`0xFFFF` sin eco, `0xFFFD` demasiado
+lejos). Eso **es una falla**: el codec no pone el campo en `values` y el conector avisa `sensor`.
+
+**Tanque lleno.** El sensor va en la tapa y el AJ-SR04M no mide a menos de unos 25 cm (zona
+ciega). Con el tanque lleno el agua puede quedar dentro de esa zona: el firmware manda `0xFFFE` y
+el codec lo informa como **250 mm**, el nivel máximo que el sensor puede medir. No es una falla
+sino la saturación del rango, como un transmisor 4-20 mA en su tope: `250` quiere decir "250 mm
+o menos". No dispara la alerta `sensor` ni `tanque_bajo`.
 
 Alertas (contrato §3.5). El nodo LoRaWAN no publica alertas propias: las genera el conector.
 - `sensor`: cuando falta el campo de un tanque en un mensaje que sí trae otro, e `info` cuando vuelve.
@@ -85,7 +91,7 @@ profile nuevo (contrato §7). Los tests están en [`tests/`](tests/) (`make -C t
 
 | fPort | Bytes | Qué es |
 |---|---|---|
-| 1 | 6 | Medición: distancia de cada tanque en mm, uint16 big endian. `0xFFFF`, `0xFFFE`, `0xFFFD` o fuera de 250..6000: el campo no aparece en `values` |
+| 1 | 6 | Medición: distancia de cada tanque en mm, uint16 big endian. `0xFFFE` (zona ciega, tanque lleno) se informa como 250. `0xFFFF`, `0xFFFD` o fuera de 250..6000: el campo no aparece en `values` |
 | 2 | 4 | Reporte de un comando: `ref`, resultado (0 aplicado, 1 fuera de rango, 2 comando desconocido), intervalo vigente en s (uint16) |
 
 ### Device profile

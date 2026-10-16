@@ -109,6 +109,18 @@ class ConectorTanques(unittest.TestCase):
         procesar(self.conector, self.ctx, msg({}, 1))
         self.assertEqual(self.alertas("sensor"), [])
 
+    # --- tanque lleno: el agua en la zona ciega llega como 250 mm (el tope del rango) ---
+
+    def test_tanque_lleno_no_es_falla_de_sensor_ni_tanque_bajo(self):
+        normal = {"distancia_tanque1_mm": 900, "distancia_tanque2_mm": 900, "distancia_tanque3_mm": 900}
+        llenos = {"distancia_tanque1_mm": 250, "distancia_tanque2_mm": 250, "distancia_tanque3_mm": 250}
+        for minuto, valores in enumerate([normal, llenos, llenos, normal]):
+            r = procesar(self.conector, self.ctx, msg(valores, minuto))
+            self.assertEqual(r.resultado, "persistido")
+        self.assertEqual(self.alertas("sensor"), [])
+        self.assertEqual(self.alertas("tanque_bajo"), [])
+        self.assertEqual(self.ctx.serie("distancia_tanque1_mm")[1], (T0 + timedelta(minutes=1), 250))
+
 
 if __name__ == "__main__":
     unittest.main()

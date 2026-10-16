@@ -10,9 +10,12 @@
 //   0-1 distancia del sensor al agua, tanque 1, en mm (uint16)
 //   2-3 lo mismo para el tanque 2
 //   4-5 lo mismo para el tanque 3
-//   Sin medicion valida: 0xFFFF sin eco, 0xFFFE demasiado cerca, 0xFFFD demasiado lejos.
-//   Esos valores, y cualquiera fuera de 250..6000 mm, no van en values: el campo del tanque no
-//   aparece (§3.1). Los nombres de los campos son los de conector.toml.
+//   0xFFFE = el agua esta dentro de la zona ciega del sensor (tanque lleno). No es una falla:
+//   se informa 250 mm, el nivel maximo que el sensor puede medir (saturacion del rango, como
+//   un transmisor 4-20 mA en su tope). Quiere decir "250 mm o menos".
+//   0xFFFF sin eco, 0xFFFD demasiado lejos, o cualquier otro valor fuera de 250..6000 mm: es una
+//   falla y el campo del tanque no aparece en values (§3.1).
+//   Los nombres de los campos son los de conector.toml.
 // fPort 2, 4 bytes, reporte de un comando:
 //   0   ref del comando (el que llego en el downlink)
 //   1   resultado: 0 aplicado, 1 fuera de rango, 2 comando desconocido
@@ -32,7 +35,8 @@ var INTERVALO_MIN_S = 60;
 var INTERVALO_MAX_S = 43200;      // 12 h; el uplink interval del device profile tiene que ser este maximo
 var CICLO_S = 60;
 var MOTIVOS = { 1: "fuera_de_rango", 2: "comando_desconocido" };
-var FALLAS = { 0xFFFF: "sin eco", 0xFFFE: "demasiado cerca", 0xFFFD: "demasiado lejos" };
+var ZONA_CIEGA = 0xFFFE;          // el firmware lo manda cuando el agua esta mas cerca que 250 mm
+var FALLAS = { 0xFFFF: "sin eco", 0xFFFD: "demasiado lejos" };
 
 function u16(bytes, i) {
   return (bytes[i] << 8) | bytes[i + 1];
@@ -59,6 +63,9 @@ function decodeUplink(input) {
     var dist = u16(b, 2 * (n - 1));
     if (dist >= DIST_MIN_MM && dist <= DIST_MAX_MM) {
       values["distancia_tanque" + n + "_mm"] = dist;
+    } else if (dist === ZONA_CIEGA) {
+      values["distancia_tanque" + n + "_mm"] = DIST_MIN_MM;
+      warnings.push("tanque " + n + ": agua en la zona ciega (lleno), se informa " + DIST_MIN_MM + " mm");
     } else {
       warnings.push("tanque " + n + ": " + (FALLAS[dist] || "fuera de rango (" + dist + " mm)"));
     }
