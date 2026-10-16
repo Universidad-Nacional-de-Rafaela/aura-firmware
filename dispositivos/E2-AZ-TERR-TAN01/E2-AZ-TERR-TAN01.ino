@@ -37,19 +37,20 @@
  *   2 bytes: set_config intervalo_s (big-endian), 60 a 65535.
  *            Ej.: 0x01 0x2C = 300 s. Se redondea hacia arriba a un multiplo
  *            de 60 s, porque la telemetria sale despues del tanque 3.
- *   1 byte : pedido de reporte, mascara de tanques (bit0 = tanque 1,
- *            bit1 = tanque 2, bit2 = tanque 3). Ej.: 0x05 = tanques 1 y 3,
- *            0x07 = todos.
+ *   1 byte : pedido de reporte (comando medir_hora del codec), mascara de tanques
+ *            (bit0 = tanque 1, bit1 = tanque 2, bit2 = tanque 3).
+ *            Ej.: 0x05 = tanques 1 y 3, 0x07 = todos.
  *   Clase A: el nodo recibe el comando en la ventana que sigue a su proximo
  *   uplink (hasta 1 minuto) y responde enseguida, en un hueco entre turnos.
  */
 
 #include <RadioLib.h>
 #include <Preferences.h>
-// Credenciales OTAA: van en credenciales.h (copiar credenciales.h.example), que no se versiona.
-// Sin ese archivo el sketch compila (lo necesita el CI) pero no puede unirse a la red.
-#if __has_include("credenciales.h")
-#include "credenciales.h"
+// Credenciales OTAA (JOIN_EUI, DEV_EUI, APP_KEY): van en config_local.h, que esta en el
+// .gitignore y NUNCA se versiona (el repo es publico). Hay un molde en config_local.h.example.
+// Sin config_local.h el sketch compila (el CI lo necesita) pero no puede unirse a la red.
+#if __has_include("config_local.h")
+#include "config_local.h"
 #else
 static const uint64_t JOIN_EUI = 0x0000000000000000;
 static const uint64_t DEV_EUI  = 0x0000000000000000;
