@@ -1,0 +1,40 @@
+# Manifiesto del conector. Ver CONTRIBUTING.md, "Tu conector".
+nombre  = "E1-AZ-TERR-TAN01"            # igual a la carpeta
+version = "0.1.0"
+sdk     = ">=1,<2"
+autores = ["FerChaparro27", "romerof7"] # usuarios de GitHub del grupo
+clase   = "conector:ConectorTanques"
+
+# Distancia del sensor a la superficie del agua, uno por tanque: lo único que manda el nodo
+# (lo decodifica dispositivos/E1-AZ-TERR-TAN01/codec.js).
+[campos.dist_t1_cm]
+unidad = "cm"
+min = 0
+max = 600
+
+[campos.dist_t2_cm]
+unidad = "cm"
+min = 0
+max = 600
+
+# Nivel y volumen de cada tanque: los calcula conector.py a partir de la distancia.
+[campos.nivel_t1_pct]
+unidad = "%"
+min = 0
+max = 100
+
+[campos.nivel_t2_pct]
+unidad = "%"
+min = 0
+max = 100
+
+# Volumen: max = la capacidad de TANQUES en conector.py.
+[campos.vol_t1_l]
+unidad = "L"
+min = 0
+max = 1000
+
+[campos.vol_t2_l]
+unidad = "L"
+min = 0
+max = 1500
