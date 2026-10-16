@@ -22,6 +22,20 @@ Hay que esperar lo mismo.
    mismo. Arreglo: `WiFi.persistent(false)` antes de `WiFi.mode()`. Probado flasheando el raíz sobre
    una NVS con credenciales.
 
+## Defectos que aparecieron en placa (2026-10-16)
+
+4. **Router en el canal 12 o 13**: el driver WiFi arranca con el país `01` (mundial, canales 1-11),
+   `esp_mesh_set_config` devuelve `ESP_ERR_INVALID_ARG` y las tres placas reiniciaban en bucle
+   (`Channel number 13 is out of range from 1 to 11 in country code cc=01`). Arreglo:
+   `radio_iniciar` fija el país `AR` (canales 1-13) sin 802.11d.
+5. **Subred de Docker igual a la del WiFi** (no es del firmware): la red `aura_default` de aura-app
+   había quedado en `172.28.0.0/16` y el hotspot dio direcciones de `172.28.65.0/24`. El raíz tomaba
+   IP y le llegaba el SYN a Mosquitto, pero el contenedor contestaba por el bridge y no por el
+   gateway: `fallo la conexion, error -2` para siempre. Se diagnosticó apuntando el raíz a un
+   listener TCP fuera de Docker (ahí sí conectaba). Arreglo: aura-app fija su subred en el
+   `docker-compose.yml`. Si vuelve a pasar, comparar `docker network inspect aura_default` con la
+   IP que informa `[RAIZ] con IP …`.
+
 Si una placa vieja quedó con la tormenta, se la silencia dejándola en el bootloader:
 `esptool --port <puerto> --after no-reset read-mac`.
 
@@ -31,6 +45,9 @@ Si una placa vieja quedó con la tormenta, se la silencia dejándola en el bootl
   etiqueta ([`herramientas/leer_mac`](../../herramientas/leer_mac/)).
 - Un broker en la notebook y `herramientas/ack_falso.py` contra él. El raíz tiene que llegar a la
   notebook por la red (ojo con el aislamiento de clientes en las redes de invitados).
+- Con la `api` de aura-app levantada, cada `data` recibe dos `ack`: `cuarentena` del backend real
+  (la placa no está dada de alta) y `persistido` de `ack_falso.py`. La hoja se queda con el primero
+  que la confirma; para probar los modos de `ack_falso.py`, frenar la `api`.
 - `config_local.h` en cada sketch a partir de su `.example`. Mismo `MESH_ID`, `MESH_CLAVE` y
   `MESH_CANAL` en todas las placas; el canal es el del WiFi al que se asocia el raíz.
 
