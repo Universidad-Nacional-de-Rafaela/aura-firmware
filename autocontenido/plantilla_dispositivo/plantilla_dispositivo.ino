@@ -23,7 +23,7 @@
  *     Sin config_local.h compila, mide y guarda, pero no envía: sirve para desarrollar
  *     la medición antes de tener los datos de la mesh.
  *
- * IDE: placa "XIAO_ESP32S3", USB CDC On Boot: ENABLED (si no, el monitor serie
+ * IDE: placa "Nologo ESP32C3 Super Mini", USB CDC On Boot: ENABLED (si no, el monitor serie
  * no muestra nada). Bibliotecas: las de bibliotecas.txt.
  */
 

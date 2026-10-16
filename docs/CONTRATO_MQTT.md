@@ -7,7 +7,7 @@
 > (`docs/superpowers/…`) son de `aura-app`.
 
 **Estado**: normativo en `aura-app`. Ante una discrepancia con cualquier otro documento, manda el contrato; ante una discrepancia entre esta copia y la de `aura-app`, manda la de `aura-app`.
-**Versión del contrato**: 4.0 (propuesta) · **Última actualización**: 2026-10-07
+**Versión del contrato**: 4.0 (propuesta) · **Última actualización**: 2026-10-14
 **Alcance**: mensajería entre los dispositivos IoT y la plataforma (backend FastAPI). Hay **dos
 transportes**, cada uno con su adaptador
 ([ADR-003](adr/ADR-003-dos-transportes-mesh-interior-lorawan-exterior.md)):
@@ -29,12 +29,15 @@ Este documento se escribió **relevando el código**, no de memoria. Cada afirma
 apunta al archivo y la función que la implementa hoy, o está marcada explícitamente como
 **pendiente** (🔧). Las secciones marcadas ⚠️ describen desajustes reales entre las partes.
 
-> **Estado de la v4.0.** Es una **propuesta**. El raíz de la mesh la implementa en
-> `aura-firmware` (`infraestructura/nodo_raiz/`), **compilado y sin probar en placa**. El backend
-> todavía escucha el árbol `devices/` de la v3.0 y **no persiste nada por MQTT** (§10,
-> pendiente 1); su implementación es el MVP de ingesta
-> (`docs/superpowers/plans/2026-10-05-mvp-ingesta-hw.md`, Tasks 1 a 8). El `lorawan-bridge` no
-> existe. La v3.1 (MQTT con `ack` sobre `devices/<uuid>/…`) no se publicó: quedó absorbida acá.
+> **Estado de la v4.0** (2026-10-09). **El backend la implementa** (`app/backend/ingesta/`):
+> escucha el árbol `hw/`, guarda por `devices.hw_id` o en cuarentena, deduplica por `ingest_id`,
+> publica el `ack` después del commit y guarda comandos, respuestas y alertas. **El
+> `lorawan-bridge` también** (`servicios/lorawan_bridge/`): la subida desde el 2026-10-09 y la
+> bajada de comandos desde el 2026-10-14. Los dos están probados con los brokers reales del banco,
+> y la bajada contra el ChirpStack del banco con un device de prueba; de punta a punta con un nodo
+> real todavía no, porque ningún firmware ni codec del banco recibe comandos. El raíz de la mesh la implementa en
+> `aura-firmware` (`infraestructura/nodo_raiz/`), **compilado y sin probar en placa** (pendiente
+> 17). La v3.1 (MQTT con `ack` sobre `devices/<uuid>/…`) no se publicó: quedó absorbida acá.
 
 ---
 
@@ -72,7 +75,7 @@ hojas ─ESP-WIFI-MESH─► (relevos) ─ESP-WIFI-MESH─► raíz de la mesh �
 
 | Adaptador | Su `hw_id` | Telemetría | Usa el `ack` (§3.6) | Estado, comandos, respuestas, alertas |
 |---|---|---|---|---|
-| `lorawan-bridge` 🔧 | `svc-lorawan-bridge` | `hw/eui-<DevEUI>/data` | no: el nodo LoRaWAN no guarda muestras | MQTT |
+| `lorawan-bridge` | `svc-lorawan-bridge` | `hw/eui-<DevEUI>/data` | no: el nodo LoRaWAN no guarda muestras | MQTT |
 | raíz de la mesh | `mac-<MAC del raíz>` | `hw/mac-<MAC de la hoja>/data` | **sí**: confirma a la hoja solo con el `ack` | MQTT |
 
 **Por qué hay un `ack`.** La hoja de la mesh guarda cada muestra hasta que AURA confirma que la
@@ -85,17 +88,20 @@ Parámetros del broker AURA:
 
 | Parámetro | Valor | Dónde está definido |
 |---|---|---|
-| Host / puerto (backend) | `localhost:1883` por defecto | `MQTTService.__init__` en `app/backend/services/mqtt_service.py`. ⚠️ Nadie lo instancia con otro valor: la parametrización por entorno es parte del pendiente 1 de §10 |
+| Host / puerto (backend) | `MQTT_BROKER_HOST` / `MQTT_BROKER_PORT`: `mosquitto:1883` dentro del compose, `localhost:1884` desde el host (el 1883 del host es del Mosquitto de ChirpStack) | `app/backend/core/env.py`, `docker-compose.yml` |
 | TLS | no | — |
-| Autenticación | ninguna | — |
-| Cliente backend | `paho-mqtt` | `app/backend/services/mqtt_service.py` |
-| Cliente raíz de la mesh | `ArduinoMqttClient` 0.1.8 | `aura-firmware/infraestructura/nodo_raiz/nodo_raiz.ino` |
-| Cliente bridge | 🔧 pendiente | — |
+| Autenticación | usuario y clave por cliente, sin anónimos: `aura-backend`, `lorawan-bridge`, `raiz`, `monitor` (solo lectura) | `config/mosquitto/` (`mosquitto.conf`, `acl`, `arrancar.sh`); claves en `.env` (`MQTT_*_PASSWORD`) |
+| ACL | los adaptadores (`lorawan-bridge`, `raiz`) publican `data`, `status`, `response` y `alerts` y leen `command`; el raíz además lee `ack`; **solo el backend** publica `ack` y `command` | `config/mosquitto/acl`; se prueba con `make probar-broker` |
+| Cliente backend | `paho-mqtt` 1.6.1, `client_id` `aura-backend`, sesión persistente; arranca con la API si `MQTT_ENABLED=true` | `app/backend/services/mqtt_service.py`, `lifespan` en `app/backend/main.py` |
+| Cliente raíz de la mesh | `ArduinoMqttClient` 0.1.8, `client_id` = su `hw_id`, sesión persistente, usuario `raiz` (`MQTT_CLAVE` en su `config_local.h` = `MQTT_RAIZ_PASSWORD`) | `aura-firmware/infraestructura/nodo_raiz/nodo_raiz.ino` |
+| Cliente bridge | `paho-mqtt` 1.6.1 | `servicios/lorawan_bridge/lorawan_bridge/__main__.py` |
 
-⚠️ **Sin TLS ni credenciales.** Aceptable en la red de laboratorio; **no** en el despliegue
-del campus. Cualquiera en la red puede publicar en `hw/+/command` y accionar dispositivos, en
-`hw/+/data` e inyectar mediciones, o en `hw/+/ack` y hacer que una hoja borre muestras que no se
-guardaron. Ver §10, pendiente 11.
+⚠️ **Sin TLS.** Las claves y los mensajes viajan en claro: aceptable en la red de laboratorio,
+**no** en el despliegue del campus. Con credenciales y ACL, nadie sin clave puede publicar, y un
+adaptador no puede publicar `ack` ni `command` (§3.6); pero quien tenga la clave de un adaptador
+puede inyectar mediciones de cualquier placa, porque la ACL no distingue `mac-` de `eui-` dentro
+de un nivel del tópico. La API HTTP tampoco publica en `hw/…` (`POST /api/v1/mqtt/publish` lo
+rechaza).
 
 Del lado LoRaWAN la radio está cifrada: cada dispositivo tiene su propia clave AES (OTAA) y el
 gateway no puede leer ni falsificar el contenido. En la mesh, la asociación entre nodos usa WPA2
@@ -107,7 +113,7 @@ Cada adaptador registra un LWT con su propio `hw_id` antes de conectar al broker
 
 | Adaptador | Tópico | Payload | Retain / QoS |
 |---|---|---|---|
-| `lorawan-bridge` 🔧 | `hw/svc-lorawan-bridge/status` | `{"status":"offline"}` | `true` / `1` |
+| `lorawan-bridge` | `hw/svc-lorawan-bridge/status` | `{"status":"offline"}` | `true` / `1` |
 | raíz de la mesh | `hw/mac-<MAC del raíz>/status` | `{"status":"offline"}` | `true` / `1` |
 
 Un `offline` retenido de un adaptador significa que **ningún** dispositivo de ese adaptador está
@@ -160,12 +166,12 @@ log como tópico no reconocido.
 **Sin prefijo `aura/`.** Los tópicos arrancan directamente en `hw/`. Esto contradice otros
 documentos del repo; ver §8.
 
-⚠️ **El backend todavía escucha el árbol de la v3.0** (`DeviceIntegrationService.__init__`, en
-`app/backend/services/device_integration.py`): `devices/([^/]+)/{status,data,command,response}`,
-`alerts/([^/]+)/([^/]+)` y `system/health`. Un tópico `hw/…` no matchea ninguna y se descarta
-con `logger.warning(f"Topic no reconocido")`. Pasar al árbol `hw/` es el pendiente 6 de §10.
+El backend se suscribe a `hw/+/data`, `hw/+/status`, `hw/+/response` y `hw/+/alerts/+`
+(`TOPICOS_BACKEND` en `app/backend/services/mqtt_service.py`) y parsea el tópico con
+`parsear_topico` (`app/backend/ingesta/hw.py`). Un tópico fuera del árbol `hw/`, o con un `hw_id`
+que no cumple el formato, se descarta con `logger.warning`.
 
-### 2.2 Broker LoRaWAN — lo que consume el bridge 🔧
+### 2.2 Broker LoRaWAN — lo que consume el bridge
 
 Tópicos de la integración MQTT de ChirpStack v4 (JSON, `json=true` en `chirpstack.toml`):
 
@@ -198,16 +204,16 @@ No necesita el tag `aura_device_id` de la v2.0/v3.0.
 
 Los adaptadores **no conocen el UUID** de AURA. El mapeo vive en la plataforma:
 
-- **`devices.hw_id`** 🔧: la placa asignada a cada dispositivo. **Una placa por dispositivo a la
+- **`devices.hw_id`**: la placa asignada a cada dispositivo. **Una placa por dispositivo a la
   vez.** Asignar otra placa a un dispositivo que ya tenía una es el **reemplazo de placa**: la
   vieja queda desasignada y el dispositivo conserva su UUID y su historial.
-- **Cuarentena** 🔧: un `data` de un `hw_id` que ningún dispositivo tiene asignado se guarda en
+- **Cuarentena**: un `data` de un `hw_id` que ningún dispositivo tiene asignado se guarda en
   `ts_telemetry` con `device_id` y `tenant_id` nulos, y se confirma con `ack`
   `resultado: "cuarentena"` (la hoja libera su cola). El mensaje completo va al log. La
   cuarentena se conserva 30 días.
-- **Asignar** 🔧 una placa reclama su cuarentena desde una fecha opcional: esas filas pasan a
+- **Asignar** una placa reclama su cuarentena desde una fecha opcional: esas filas pasan a
   ser del dispositivo.
-- **Placas ignoradas** 🔧 (`hw_ignorado`: de banco, de pruebas): se confirman con
+- **Placas ignoradas** (`hw_ignorado`: de banco, de pruebas): se confirman con
   `descartado` y no se guardan.
 
 **Dar de alta un dispositivo** es: leer el `hw_id` de la placa (`aura-firmware/herramientas/leer_mac`
@@ -234,7 +240,7 @@ dispositivos de AURA. Cambiarlos desde uno modificaría los otros sin que AURA l
 ### 3.1 `hw/<hw_id>/data` — telemetría
 
 **Emisor**: el adaptador de la placa · **QoS 1** · **retain `false`**.
-- `lorawan-bridge` 🔧: uno por cada `event/up` con payload decodificado.
+- `lorawan-bridge`: uno por cada `event/up` con payload decodificado.
 - raíz de la mesh: uno por cada TELEMETRIA de una hoja, incluidos los reintentos (llevan el
   mismo `ingest_id`).
 
@@ -286,9 +292,8 @@ LoRaWAN es el `time` del uplink en ChirpStack. Para la mesh es la hora de la hoj
 la CONFIRMACION del raíz. Si el nodo no tiene hora válida, **se omite** y vale la hora de
 llegada: no se inventa.
 
-⚠️ **El backend v3.0 no lee `ts` ni `ingest_id` por MQTT.** `_process_device_data` usa la hora de
-llegada y no deduplica. Con la cola de una hoja que se vacía después de una caída (§5), las
-muestras de horas quedarían todas con la hora de llegada. Es parte del pendiente 6.
+El backend lee `ts` (ISO 8601 con zona horaria; cualquier otra cosa vale como hora de llegada)
+e `ingest_id`, y deduplica por `ingest_id` (`procesar_data` en `app/backend/ingesta/procesar.py`).
 
 ### 3.2 `hw/<hw_id>/status` — estado de la placa
 
@@ -311,7 +316,7 @@ Todo lo que no es `status` va **anidado bajo `details`**:
 | `status` | **sí** | Valores: `"online"`, `"offline"`. |
 | `details` | no | Lo que el backend guarda del estado. |
 
-Qué pone el bridge en `details` según el evento de ChirpStack 🔧:
+Qué pone el bridge en `details` según el evento de ChirpStack (`traducir` en `servicios/lorawan_bridge/lorawan_bridge/traduccion.py`):
 
 | Evento | `details` |
 |---|---|
@@ -341,8 +346,12 @@ El contador de la cola y la alimentación van acá y **no** en `values`, por la 
 
 **`offline` por inferencia.** Como no hay LWT por placa, el adaptador publica
 `{"status":"offline","details":{"motivo":"sin_tramas"}}` (retain) cuando una placa pasa
-`3 ×` su intervalo sin transmitir. En LoRaWAN 🔧 el intervalo sale del campo *uplink interval*
-del device profile. En la mesh sale de la configuración vigente que reportó la hoja
+`3 ×` su intervalo sin transmitir. En LoRaWAN el intervalo sale del campo *uplink interval*
+del device profile, y el último uplink, del `last_seen_at` que lleva ChirpStack: el bridge los lee
+por la API cada `CS_REVISION_OFFLINE_S` (60 s), así que la inferencia sobrevive a sus reinicios.
+Agrega a `details` `transporte`, `ultimo_uplink` e `intervalo_s`. **El *uplink interval* del
+profile tiene que ser el real** (ChirpStack trae 3600 s por defecto: con eso, un nodo que manda
+cada 5 min recién sale `offline` a las 3 h). Sin `CS_API_TOKEN`, el bridge no lo infiere. En la mesh sale de la configuración vigente que reportó la hoja
 (`config.intervalo_s`); sin reporte no se infiere nada. El siguiente mensaje la vuelve a `online`.
 
 `retain: true` es deliberado: un backend que arranca después recibe el último estado conocido
@@ -373,16 +382,45 @@ calibración) los recibe con el comando `set_config`:
 antes de aplicarlo, lo guarda en memoria no volátil y, si algo no valida, **no aplica nada** del
 comando. Un comando mal armado no puede dejar el nodo inutilizable.
 
-**Camino del comando en LoRaWAN 🔧.** El bridge saca el DevEUI del `hw_id` y encola el downlink
-con la **API de ChirpStack** (`EnqueueDeviceQueueItem`), pasando el JSON como `object` para que
-lo codifique el `encodeDownlink` del device profile. Se usa la API y no el tópico
-`…/command/down` porque la API devuelve el `id` del ítem encolado, y ese `id` es lo que permite
-atar el `txack` y el `ack` posteriores a este comando.
+**Camino del comando en LoRaWAN.** El bridge saca el DevEUI del `hw_id` y encola un downlink
+**confirmado** con la **API gRPC de ChirpStack** (`DeviceService.Enqueue`, con el API key de
+`CS_API_TOKEN`), en el puerto `CS_FPORT_COMANDOS` (10 por defecto). Al `encodeDownlink` del
+device profile le llega como `object`:
 
-**Límite de tamaño en LoRaWAN 🔧.** El límite real es en **bytes en el aire después del codec**
+```javascript
+{ "command": "set_config", "params": { "intervalo_s": 300 }, "ref": 7 }
+```
+
+`ref` es un número de 1 a 255, por placa, que pone el bridge: el `command_id` es texto libre y no
+entra en los bytes de un downlink, así que el nodo devuelve el `ref` en su reporte (§3.4) y el
+bridge lo traduce. Da la vuelta después del 255: un comando con más de 255 posteriores en vuelo
+ya no se puede confirmar. Se usa la API y no el tópico `…/command/down` porque la API devuelve el
+error en la llamada: con el tópico, un codec que no puede codificar el comando solo deja un
+warning en el log de ChirpStack, y el comando quedaría sin respuesta. El `id` del ítem lo asigna
+ChirpStack (la API ignora el que se le pasa) y es lo que ata el `txack` y el `ack` al comando.
+
+**Límite de tamaño en LoRaWAN.** El límite real es en **bytes en el aire después del codec**
 y depende del *data rate*. Lo valida el bridge contra el tag `aura_max_downlink_bytes` del
-**device profile**. Si el comando no entra, o el profile no tiene ese tag, el bridge **no lo
-encola** y publica `rechazado` en `response` con el motivo.
+**device profile**. Sin ese tag, el bridge **no encola** y publica `rechazado`. El tamaño después
+del codec solo se conoce con el ítem en la cola: si no entra, el bridge **vacía la cola de esa
+placa** (ChirpStack no borra un ítem suelto), rechaza ese comando y también los otros que
+estaban en ella. Motivos de `rechazado` del bridge:
+
+| `motivo` | Cuándo |
+|---|---|
+| `json_invalido` | el payload no es JSON o no trae `command` |
+| `bajada_no_configurada` | el bridge corre sin `CS_API_TOKEN` |
+| `sin_limite_de_downlink` | el device profile no tiene el tag `aura_max_downlink_bytes` |
+| `comando_muy_grande` | después del codec no entra en el límite (`details.bytes`, `details.limite`) |
+| `cola_vaciada` | estaba en la cola de una placa que se vació por un `comando_muy_grande` |
+| `no_existe_en_chirpstack` | el DevEUI no es un device de ChirpStack |
+| `error_de_codec` | el `encodeDownlink` falló (`details.detalle` trae el error de JavaScript) |
+| `chirpstack_no_disponible`, `chirpstack_sin_permiso`, `error_de_chirpstack` | errores de la API |
+| `no_acusado` | `event/ack` con `acknowledged: false` |
+
+**La correlación vive en memoria.** Si el bridge se reinicia con comandos en vuelo, sus `txack`,
+`ack` y reportes se ignoran con un `warning`, y el comando queda en su último estado. Es una
+debilidad aceptada: los comandos LoRaWAN son pocos y se pueden reenviar.
 
 **Camino del comando en la mesh.** El raíz manda el JSON tal cual, como COMANDO, con
 `esp_mesh_send()` a la MAC del `hw_id`; la mesh lo enruta por los relevos que hagan falta. El
@@ -412,29 +450,38 @@ que tienen que ejecutar un comando en segundos (actuadores de iluminación, cerr
 { "status": "aplicado", "details": { "command_id": "c-2026-0001", "config": { "intervalo_s": 60 } } }
 ```
 
-| `status` | Qué significa | LoRaWAN 🔧 | Mesh |
+| `status` | Qué significa | LoRaWAN | Mesh |
 |---|---|---|---|
-| `encolado` | el comando quedó en una cola esperando salir | respuesta de `EnqueueDeviceQueueItem` | no se usa: la mesh no encola |
+| `encolado` | el comando quedó en una cola esperando salir | `Enqueue` de la API aceptó el comando y entra en el límite | no se usa: la mesh no encola |
 | `transmitido` | salió por radio | `event/txack` | `esp_mesh_send` aceptó el comando |
 | `recibido` | el nodo acusó recibo | `event/ack` con `acknowledged: true` (solo downlinks confirmados) | la hoja devolvió el resultado del comando |
-| `aplicado` | **el nodo informó que lo ejecutó** | uplink de reporte del nodo (ver abajo) | resultado de la hoja con `aplicado: true` |
+| `aplicado` | **el nodo informó que lo ejecutó** | uplink de reporte del nodo con `aplicado: true` (ver abajo) | resultado de la hoja con `aplicado: true` |
 | `rechazado` | no salió, el nodo no lo acusó, o el nodo no lo aplicó | error de la API, tamaño excedido (§3.3), `acknowledged: false`, o reporte del nodo con rechazo | los motivos de §3.3, resultado de la hoja con rechazo, o `sin_resultado_del_nodo` (30 s sin resultado) |
 
 El motivo de un `rechazado` va en `details.motivo`.
 
 **`aplicado` es el único estado que confirma ejecución.** Lo publica el adaptador **solo** cuando
-el firmware lo informa explícitamente, con el `command_id`. Junto con `aplicado`, `details.config`
+el firmware lo informa explícitamente (en la mesh con el `command_id`; en LoRaWAN con el `ref`). Junto con `aplicado`, `details.config`
 trae la configuración que quedó vigente en el nodo, para que el backend la compare con lo que
 pidió. Los otros estados no confirman ejecución: `recibido` solo dice que el comando llegó.
 
-En LoRaWAN, el nodo informa la ejecución en un uplink en un puerto propio (el codec decide cuál
-y lo traduce a `{ "command_id": …, "aplicado": true|false, "config": {…} }`). Como el nodo
+En LoRaWAN, el nodo informa la ejecución en un uplink (el puerto lo decide el codec), que el
+`decodeUplink` traduce a:
+
+```javascript
+{ "ref": 7, "aplicado": true, "config": { "intervalo_s": 300 } }
+```
+
+`motivo` es opcional y va con `aplicado: false` (si falta, el bridge pone
+`rechazado_por_el_nodo`). Un `object` con `ref` entero y `aplicado` booleano **es un reporte y
+no se publica en `data`**: un codec de medición no puede usar esos dos nombres de campo. Como el nodo
 clase A solo puede transmitir en su turno, `aplicado` llega con algún uplink posterior: hasta
 entonces, la interfaz muestra el cambio como **pendiente**.
 
-🔧 El backend v3.0 acepta solo `encolado`, `transmitido`, `recibido` y `rechazado`
-(`RESPONSE_STATES` en `DeviceIntegrationService`) y registra `confirma_ejecucion: False`
-siempre. Falta agregar `aplicado` con `confirma_ejecucion: True` (pendiente 3).
+El backend acepta los cinco estados y actualiza el comando por `details.command_id`
+(`procesar_response` en `app/backend/ingesta/eventos.py`, tabla `comandos`): `aplicado` marca
+`confirma_ejecucion` y guarda `details.config`; `rechazado` guarda `details.motivo`. Un estado
+final (`aplicado`, `rechazado`) no se pisa con uno intermedio que llegue tarde.
 
 ### 3.5 `hw/<hw_id>/alerts/<tipo>`
 
@@ -471,7 +518,7 @@ independiente de eso.
 La alerta `dispositivo_desconocido` de la v3.1 no existe en la v4.0: una placa desconocida va a
 cuarentena (§2.3).
 
-### 3.6 `hw/<hw_id>/ack` — confirmación de la muestra 🔧
+### 3.6 `hw/<hw_id>/ack` — confirmación de la muestra
 
 **Emisor**: backend · **Consumidor**: raíz de la mesh · **QoS 1** · **retain `false`**
 
@@ -522,25 +569,21 @@ uplinks contra acks, cuánto se perdió.
 
 ## 4. Handlers del despacho
 
-⚠️ El backend **todavía implementa la v3.0** sobre el árbol `devices/` (§2.1):
-
-| Handler | Tópico que lo dispara | Estado |
-|---|---|---|
-| `_process_device_status` | `devices/<id>/status` | llama al Device Service para persistir (ver ⚠️ de §10.1) |
-| `_process_device_data` | `devices/<id>/data` | llama al Device Service para persistir (ver ⚠️ de §10.1) |
-| `_process_device_command` | `devices/<id>/command` | valida y registra en memoria |
-| `_process_device_response` | `devices/<id>/response` | valida y registra en memoria |
-| `_process_alert` | `alerts/<id>/<tipo>` | valida y registra en memoria |
-| `_process_system_health` | `system/health` | valida y registra en memoria |
-
-Lo que pide la v4.0 🔧 (MVP de ingesta, `app/backend/ingesta/`):
+Implementación en `app/backend/ingesta/`, llamada desde el thread de paho (síncrona, sin event
+loop):
 
 | Función | Tópico | Qué hace |
 |---|---|---|
-| `despachar` | `hw/<hw_id>/…` | parsea el tópico y el `hw_id`; ignora sin `warning` lo que publica el propio backend (`ack`, `command`) |
+| `despachar` | `hw/<hw_id>/…` | parsea el tópico y el `hw_id`; ignora sin `warning` lo que publica el propio backend (`ack`, `command`); ante un error de base hace rollback y **no** publica `ack` |
 | `procesar_data` | `hw/<hw_id>/data` | busca `devices.hw_id`; guarda con dispositivo, en cuarentena o descarta (ignorada); deduplica por `ingest_id`; publica el `ack` después del commit |
-| `procesar_status` | `hw/<hw_id>/status` | guarda el último estado de la placa |
-| — | `hw/<hw_id>/response`, `hw/<hw_id>/alerts/<tipo>` | se registran en el log |
+| `procesar_status` | `hw/<hw_id>/status` | actualiza `connection_status` y `last_seen` del dispositivo; `details` va al log |
+| `procesar_response` | `hw/<hw_id>/response` | actualiza el comando en la tabla `comandos` (§3.4) |
+| `procesar_alerta` | `hw/<hw_id>/alerts/<tipo>` | guarda la alerta en la tabla `alertas` (§3.5) |
+
+Placas y comandos por API (con sesión): `GET /api/v1/hw/descubiertas`,
+`POST /api/v1/hw/{hw_id}/asignar` e `/ignorar`, `POST /api/v1/devices/{id}/comandos` (publica en
+`hw/<placa>/command` y registra el comando), `GET /api/v1/devices/{id}/comandos` y `/alertas`.
+La cuarentena vieja se purga con `app/scripts/purgar_cuarentena.py`.
 
 Además, todo payload que no sea un objeto JSON se descarta con `warning`, antes de despachar.
 
@@ -555,12 +598,12 @@ más de una vez, así que todo consumidor debe ser idempotente.
 |---|---|---|
 | Radio → ChirpStack | ChirpStack junta las recepciones del mismo uplink por varios gateways y emite **un** evento con un `deduplicationId` | varios gateways, un solo dato |
 | Nodo → ChirpStack | uplinks confirmados con reintentos (firmware de `IC-lorawan-test`) | ⚠️ cómo trata ChirpStack un reintento con el mismo `fCnt` está **sin verificar en banco** |
-| Bridge → AURA 🔧 | `ingest_id` = `deduplicationId` en `data` | sobrevive a reinicios del bridge: el id lo genera ChirpStack |
+| Bridge → AURA | `ingest_id` = `deduplicationId` en `data` | sobrevive a reinicios del bridge: el id lo genera ChirpStack |
 | Hoja → raíz | la hoja **guarda cada muestra** en memoria no volátil y la reenvía hasta recibir la CONFIRMACION | sobrevive a cortes del raíz, del WiFi, del broker y de AURA, dentro de la capacidad de la cola (24 h a una muestra por minuto) |
 | Raíz → AURA | `ingest_id` generado **en la hoja**, un UUID por muestra, guardado con ella antes del primer envío | igual en cada reintento y después de reiniciar cualquier placa |
-| Backend → raíz 🔧 | `ack` con el `ingest_id`, después del commit (§3.6) | un `ack` perdido solo provoca un reintento, que vuelve como `duplicado` |
+| Backend → raíz | `ack` con el `ingest_id`, después del commit (§3.6) | un `ack` perdido solo provoca un reintento, que vuelve como `duplicado` |
 | Backend (REST) | `ingest_id` con `unique=True` en `ts_telemetry` (`models/telemetry.py`) | deduplicación real en base |
-| Backend (MQTT) | ⚠️ **ninguno** en la v3.0 | pendiente 6 |
+| Backend (MQTT) | `SELECT` explícito por `ingest_id` antes de insertar (`procesar_data`) | deduplicación real, aunque la muestra llegue sin `ts` |
 
 **Deduplicar por `ingest_id`, no por el índice.** El índice único real de `ts_telemetry` es
 `(tenant_id, ingest_id, ts)`. Una muestra de la mesh sin `ts` (la hoja todavía no tiene hora)
@@ -571,17 +614,24 @@ tiene que buscar el `ingest_id` explícitamente.
 `ack` de ese `ingest_id` (§3.6). Hasta entonces la hoja la conserva. Que `esp_mesh_send` acepte la
 trama, o el PUBACK del broker, **no** son confirmación.
 
-### Mensajes durante una caída ⚠️
+### Mensajes durante una caída
 
 MQTT no tiene colas: el broker entrega a quien esté suscripto **en ese momento**. Para que
 guarde los mensajes QoS 1 mientras un consumidor está caído, el consumidor tiene que conectar
 con un **`client_id` fijo y sesión persistente** (`clean_session=False`).
 
-Hoy el backend hace lo contrario: `client_id=f"aura-mqtt-service-{uuid4().hex[:8]}"`, distinto
-en cada arranque (`MQTTService._create_client`). **Cada reinicio del backend es un hueco en la
-serie de LoRaWAN.** Lo mismo vale para el bridge del lado de ChirpStack: si se cae, pierde
-uplinks que LoRaWAN no retransmite. La mesh no pierde datos en un reinicio, porque sin `ack` la
-hoja reintenta, pero vacía su cola más tarde.
+El backend conecta como `aura-backend` y el bridge como `aura-lorawan-bridge` (broker AURA, para
+los comandos) y `aura-lorawan-bridge-cs` (broker de ChirpStack, para los uplinks), todos con
+`clean_session=False`: un reinicio de cualquiera de los dos no pierde los mensajes QoS 1 que
+lleguen mientras tanto. El raíz de la mesh conecta con su `hw_id` como `client_id` y también con
+sesión persistente: los `ack` y `command` publicados mientras reconecta lo esperan en el broker.
+Un comando que llega así puede salir tarde; si la hoja no está en la mesh, se rechaza con
+`nodo_no_alcanzable`. Por eso **no puede haber dos procesos
+con el mismo `client_id`**: el broker desconecta al anterior (los tests del backend arrancan con
+`MQTT_ENABLED=false` por esto).
+
+En LoRaWAN, una muestra que el backend no pudo guardar por un error transitorio **no se
+reintenta**: ver el pendiente 18.
 
 Si algún día hay más de una réplica del backend, la suscripción pasa a ser compartida
 (`$share/aura-backend/hw/+/data`), para que cada mensaje lo procese una sola réplica.
@@ -597,6 +647,7 @@ Si algún día hay más de una réplica del backend, la suscripción pasa a ser 
 `POST /api/v1/telemetry/ingest` (`app/backend/api/endpoints/telemetry.py`) es el único camino
 que hoy **persiste y deduplica** en base. **No valida** que el `device_id` exista en `devices`:
 `ts_telemetry` está en otra base, sin clave foránea.
+Pide sesión, como todo `/api/v1` salvo login, refresh y logout.
 
 ```json
 { "events": [ {
@@ -609,25 +660,25 @@ que hoy **persiste y deduplica** en base. **No valida** que el `device_id` exist
   falla no aparece.
 - Nada de diagnóstico del nodo en `payload`: eso va a `status` (§3.2) y a `alerts` (§3.5).
 
-**Respuesta.** `201` con `{"inserted", "duplicates", "errors", "message"}` (`TelemetryBatchResponse`).
-Los tres primeros son **enteros**. Quien use el endpoint tiene que considerar guardado un evento
-si y solo si:
+**Respuesta.** El cuerpo es `{"inserted", "duplicates", "errors", "message"}`
+(`TelemetryBatchResponse`); los tres primeros son **enteros**. El código depende del resultado:
+
+| Código | Cuándo |
+|---|---|
+| `201` | `errors == 0`: todos los eventos quedaron guardados (insertados o duplicados) |
+| `207` | se guardó una parte: mirar `errors` |
+| `422` | no se guardó ninguno, o el batch no pasa la validación |
+
+Quien use el endpoint tiene que considerar guardado un evento si y solo si:
 
 ```
 HTTP 201  y  errors == 0  y  inserted + duplicates == cantidad de eventos enviados
 ```
 
-Un duplicado cuenta como guardado: es la misma muestra, que ya estaba en la base.
-
-⚠️ **Dos defectos del endpoint**, a corregir antes de mandar más de un evento por request:
-
-1. **Un evento con error hace perder los anteriores del mismo batch.** Ante una excepción el
-   endpoint hace `db.rollback()`, que descarta también los eventos ya insertados con `flush()`
-   pero todavía sin `commit()`. Esos eventos **igual se cuentan** en `inserted`.
-2. **Devuelve `201` aunque todos los eventos hayan fallado.** Hay que mirar `errors`, no el
-   código HTTP.
-
-Mientras no se corrijan, quien use el endpoint tiene que mandar **un evento por request**.
+Un duplicado cuenta como guardado: es la misma muestra, que ya estaba en la base. Cada evento se
+inserta en su propio *savepoint*: uno que falla no descarta a los demás del batch (antes de
+2026-10-09 los descartaba y los contaba igual en `inserted`, y respondía `201` aunque fallaran
+todos).
 
 La integración HTTP de ChirpStack, que podría apuntar a este endpoint, sigue descartada para
 LoRaWAN: postea el formato de eventos de ChirpStack y no el de AURA
@@ -671,18 +722,18 @@ generaciones de emisores sin adivinar por la forma del JSON.
 | Documento | Qué dice | Estado |
 |---|---|---|
 | **Este documento** | árbol `hw/`, identidad por placa, `ack` (v4.0) | propuesta |
-| backend (`app/backend/services/`) | árbol `devices/<uuid>/…` de la v3.0, sin `ack` | ❌ pendientes 1 y 6 |
+| backend (`app/backend/ingesta/`) y `lorawan-bridge` (`servicios/lorawan_bridge/`) | árbol `hw/`, identidad por placa, `ack` | ✅ con tests y probados con los brokers del banco |
 | repo público `aura-firmware` | raíz de la mesh v4.0 sobre ESP-WIFI-MESH, `hw/<hw_id>/…`, `ack` | ✅ compilado, **sin probar en placa** |
 | `docs/adr/ADR-004-…` | "un `device_id` desconocido no se confirma" (punto 5) | ⏸ reemplazado en ese punto por [ADR-005](adr/ADR-005-identidad-por-placa-y-mapeo-en-aura.md) |
 | `docs/adr/ADR-003-…` | "la telemetría de la mesh entra por REST"; mesh ESP-NOW | ⏸ reemplazado por [ADR-004](adr/ADR-004-mqtt-punto-comun-de-ingesta-con-ack-de-persistencia.md) y [ADR-006](adr/ADR-006-esp-wifi-mesh-reemplaza-a-esp-now-en-interior.md) en esos puntos |
 | `docs/adr/ADR-002-…` | "la mesh queda congelada"; tag `aura_device_id` | ⏸ reemplazado por ADR-003 y ADR-005 en esos puntos |
-| `docs/CONTRATOS_APIS.md` | `devices/+/data`, `devices/+/status`, `alerts/#` | ❌ árbol de la v3.0 |
-| `docs/Arquitectura_IoT_AURA.md:74-108` | `aura/devices/<id>/sensors/<tipo>/data` | ❌ jerarquía profunda que no existe |
+| `docs/CONTRATOS_APIS.md` | resume la API HTTP de placas y comandos, y remite a este documento | ✅ |
+| `docs/Arquitectura_IoT_AURA.md` §2.1 | árbol `hw/`, remite a este documento | ✅ |
 | `CLAUDE.md` | remite a este documento | ✅ |
-| `.cursorrules` | `devices/<device_id>/{data,status,command,response}`, remite a este documento | ❌ árbol de la v3.0 |
+| `.cursorrules` | árbol `hw/` e identidad por placa, remite a este documento | ✅ |
 | `recursos/circutor_reader/mqtt_messages.json` | `aura/devices/circutor_…/telemetry` | ❌ mock data con otro esquema |
-| `firmware/` de este repo | mesh ESP-NOW v1.x | ❌ queda por eliminar: el firmware vive en `aura-firmware` |
-| `firmware/README.md` y los avisos de `docs/superpowers/` sobre la mesh | "congelada" | ❌ a actualizar |
+| `firmware/` de este repo | mesh ESP-NOW v1.x | ✅ eliminado (2026-10-09): el firmware vive en `aura-firmware`; la mesh v1 queda en su historia y en `aura-firmware/docs/historico/` |
+| avisos de `docs/superpowers/` sobre la mesh | "congelada" | ⏸ son planes con fecha: registran lo que se decidió entonces |
 
 **El caso Circutor sigue abierto.** El medidor se integra por Modbus TCP en `<IP interna>:502`, su
 lector vive en el repositorio propio `aura-circutor` (ADR-001 de `aura-app`, no publicado) y
@@ -697,6 +748,11 @@ MAC del medidor. Mientras no se decida, sus mensajes se descartan:
 
 | Versión | Fecha | Cambio |
 |---|---|---|
+| 4.0 | 2026-10-14 | El raíz de la mesh conecta con sesión persistente (pendiente 7); §1 y el pendiente 11 decían que no mandaba usuario y clave, y lo hace desde `aura-firmware` #9. |
+| 4.0 | 2026-10-14 | §10: pendientes 18 (LoRaWAN pierde la muestra si falla la base) y 19 (codecs con diagnóstico en `values`), encontrados al documentar el recorrido de los datos. |
+| 4.0 | 2026-10-14 | **`offline` inferido en el `lorawan-bridge`** (§3.2), con `last_seen_at` de ChirpStack y el *uplink interval* del profile; `details` suma `transporte`, `ultimo_uplink` e `intervalo_s`. |
+| 4.0 | 2026-10-14 | **Bajada de comandos en el `lorawan-bridge`** (§3.3, §3.4). El codec recibe un `ref` (1-255) y el reporte del nodo lo devuelve en lugar del `command_id`: `{ref, aplicado, config, motivo?}`. Nadie implementaba el reporte con `command_id`, así que no se sube la versión. Motivos de `rechazado` del bridge, vaciado de la cola por tamaño y correlación en memoria. El bridge conecta al broker AURA con sesión persistente. |
+| 4.0 | 2026-10-09 | **Implementada en el backend y el `lorawan-bridge`** (sin cambios en el formato). Pendientes 1, 3, 6 y 9 resueltos, 5 y 7 en parte. Se borra `app/backend/services/device_integration.py` (despacho del árbol `devices/` de la v3.0). |
 | 4.0 | 2026-10-07 | **Propuesta. Identidad por placa y ESP-WIFI-MESH** ([ADR-005](adr/ADR-005-identidad-por-placa-y-mapeo-en-aura.md), [ADR-006](adr/ADR-006-esp-wifi-mesh-reemplaza-a-esp-now-en-interior.md)). **Incompatible**: el árbol pasa de `devices/<uuid>/…` y `alerts/<uuid>/<tipo>` a `hw/<hw_id>/…`; los adaptadores publican con el `hw_id` de la placa y AURA hace el mapeo (`devices.hw_id`, cuarentena, asignar, ignorar). Fuera el tag `aura_device_id`, la tabla MAC → UUID y la MAC lógica. Absorbe la v3.1 (no publicada): MQTT único camino de entrada y `ack` después del commit, ahora con cinco resultados (`persistido`, `duplicado`, `cuarentena`, `descartado`, `rechazado`). `data` pierde `type` y `tenant_id`. Se elimina la alerta `dispositivo_desconocido`. La mesh de interior pasa de ESP-NOW a ESP-WIFI-MESH: el gateway es el **raíz**, la sala es un **relevo**, la trama interna pasa a la v3. Aclaraciones de la revisión del borrador v3.1: `rechazado` ante validación fallida con `ingest_id` (§3.6), `values_invalidos` en el `status` del raíz (§3.2), §6 en presente solo para quien use el REST. |
 | 3.1 | 2026-10-05 | **No publicada; absorbida por la 4.0.** MQTT como único camino de entrada con `devices/<id>/ack` ([ADR-004](adr/ADR-004-mqtt-punto-comun-de-ingesta-con-ack-de-persistencia.md)); MAC lógica para el gateway y las salas de la mesh. |
 | 3.0 | 2026-10-05 | **Propuesta. Dos transportes** ([ADR-003](adr/ADR-003-dos-transportes-mesh-interior-lorawan-exterior.md)): mesh ESP-NOW en interior y LoRaWAN en exterior, cada uno con su adaptador sobre el mismo árbol. **Incompatible**: nuevo estado `aplicado` en `response`, que confirma ejecución y el backend todavía rechaza; un `device_id` por placa y no por sonda; una sonda que falla no aparece en `values`. Nuevos: tabla MAC → UUID, telemetría de la mesh por REST con criterio de persistencia, campo `ts`, `set_config`, alertas `sensor` y `energia`, `details` de la mesh en `status`, LWT del gateway de la mesh. Documentados dos defectos del endpoint REST (§6). |
@@ -712,38 +768,35 @@ MAC del medidor. Mientras no se decida, sus mensajes se descartan:
 Ordenados por impacto. Los números se conservan entre versiones porque otros documentos los
 citan.
 
-1. ⚠️ **Que la ingesta MQTT persista algo.** Hoy no persiste nada: `mqtt_service.start()` no
-   se llama nunca, `_on_message` crea tareas asyncio desde un thread sin event loop, y los dos
-   endpoints del Device Service a los que llama `device_integration` no existen o esperan otro
-   esquema. El diagnóstico completo está en `docs/superpowers/plans/2026-09-08-ingesta-mqtt-p0.md`
-   y la implementación en el MVP de ingesta (`docs/superpowers/plans/2026-10-05-mvp-ingesta-hw.md`).
-   **Bloquea todo lo demás**: sin esto no llega a la base ningún dato de ningún transporte.
-2. **Corregir los dos defectos del endpoint REST** (§6). No afecta a los dispositivos, solo a
-   quien use el endpoint a mano.
-3. **Aceptar `aplicado` en `RESPONSE_STATES`** con `confirma_ejecucion: True` (§3.4).
+1. ✅ **Que la ingesta MQTT persista.** El servicio MQTT arranca con la API y despacha en forma
+   síncrona (MVP de ingesta, `docs/superpowers/plans/2026-10-05-mvp-ingesta-hw.md`).
+2. ✅ **Corregir los dos defectos del endpoint REST** (§6), con tests
+   (`app/tests/endpoints/test_telemetry_ingest.py`).
+3. ✅ **Aceptar `aplicado`** con `confirma_ejecucion: True` (§3.4, tabla `comandos`).
 4. ✅ **Raíz de la mesh en la v4.0** (`aura-firmware/infraestructura/nodo_raiz/`): `hw/<hw_id>/…`,
    `ack`, sin tabla ni REST. **Sin probar en placa**: ver el pendiente 17.
-5. **Implementar el `lorawan-bridge`** según §1–§5 (todo lo marcado 🔧), con `hw_id` `eui-…`.
-6. **Que el backend pase al árbol `hw/`** (§2.1, §4): identidad por placa con `devices.hw_id`,
-   cuarentena, asignar e ignorar (§2.3); leer `ingest_id` y `ts`, deduplicar por `ingest_id` y
-   publicar el `ack` (§3.1, §3.6, §5). Es el MVP de ingesta, Tasks 1 a 6.
-7. **Sesión persistente con `client_id` fijo** en backend y adaptadores (§5), para no perder los
-   mensajes que lleguen durante un reinicio.
+5. **`lorawan-bridge`**: ✅ la subida (`data` y `status`, LWT, sesión persistente) y ✅ la bajada
+   de comandos por la API de ChirpStack y ✅ el `offline` inferido (2026-10-14, §3.2 y §3.3).
+   Falta un codec y un firmware que reciban comandos, para probar la bajada con un nodo real.
+6. ✅ **El backend en el árbol `hw/`** (§2.1, §4): `devices.hw_id`, cuarentena, asignar e
+   ignorar (§2.3); `ingest_id` y `ts`, deduplicación y `ack` (§3.1, §3.6, §5).
+7. ✅ **Sesión persistente con `client_id` fijo** (§5): backend, `lorawan-bridge` y raíz de la
+   mesh (2026-10-14, compilado y sin probar en placa).
 8. **Cifrado y claves de la mesh.** ESP-WIFI-MESH autentica la asociación con WPA2 (clave de la
    mesh) y cifra el IE de mesh, pero el payload entre nodos no tiene cifrado de punta a punta, y
    la clave de la mesh es una por edificio, compartida con los grupos: rotarla es reflashear todas
    las placas.
-9. **Persistir `command`, `response` y `alerts`** (§4): hoy solo viven en memoria o en el log.
+9. ✅ **Persistir `command`, `response` y `alerts`** (§4, tablas `comandos` y `alertas`). `status.details`
+   sigue yendo solo al log.
 10. **Verificar en banco** qué hace ChirpStack con un uplink confirmado reintentado con el mismo
     `fCnt` (§5).
-11. **Credenciales y ACL en el broker AURA** (§1): que solo los adaptadores puedan publicar en
-    `hw/+/data`, `hw/+/status`, `hw/+/response` y `hw/+/alerts/#`, y solo el backend en
-    `hw/+/command` y `hw/+/ack`. El `ack` es el más delicado: quien pueda publicarlo puede hacer
-    que una hoja borre muestras que no se guardaron (§3.6).
-12. **Corregir los documentos de §8** para que dejen de contradecir al contrato.
-13. **Un test de contrato**: publicar los payloads de ejemplo de este documento y verificar que
-    el backend los acepta, y lo mismo con el REST. Es lo único que evita que este documento se
-    desactualice como los de §8.
+11. ✅ **Credenciales y ACL en el broker AURA** (§1, 2026-10-09; `make probar-broker`); el raíz manda
+    su usuario y clave desde `aura-firmware` #9. Falta TLS para el despliegue.
+12. ✅ **Corregir los documentos de §8** (2026-10-09). Sigue abierto el caso Circutor (§8).
+13. ✅ **Test de contrato** (`app/tests/contract/test_contrato_mqtt.py`): lee los ejemplos JSON,
+    el formato del `hw_id`, el árbol de §2.1 y las tablas de estados de §3.4 y §3.6 de **este
+    documento** y los pasa por el backend real, y lo mismo con el REST de §6. Si se cambia el
+    contrato sin el código, o al revés, `make test` falla.
 14. Sin objeto desde la v4.0: la MAC lógica del gateway y las salas. Con ESP-WIFI-MESH los nodos
     encuentran al raíz por el ID de la mesh ([ADR-006](adr/ADR-006-esp-wifi-mesh-reemplaza-a-esp-now-en-interior.md)).
 15. **Custodia de credenciales y configuraciones**: el `config_local.h` del raíz (WiFi del
@@ -757,6 +810,24 @@ citan.
     del edificio, el raíz con IP y MQTT con la mesh andando, la MAC de origen a dos saltos, la
     bajada por MAC y el reenganche después de reiniciar el raíz. Si los dos primeros fallan, se
     reabre [ADR-006](adr/ADR-006-esp-wifi-mesh-reemplaza-a-esp-now-en-interior.md).
+18. **LoRaWAN pierde la muestra si falla la base** (tema de estudio). Si el `INSERT` falla por
+    un error transitorio, el backend hace rollback y no publica `ack` (§3.6): en la mesh la hoja
+    reintenta, pero en LoRaWAN nadie lo hace. El nodo no guarda la muestra, ChirpStack ya la
+    entregó y el bridge no escucha el `ack`, así que la muestra se pierde sin aviso. Lo mismo pasa
+    si el bridge se reinicia mientras el broker AURA está caído: paho guarda los QoS 1 pendientes
+    solo en memoria. **Aceptado por ahora**: las caídas de la base son raras y una muestra LoRaWAN
+    perdida no se repone de ningún modo en el nodo. **Para arrancar**: que el bridge se suscriba a
+    `hw/eui-+/ack` (la ACL lo tendría que permitir), guarde en disco los `data` publicados sin
+    `ack` y los republique con el mismo `ingest_id` (el backend contesta `duplicado` si ya
+    estaban). Medir antes: contar uplinks contra acks durante un mes.
+19. **Codecs que meten diagnóstico en `values`** (tema de estudio). El codec `aura-clase-a` del
+    ChirpStack del banco devuelve en `object` el `contador` de tramas, `null` para la sonda sin eco
+    y textos de estado (`tanque2_estado: "sin_eco"`). El bridge pasa `object` tal cual (§3.1), así
+    que las tres cosas entran a la serie como mediciones, contra lo que pide §3.1, y nadie falla.
+    **Aceptado por ahora**: el bridge no valida `values`, porque su forma la define cada codec.
+    **Para arrancar**: corregir ese codec (omitir la sonda que falla, sacar el contador, y mandar la
+    falla como `alerts/sensor` desde un uplink en otro puerto), y que el conector de cada
+    dispositivo rechace en el banco los campos que no declara en su `conector.toml`.
 
 De la v1.x quedan resueltos el destino de los diagnósticos del gateway (van a `status.details`) y
 `pend`/`desc` (pasan a `pendientes`/`descartadas` en `status`). `lux_sim` sigue sin objeto.

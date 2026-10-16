@@ -1,6 +1,6 @@
 // GENERADO por herramientas/generar_autocontenidos.sh: no editar. Fuente: infraestructura/nodo_raiz/
 /*
- * AURA - raiz de la mesh (XIAO ESP32S3), contrato v4.0, ESP-WIFI-MESH
+ * AURA - raiz de la mesh (ESP32-C3 SuperMini), contrato v4.0, ESP-WIFI-MESH
  *
  * Unico nodo de la mesh que tiene IP: se asocia al WiFi del edificio y es el
  * adaptador de la mesh en el sentido del contrato (docs/CONTRATO_MQTT.md).
@@ -23,7 +23,7 @@
  * Configuracion en config_local.h, que no se versiona (ver config_local.h.example).
  * Banco sin backend: herramientas/ack_falso.py hace de AURA.
  *
- * IDE: Placa "XIAO_ESP32S3". USB CDC On Boot: ENABLED.
+ * IDE: Placa "Nologo ESP32C3 Super Mini". USB CDC On Boot: ENABLED.
  * Bibliotecas: las de bibliotecas.txt.
  */
 
@@ -58,7 +58,14 @@
 #define MQTT_HOST "CAMBIAR"
 #endif
 #ifndef MQTT_PORT
-#define MQTT_PORT 1883
+#define MQTT_PORT 1884
+#endif
+// El broker de AURA no acepta anonimos: el raiz entra con su usuario (ACL de aura-app)
+#ifndef MQTT_USUARIO
+#define MQTT_USUARIO "raiz"
+#endif
+#ifndef MQTT_CLAVE
+#define MQTT_CLAVE "CAMBIAR"
 #endif
 #ifndef NTP_SERVIDOR
 #define NTP_SERVIDOR "pool.ntp.org"
@@ -387,14 +394,25 @@ bool conectar_mqtt() {
   // Last Will: si esta placa muere, el broker publica offline por ella.
   String top = topico(radio_mi_mac(), "status");
   const char* lwt = "{\"status\":\"offline\"}";
+  // client_id fijo y sesion persistente (contrato §5): mientras el raiz reconecta, el broker le
+  // guarda los ack y command QoS 1. Sin esto, un ack perdido es una muestra que la hoja reenvia
+  // y un comando perdido queda sin respuesta.
   mqtt.setId(mi_hw);
+  mqtt.setCleanSession(false);
+  mqtt.setUsernamePassword(MQTT_USUARIO, MQTT_CLAVE);
   mqtt.beginWill(top, strlen(lwt), true, 1);
   mqtt.print(lwt);
   mqtt.endWill();
 
   if (!mqtt.connect(MQTT_HOST, MQTT_PORT)) {
-    Serial.printf("[MQTT] !! fallo la conexion, error %d. Con WiFi conectado, lo mas probable\n"
-                  "       es aislamiento de clientes en la red de invitados.\n", mqtt.connectError());
+    int err = mqtt.connectError();
+    if (err == MQTT_BAD_USER_NAME_OR_PASSWORD || err == MQTT_NOT_AUTHORIZED) {
+      Serial.printf("[MQTT] !! el broker rechazo usuario o clave (error %d): revisar MQTT_USUARIO\n"
+                    "       y MQTT_CLAVE en config_local.h (MQTT_RAIZ_PASSWORD del .env de aura-app).\n", err);
+    } else {
+      Serial.printf("[MQTT] !! fallo la conexion, error %d. Con WiFi conectado, lo mas probable\n"
+                    "       es aislamiento de clientes en la red de invitados.\n", err);
+    }
     return false;
   }
   mqtt.subscribe("hw/+/ack", 1);
