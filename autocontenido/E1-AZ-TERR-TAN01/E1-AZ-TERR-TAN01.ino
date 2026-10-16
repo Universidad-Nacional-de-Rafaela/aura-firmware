@@ -1,0 +1,259 @@
+// GENERADO por herramientas/generar_autocontenidos.sh: no editar. Fuente: dispositivos/E1-AZ-TERR-TAN01/
+/*
+ * E1-AZ-TERR-TAN01 — nivel de dos tanques de agua de la terraza del E1, por LoRaWAN.
+ *
+ * Mide la distancia del sensor a la superficie del agua en cada tanque y la manda
+ * cruda: el porcentaje y los litros los calcula el conector en AURA, que conoce las
+ * medidas de cada tanque (conectores/E1-AZ-TERR-TAN01/conector.py). Asi un error en
+ * una medida se corrige sin reflashear la placa y la historia se puede recalcular.
+ *
+ * Payload de 4 bytes, big endian (lo decodifica codec.js en ChirpStack):
+ *   byte 0-1  distancia del tanque 1, en cm x 10 (uint16)
+ *   byte 2-3  distancia del tanque 2, en cm x 10 (uint16)
+ * Sin lectura: 0xFFFF. Nunca se manda un valor inventado.
+ *
+ * El nodo es clase C: escucha todo el tiempo y acepta un downlink de 1 byte, 0x01
+ * (comando medir_ahora, lo arma codec.js), que hace medir y enviar sin esperar al
+ * intervalo. Entre dos envios pasan al menos MIN_ENTRE_ENVIOS_MS.
+ *
+ * Las credenciales OTAA van en config_local.h (copiar config_local.h.example). Sin
+ * ese archivo el sketch compila y mide (se ve por el monitor serie), pero no se une
+ * a la red.
+ */
+
+#if __has_include("config_local.h")
+#include "config_local.h"
+#endif
+
+#include <RadioLib.h>
+#include <Preferences.h>
+
+#if defined(LORAWAN_DEV_EUI) && defined(LORAWAN_JOIN_EUI) && defined(LORAWAN_APP_KEY)
+#define HAY_CREDENCIALES 1
+const uint64_t JOIN_EUI  = LORAWAN_JOIN_EUI;
+const uint64_t DEV_EUI   = LORAWAN_DEV_EUI;
+uint8_t        APP_KEY[] = LORAWAN_APP_KEY;
+#else
+#define HAY_CREDENCIALES 0
+#endif
+
+// ===== Persistencia de la sesion LoRaWAN (NVS) =====
+Preferences almacen;
+const char* NVS_ESPACIO = "lorawan";
+const char* NVS_NONCES  = "nonces";
+const char* NVS_SESION  = "sesion";
+
+// ===== Pines del Wio-SX1262 (conector B2B) =====
+#define PIN_NSS    41
+#define PIN_DIO1   39
+#define PIN_NRST   42
+#define PIN_BUSY   40
+#define PIN_ANT_SW 38
+SX1262 radio = new Module(PIN_NSS, PIN_DIO1, PIN_NRST, PIN_BUSY);
+
+// ===== LoRaWAN =====
+const LoRaWANBand_t REGION   = AU915;
+const uint8_t       SUBBANDA = 2;   // canales 8-15 (au915_1 en ChirpStack)
+LoRaWANNode nodo(&radio, &REGION, SUBBANDA);
+
+// ===== Sensores JSN-SR04T =====
+const int TRIG[2] = {D1, D5};
+const int ECHO[2] = {D2, D4};
+
+const float VELOCIDAD_SONIDO_CM_US = 0.0343;
+const unsigned long TIMEOUT_ECO_US = 35000;   // ~600 cm ida y vuelta
+const unsigned long PAUSA_ENTRE_SENSORES_MS = 60;   // que el eco de uno no lo lea el otro
+
+// Por encima de 600 cm la lectura no es confiable: no se manda. Por debajo de 20 cm
+// (zona ciega del JSN-SR04T) se manda igual: es el agua por encima de la marca de lleno
+// o el sensor obstruido, y el conector avisa con la alerta nivel_alto.
+const float DIST_MIN_CM = 0.0;
+const float DIST_MAX_CM = 600.0;
+
+const uint16_t SIN_LECTURA = 0xFFFF;
+
+// ===== Temporizacion =====
+const unsigned long INTERVALO_ENVIO_MS     = 60000UL;    // 1 minuto
+const unsigned long REINTENTO_JOIN_MS      = 300000UL;   // 5 minutos
+const unsigned long MIN_ENTRE_ENVIOS_MS    = 10000UL;    // tope a los pedidos de medir_ahora
+unsigned long ultimoEnvio = 0;
+unsigned long ultimoIntentoJoin = 0;
+bool unido = false;
+bool pedidoMedir = false;   // llego un medir_ahora y todavia no se envio
+
+// ===== Comandos por downlink =====
+const uint8_t CMD_MEDIR_AHORA = 0x01;
+const size_t  MAX_DOWNLINK    = 64;
+
+// Distancia en cm, o NAN si el sensor no respondio o la lectura cae fuera de rango.
+float medirDistancia(int trig, int echo) {
+  digitalWrite(trig, LOW);
+  delayMicroseconds(5);
+  digitalWrite(trig, HIGH);
+  delayMicroseconds(20);
+  digitalWrite(trig, LOW);
+
+  unsigned long duracion = pulseIn(echo, HIGH, TIMEOUT_ECO_US);
+  if (duracion == 0) return NAN;
+
+  float distancia = (duracion * VELOCIDAD_SONIDO_CM_US) / 2.0;
+  if (distancia < DIST_MIN_CM || distancia > DIST_MAX_CM) return NAN;
+  return distancia;
+}
+
+uint16_t codificar(float distancia) {
+  if (isnan(distancia)) return SIN_LECTURA;
+  return (uint16_t)lroundf(distancia * 10.0f);   // 600 cm -> 6000, lejos de 0xFFFF
+}
+
+void setup() {
+  Serial.begin(115200);
+  while (!Serial && millis() < 5000) { }
+  Serial.println(F("\n=== E1-AZ-TERR-TAN01 - nivel de tanques (LoRaWAN) ==="));
+
+  for (int i = 0; i < 2; i++) {
+    pinMode(TRIG[i], OUTPUT);
+    pinMode(ECHO[i], INPUT);
+  }
+  // el JSN-SR04T tarda en arrancar: sin esto la primera lectura da sin lectura
+  delay(500);
+
+  pinMode(PIN_ANT_SW, OUTPUT);
+  digitalWrite(PIN_ANT_SW, HIGH);
+
+  Serial.print(F("Iniciando radio SX1262... "));
+  int estado = radio.begin();
+  if (estado != RADIOLIB_ERR_NONE) {
+    Serial.printf("ERROR %d, reinicio en 10 s\n", estado);
+    delay(10000);
+    ESP.restart();
+  }
+  Serial.println(F("OK"));
+  radio.setDio2AsRfSwitch(true);
+
+#if HAY_CREDENCIALES
+  almacen.begin(NVS_ESPACIO, false);
+  unirse();
+#else
+  Serial.println(F("Sin config_local.h: mide pero no se une a la red."));
+#endif
+
+  ultimoEnvio = millis() - INTERVALO_ENVIO_MS;   // la primera medicion sale ya
+}
+
+void loop() {
+#if HAY_CREDENCIALES
+  if (!unido && millis() - ultimoIntentoJoin >= REINTENTO_JOIN_MS) unirse();
+  if (unido) revisarDownlinkClaseC();
+#endif
+  bool tocaEnvio = millis() - ultimoEnvio >= INTERVALO_ENVIO_MS;
+  bool atenderPedido = pedidoMedir && millis() - ultimoEnvio >= MIN_ENTRE_ENVIOS_MS;
+  if (tocaEnvio || atenderPedido) {
+    pedidoMedir = false;
+    ultimoEnvio = millis();
+    medirYEnviar();
+  }
+  delay(50);
+}
+
+// Un downlink llega en la ventana de clase C o en RX1/RX2 despues de un uplink.
+// El puerto 0 trae solo comandos MAC de la red, sin datos para la aplicacion.
+void procesarDownlink(const uint8_t* datos, size_t largo, uint8_t puerto) {
+  if (puerto == 0 || largo == 0) return;
+  if (largo == 1 && datos[0] == CMD_MEDIR_AHORA) {
+    Serial.println(F("[RX] medir_ahora"));
+    pedidoMedir = true;
+    return;
+  }
+  Serial.printf("[RX] comando desconocido (%u bytes, puerto %u): se ignora\n",
+                (unsigned)largo, puerto);
+}
+
+void revisarDownlinkClaseC() {
+  uint8_t datos[MAX_DOWNLINK];
+  size_t largo = 0;
+  LoRaWANEvent_t evento;
+  // getDownlinkClassC no consulta la radio: solo mira si la interrupcion marco algo
+  if (nodo.getDownlinkClassC(datos, &largo, &evento) > 0) {
+    procesarDownlink(datos, largo, evento.fPort);
+  }
+}
+
+void medirYEnviar() {
+  float d[2];
+  d[0] = medirDistancia(TRIG[0], ECHO[0]);
+  delay(PAUSA_ENTRE_SENSORES_MS);
+  d[1] = medirDistancia(TRIG[1], ECHO[1]);
+
+  uint8_t payload[4];
+  for (int i = 0; i < 2; i++) {
+    uint16_t v = codificar(d[i]);
+    payload[2 * i]     = v >> 8;
+    payload[2 * i + 1] = v & 0xFF;
+    if (isnan(d[i])) Serial.printf("Tanque %d: sin lectura\n", i + 1);
+    else             Serial.printf("Tanque %d: %.1f cm\n", i + 1, d[i]);
+  }
+
+  if (isnan(d[0]) && isnan(d[1])) {
+    Serial.println(F("[TX] Ningun sensor respondio: no se envia."));
+    return;
+  }
+  if (!unido) {
+    Serial.println(F("[TX] Sin unirse a la red: no se envia."));
+    return;
+  }
+
+  Serial.print(F("[TX] Enviando 4 bytes... "));
+  uint8_t bajada[MAX_DOWNLINK];
+  size_t largoBajada = 0;
+  LoRaWANEvent_t eventoBajada;
+  int estado = nodo.sendReceive(payload, sizeof(payload), 1, bajada, &largoBajada,
+                                false, NULL, &eventoBajada);
+  if (estado >= RADIOLIB_ERR_NONE) Serial.println(F("OK"));
+  else Serial.printf("ERROR %d\n", estado);
+  if (estado > 0) procesarDownlink(bajada, largoBajada, eventoBajada.fPort);   // > 0: llego un downlink
+
+  guardarBuffer(NVS_SESION, nodo.getBufferSession(), RADIOLIB_LORAWAN_SESSION_BUF_SIZE);
+}
+
+#if HAY_CREDENCIALES
+// Join OTAA, restaurando la sesion guardada si la hay. Si falla, loop() reintenta
+// cada REINTENTO_JOIN_MS en vez de dejar el nodo colgado en la terraza.
+void unirse() {
+  ultimoIntentoJoin = millis();
+  Serial.print(F("Uniendo a la red (OTAA)... "));
+
+  // LoRaWAN 1.0.x: nwkKey en nullptr. Un puntero no nulo pone a RadioLib en modo 1.1
+  // y el join falla.
+  nodo.beginOTAA(JOIN_EUI, DEV_EUI, nullptr, APP_KEY);
+  restaurarBuffer(NVS_NONCES, RADIOLIB_LORAWAN_NONCES_BUF_SIZE, true);
+  restaurarBuffer(NVS_SESION, RADIOLIB_LORAWAN_SESSION_BUF_SIZE, false);
+
+  int estado = nodo.activateOTAA();
+  guardarBuffer(NVS_NONCES, nodo.getBufferNonces(), RADIOLIB_LORAWAN_NONCES_BUF_SIZE);
+  if (estado != RADIOLIB_LORAWAN_NEW_SESSION && estado != RADIOLIB_LORAWAN_SESSION_RESTORED) {
+    Serial.printf("ERROR %d, reintento en %lu s\n", estado, REINTENTO_JOIN_MS / 1000);
+    return;
+  }
+  unido = true;
+  Serial.println(estado == RADIOLIB_LORAWAN_NEW_SESSION ? F("OK (sesion nueva)") : F("OK (sesion restaurada)"));
+
+  // En LoRaWAN 1.0.x el cambio de clase es local: el device profile de ChirpStack
+  // tiene que tener clase C habilitada para mandar downlinks fuera de RX1/RX2.
+  estado = nodo.setClass(RADIOLIB_LORAWAN_CLASS_C);
+  if (estado == RADIOLIB_ERR_NONE) Serial.println(F("Clase C: escuchando downlinks"));
+  else Serial.printf("Clase C: ERROR %d, sigue en clase A\n", estado);
+}
+
+bool restaurarBuffer(const char* clave, size_t tam, bool esNonces) {
+  if (!almacen.isKey(clave)) return false;
+  uint8_t buffer[tam];
+  if (almacen.getBytes(clave, buffer, tam) != tam) return false;
+  int16_t estado = esNonces ? nodo.setBufferNonces(buffer) : nodo.setBufferSession(buffer);
+  return estado == RADIOLIB_ERR_NONE;
+}
+#endif
+
+void guardarBuffer(const char* clave, const uint8_t* datos, size_t tam) {
+  almacen.putBytes(clave, datos, tam);
+}
