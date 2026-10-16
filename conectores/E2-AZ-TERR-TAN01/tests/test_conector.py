@@ -24,7 +24,8 @@ class ConectorTanques(unittest.TestCase):
     def setUp(self):
         self.manifiesto, self.conector = cargar_conector(CARPETA)
         self.ctx = ContextoDePrueba(self.manifiesto)
-        self.umbral = self.conector.UMBRAL_BAJO_MM
+        self.umbral = self.conector.umbral_mm(0)
+        self.hist = self.conector.HISTERESIS_MM
 
     def alertas(self, tipo):
         return [a for a in self.ctx.alertas if a.tipo == tipo]
@@ -62,17 +63,32 @@ class ConectorTanques(unittest.TestCase):
         r = procesar(self.conector, self.ctx, msg({"contador": 7}))
         self.assertEqual((r.resultado, r.motivo), ("descartado", "sin_campos_validos"))
 
+    def test_umbral_de_prueba_es_el_20_por_ciento(self):
+        # 1630 mm de altura (valor de prueba) y 20 % de agua: 1630 - 326 = 1304 mm.
+        self.assertEqual(self.conector.ALTURA_MM, (1630, 1630, 1630))
+        self.assertEqual(self.umbral, 1304)
+
     def test_alerta_una_vez_por_cruce(self):
-        alto = self.umbral + 500
-        bajo = self.umbral - 500
+        alto = self.umbral + 200
+        bajo = self.umbral - 200
         for minuto, valor in enumerate([bajo, alto, alto + 100, alto, bajo, bajo]):
             procesar(self.conector, self.ctx, msg({"distancia_tanque1_mm": valor}, minuto))
         self.assertEqual([(a.tipo, a.severidad) for a in self.alertas("tanque_bajo")],
                          [("tanque_bajo", "warning"), ("tanque_bajo", "info")])
 
+    def test_histeresis_no_repite_avisos_con_el_nivel_en_el_borde(self):
+        u = self.umbral
+        # Entra en bajo y oscila +-10 mm alrededor del umbral: un solo aviso.
+        for minuto, valor in enumerate([u - 200, u + 10, u - 10, u + 10, u - 10, u - 30]):
+            procesar(self.conector, self.ctx, msg({"distancia_tanque1_mm": valor}, minuto))
+        self.assertEqual([a.severidad for a in self.alertas("tanque_bajo")], ["warning"])
+        # Sale recién cuando el agua sube más que la histéresis por encima del umbral.
+        procesar(self.conector, self.ctx, msg({"distancia_tanque1_mm": u - self.hist}, 10))
+        self.assertEqual([a.severidad for a in self.alertas("tanque_bajo")], ["warning", "info"])
+
     def test_cada_tanque_alerta_por_separado(self):
-        alto = self.umbral + 500
-        procesar(self.conector, self.ctx, msg({"distancia_tanque1_mm": alto, "distancia_tanque3_mm": 1000}))
+        alto = self.umbral + 200
+        procesar(self.conector, self.ctx, msg({"distancia_tanque1_mm": alto, "distancia_tanque3_mm": 500}))
         self.assertEqual(len(self.alertas("tanque_bajo")), 1)
         self.assertIn("Tanque 1", self.alertas("tanque_bajo")[0].mensaje)
 
@@ -80,6 +96,13 @@ class ConectorTanques(unittest.TestCase):
         procesar(self.conector, self.ctx, msg({"distancia_tanque2_mm": self.umbral + 1}))
         self.assertEqual([a.severidad for a in self.alertas("tanque_bajo")], ["warning"])
         self.assertIn("Tanque 2", self.alertas("tanque_bajo")[0].mensaje)
+
+    def test_tanques_de_distinta_altura_tienen_su_propio_umbral(self):
+        self.conector.ALTURA_MM = (1630, 2000, 2500)
+        self.assertEqual([self.conector.umbral_mm(i) for i in range(3)], [1304, 1600, 2000])
+        # 1500 mm: bajo para el tanque 1, normal para el 2 y el 3.
+        procesar(self.conector, self.ctx, msg({f"distancia_tanque{i}_mm": 1500 for i in (1, 2, 3)}))
+        self.assertEqual([a.mensaje[:9] for a in self.alertas("tanque_bajo")], ["Tanque 1:"])
 
     # --- alerta `sensor`: el codec no manda el campo de un sensor que falla ---
 

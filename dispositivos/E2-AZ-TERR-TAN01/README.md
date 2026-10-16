@@ -58,7 +58,9 @@ o menos". No dispara la alerta `sensor` ni `tanque_bajo`.
 
 Alertas (contrato §3.5). El nodo LoRaWAN no publica alertas propias: las genera el conector.
 - `sensor`: cuando falta el campo de un tanque en un mensaje que sí trae otro, e `info` cuando vuelve.
-- `tanque_bajo`: `warning` cuando el agua se aleja más del umbral e `info` cuando vuelve.
+- `tanque_bajo`: `warning` cuando a un tanque le queda menos del 20 % de agua e `info` cuando se
+  recupera (con 50 mm de margen). La bomba la maneja un control externo: el aviso sirve para
+  saber que no llenó a tiempo.
 
 ## Comandos
 
@@ -116,4 +118,5 @@ profile nuevo (contrato §7). Los tests están en [`tests/`](tests/) (`make -C t
 ## Notas
 
 - Pendiente: probar en la placa y en ChirpStack.
-- Pendiente: `UMBRAL_BAJO_MM` del conector es provisional, hasta medir la altura de los tanques.
+- Pendiente: `ALTURA_MM` del conector tiene valores de prueba (1630 mm por tanque), hasta medir la
+  distancia del sensor al fondo de cada tanque.
