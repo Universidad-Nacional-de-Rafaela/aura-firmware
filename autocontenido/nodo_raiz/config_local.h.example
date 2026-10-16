@@ -17,8 +17,14 @@
 #define ROUTER_CLAVE "CAMBIAR"
 
 // Broker AURA. Si la máquina toma IP por DHCP puede cambiar y hay que reflashear.
+// El broker de aura-app escucha en el 1884 de la máquina (MQTT_PORT de su .env).
 #define MQTT_HOST "192.168.0.100"
-#define MQTT_PORT 1883
+#define MQTT_PORT 1884
+
+// El broker no acepta anónimos: usuario "raiz" y la clave MQTT_RAIZ_PASSWORD del .env de
+// aura-app (la genera `make up`).
+#define MQTT_USUARIO "raiz"
+#define MQTT_CLAVE   "CAMBIAR"
 
 // Si la red bloquea pool.ntp.org, el servidor NTP de la universidad.
 #define NTP_SERVIDOR "pool.ntp.org"

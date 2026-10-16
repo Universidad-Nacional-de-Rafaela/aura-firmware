@@ -61,9 +61,11 @@ Un dispositivo de la mesh se arma sobre [`comun/nodo_mesh.h`](comun/nodo_mesh.h)
 [`ejemplos/sensor_ejemplo/`](ejemplos/sensor_ejemplo/), [`ejemplos/actuador_ejemplo/`](ejemplos/actuador_ejemplo/)
 y la plantilla. El diseño está en [`docs/mesh-wifi/`](docs/mesh-wifi/).
 
-> ⚠️ El backend de AURA todavía escucha el árbol de la v3.0 y no publica el `ack` (contrato §10,
-> pendientes 1 y 6). Para el banco sin backend, [`herramientas/ack_falso.py`](herramientas/ack_falso.py)
-> hace de AURA, con modos para simular la base caída, `rechazado` y `cuarentena`.
+El backend de aura-app ya escucha el árbol `hw/` de la v4.0 y publica el `ack`. Su broker no
+acepta anónimos: el raíz entra con el usuario `raiz` (ver
+[`infraestructura/nodo_raiz/`](infraestructura/nodo_raiz/)). Para el banco sin backend,
+[`herramientas/ack_falso.py`](herramientas/ack_falso.py) hace de AURA, con modos para simular la
+base caída, `rechazado` y `cuarentena`.
 
 ## Sumar un dispositivo
 
@@ -74,12 +76,16 @@ compila, corre los tests, valida los códigos y busca secretos.
 
 ## Compilar
 
-Placa **XIAO_ESP32S3** con **USB CDC On Boot: Enabled** (sin eso el monitor serie queda mudo),
-core `esp32:esp32` 3.3.11. Con `arduino-cli`:
+La mesh corre en **ESP32-C3 SuperMini** (placa "Nologo ESP32C3 Super Mini" en el IDE) con
+**USB CDC On Boot: Enabled** (sin eso el monitor serie queda mudo), core `esp32:esp32` 3.3.11. La
+XIAO ESP32S3 es la placa de los nodos LoRaWAN. Con `arduino-cli`:
 
 ```bash
-arduino-cli compile --fqbn "esp32:esp32:XIAO_ESP32S3:CDCOnBoot=cdc" ejemplos/sensor_ejemplo
+arduino-cli compile --fqbn "esp32:esp32:nologo_esp32c3_super_mini:CDCOnBoot=cdc" ejemplos/sensor_ejemplo
 ```
+
+Un sketch que va en otra placa (por ejemplo, el firmware LoRaWAN de un dispositivo sobre XIAO
+ESP32S3) lleva en su carpeta un `fqbn.txt` con su FQBN, que el CI usa en lugar del de la mesh.
 
 Los sketches incluyen `comun/` con rutas relativas (`../../comun/…`), y así compilan tanto en
 `arduino-cli` como en el IDE 2. Si preferís abrir una carpeta suelta, usá la de `autocontenido/`.

@@ -1,6 +1,6 @@
 // GENERADO por herramientas/generar_autocontenidos.sh: no editar. Fuente: ejemplos/sensor_ejemplo/
 /*
- * AURA - nodo sensor de ejemplo (XIAO ESP32S3), contrato v4.0, ESP-WIFI-MESH
+ * AURA - nodo sensor de ejemplo (ESP32-C3 SuperMini), contrato v4.0, ESP-WIFI-MESH
  *
  * Muestra el uso de comun/nodo_mesh.h con lo minimo: una medicion, un
  * parametro configurable y nada de hardware extra. Con la placa pelada, lo
@@ -16,7 +16,7 @@
  *
  * set_config acepta {"intervalo_s": 5..86400}, guardado en flash.
  *
- * IDE: Placa "XIAO_ESP32S3". USB CDC On Boot: ENABLED, si no el monitor
+ * IDE: Placa "Nologo ESP32C3 Super Mini". USB CDC On Boot: ENABLED, si no el monitor
  * serie no muestra nada. Biblioteca: ArduinoJson (ver bibliotecas.txt).
  */
 
@@ -82,7 +82,7 @@ void loop() {
     ultima_muestra = millis();
 
     float temp = temperatureRead();
-    // Rango del sensor interno del ESP32-S3. Fuera de esto, no es una medicion.
+    // Rango del sensor interno del ESP32-C3. Fuera de esto, no es una medicion.
     bool ok = !isnan(temp) && temp > -40.0f && temp < 125.0f;
     nodo_mesh_sonda("temp_chip_c", ok, "fuera_de_rango");
     if (ok) {

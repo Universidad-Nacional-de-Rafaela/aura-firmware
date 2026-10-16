@@ -49,7 +49,8 @@ gateway de ESP-NOW.
 3. **Relevos solo de la cátedra** (`MESH_NODE`). Los dispositivos de los grupos son **hojas**
    (`MESH_LEAF`): no reenvían tráfico, así que un grupo que reflashea o tiene un bug no corta a
    los demás.
-4. **Arduino sobre XIAO ESP32S3**, como hasta ahora. La API de `comun/nodo_mesh.h` para los grupos
+4. **Arduino sobre XIAO ESP32S3**, como hasta ahora. *(Actualizado el 2026-10-09: la placa de la
+   mesh es la **ESP32-C3 SuperMini**; la XIAO ESP32S3 queda para LoRaWAN. Se probó en placa.)* La API de `comun/nodo_mesh.h` para los grupos
    se conserva, salvo `nodo_mesh_iniciar(cb)`, que deja de recibir MAC.
 5. **La identidad es la MAC de fábrica** que `esp_mesh_recv()` entrega como origen
    (`hw_id = mac-…`, [ADR-005](ADR-005-identidad-por-placa-y-mapeo-en-aura.md)).
