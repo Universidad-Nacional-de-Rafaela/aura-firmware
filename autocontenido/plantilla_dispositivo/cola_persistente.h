@@ -7,8 +7,8 @@
 // AURA y del propio nodo, dentro de su capacidad.
 //
 // Formato: una cabecera y AURA_COLA_CAP ranuras de MuestraAura, en anillo. El
-// almacenamiento esta abstraido: en la placa es un archivo de LittleFS y en
-// los tests de host, un arreglo en RAM.
+// almacenamiento esta abstraido: en la placa son archivos chicos de LittleFS
+// (cola_archivos.h) y en los tests de host, un arreglo en RAM.
 //
 // Orden de escritura: primero la ranura, despues la cabecera. Si se corta la
 // luz entre las dos, la cabecera vieja sigue siendo coherente y solo se pierde

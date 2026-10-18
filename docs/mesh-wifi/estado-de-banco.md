@@ -36,6 +36,21 @@ Hay que esperar lo mismo.
    `docker-compose.yml`. Si vuelve a pasar, comparar `docker network inspect aura_default` con la
    IP que informa `[RAIZ] con IP …`.
 
+## Defectos que aparecieron en placa (2026-10-17)
+
+6. **La cola de la hoja paraba el loop ~2,5 s por escritura.** Con la cola en un solo archivo de
+   LittleFS (`/cola.bin`, 260 KB), cada escritura reescribía el archivo desde el offset hasta el
+   final (LittleFS es copy-on-write): la cabecera, en el offset 0, tardaba ~2,5 s y una ranura
+   ~2,2 s. Guardar una muestra paraba el loop ~4,7 s y cada confirmación ~2,5 s. Síntomas, con una
+   ráfaga de comandos al actuador: los comandos llegaban a la radio a tiempo pero se ejecutaban de
+   a tandas, el raíz contestaba `nodo_no_alcanzable` de comandos que la hoja sí ejecutó, y la hoja
+   descartaba resultados (`evento tipo 5 descartado`). Además, cada muestra borraba ~180 bloques:
+   la flash de una hoja se gastaba en meses. Arreglo: `comun/cola_archivos.h` reparte la cola en
+   archivos chicos (cabecera sola, 16 ranuras por archivo, menos de un bloque cada uno); medido en
+   placa: ranura ~40 ms, cabecera ~10 ms, loop nunca parado más de 300 ms, 10 de 10 comandos
+   `aplicado` en ráfaga de uno por segundo. Al actualizar, la hoja borra `/cola.bin`: lo que tuviera
+   sin confirmar se pierde una vez.
+
 Si una placa vieja quedó con la tormenta, se la silencia dejándola en el bootloader:
 `esptool --port <puerto> --after no-reset read-mac`.
 
