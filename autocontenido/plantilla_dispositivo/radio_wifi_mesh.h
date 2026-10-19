@@ -219,6 +219,10 @@ static inline bool radio_iniciar(AuraRol rol, const AuraMeshConfig* cfg, uint8_t
   // WiFi.mode() inicializa netif, el loop de eventos y el driver WiFi.
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(false);
+  // El driver arranca con el pais "01" (mundial, canales 1-11): con el router en el canal 12 o
+  // 13, esp_mesh_set_config devuelve ESP_ERR_INVALID_ARG y la placa reinicia en bucle (visto en
+  // placa el 2026-10-16). En Argentina van del 1 al 13; sin 802.11d, para que un AP no lo cambie.
+  AURA_ERR(esp_wifi_set_country_code("AR", false));
   esp_read_mac(radio_aura.mi_mac, ESP_MAC_WIFI_STA);
   radio_aura.sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
   if (radio_aura.sta) esp_netif_dhcpc_stop(radio_aura.sta);   // el raiz lo arranca al asociarse
