@@ -61,10 +61,10 @@ Hay que esperar lo mismo.
    - **Bajar la potencia a 8,5 dBm** (`esp_wifi_set_max_tx_power(34)` después de
      `esp_mesh_start`), el arreglo que suele recomendarse, **no sirve**: relevo y hoja entran y
      salen de la mesh cada 20-40 s ya a ~5 m del raíz. Se volvió a potencia completa.
-   - Próximo paso: probar en **una** placa (la hoja) el reemplazo de la antena cerámica por un
-     alambre de un cuarto de onda (~31 mm) en el pad de alimentación, y compararla con el relevo
-     a la misma distancia. Si no alcanza, pasar a una C3 con conector de antena externa antes de
-     que los grupos compren placas.
+   - En prueba (2026-10-19): reemplazar la antena cerámica de **una** placa por un alambre de un
+     cuarto de onda (~31 mm) en el pad de alimentación, y compararla con otra sin modificar a la
+     misma distancia. Si no alcanza, pasar a una C3 con conector de antena externa antes de
+     instalar: las placas las pone el proyecto, no los grupos.
 8. **Una ráfaga de comandos desde el broker desestabiliza al raíz** (observado, sin
    diagnosticar). Un comando `led` a la hoja cada 3 s, con la hoja fuera de alcance, hizo que el
    raíz se reconectara al broker cuatro veces en cuatro minutos y se reiniciara al menos una vez
