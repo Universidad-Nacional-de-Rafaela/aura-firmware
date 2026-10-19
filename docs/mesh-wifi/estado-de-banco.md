@@ -51,6 +51,31 @@ Hay que esperar lo mismo.
    `aplicado` en ráfaga de uno por segundo. Al actualizar, la hoja borra `/cola.bin`: lo que tuviera
    sin confirmar se pierde una vez.
 
+## Problemas abiertos (2026-10-19)
+
+7. **La SuperMini no siempre se une con fuente externa.** Conectadas a la notebook por USB, el
+   relevo y la hoja se unen siempre. Con cargador o powerbank, a veces sí y a veces no, incluso
+   en el mismo lugar: el 2026-10-19 el relevo no se unió y, apagado y prendido una vez sin
+   moverlo, entró. No se reinician (la hoja sigue midiendo y encolando). Hipótesis: la falla
+   conocida de la antena cerámica de la C3 SuperMini, a la que el cable USB le hace de masa.
+   - **Bajar la potencia a 8,5 dBm** (`esp_wifi_set_max_tx_power(34)` después de
+     `esp_mesh_start`), el arreglo que suele recomendarse, **no sirve**: relevo y hoja entran y
+     salen de la mesh cada 20-40 s ya a ~5 m del raíz. Se volvió a potencia completa.
+   - Próximo paso: probar en **una** placa (la hoja) el reemplazo de la antena cerámica por un
+     alambre de un cuarto de onda (~31 mm) en el pad de alimentación, y compararla con el relevo
+     a la misma distancia. Si no alcanza, pasar a una C3 con conector de antena externa antes de
+     que los grupos compren placas.
+8. **Una ráfaga de comandos desde el broker desestabiliza al raíz** (observado, sin
+   diagnosticar). Un comando `led` a la hoja cada 3 s, con la hoja fuera de alcance, hizo que el
+   raíz se reconectara al broker cuatro veces en cuatro minutos y se reiniciara al menos una vez
+   (uptime de 120 s); ningún comando volvió `aplicado`. Al frenar los comandos, la mesh se
+   recompuso sola. Para medir la mesh **no se usa el broker**: el raíz imprime por serie su tabla
+   de ruteo (`esp_mesh_get_routing_table`) cada 10 s y cada vez que cambia, y los LED de estado
+   de relevo y hoja muestran la capa.
+
+El 2026-10-19 había otra mesh, de un grupo, en el mismo canal que el router: comparte el aire, aunque
+con otro `MESH_ID` no se mezclan.
+
 Si una placa vieja quedó con la tormenta, se la silencia dejándola en el bootloader:
 `esptool --port <puerto> --after no-reset read-mac`.
 
@@ -100,9 +125,9 @@ es el cliente MQTT de ESP-IDF (`esp-mqtt`, incluido en el core).
 
 | # | Prueba | Qué se espera | Resultado |
 |---|---|---|---|
-| 3.1 | Hoja lejos del raíz y cerca del relevo (otro piso) | la hoja cuelga del relevo (capa 3); el raíz publica con la **MAC de la hoja**, no la del relevo | pendiente |
-| 3.2 | Comando a la hoja de 3.1 | llega por el relevo sin configurar rutas | pendiente |
-| 3.3 | Apagar el relevo | la hoja guarda en su cola; al volver el relevo, se reengancha y vacía la cola | pendiente |
+| 3.1 | Hoja lejos del raíz y cerca del relevo (otro piso) | la hoja cuelga del relevo (capa 3); el raíz publica con la **MAC de la hoja**, no la del relevo | ✅ 2026-10-19: con el relevo en el medio, la hoja en capa 3 (LED de estado) y sus `data` en `hw/mac-<hoja>/data` |
+| 3.2 | Comando a la hoja de 3.1 | llega por el relevo sin configurar rutas | pendiente: se intentó con una ráfaga de comandos y desestabilizó al raíz (problema 8); repetir con **un** comando |
+| 3.3 | Apagar el relevo | la hoja guarda en su cola; al volver el relevo, se reengancha y vacía la cola | a medias 2026-10-19: la hoja guardó 4 muestras sin descartar ninguna y vació la cola al volver, pero se reenganchó **directo al raíz** antes que el relevo (desde ese lugar lo alcanzaba). Repetir con la hoja más lejos |
 
 ## Medir el aire
 
