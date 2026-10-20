@@ -10,5 +10,8 @@
 // Canal del WiFi del edificio, donde trabaja la mesh. 0 = buscar en todos.
 #define MESH_CANAL  0
 
+// SSID del WiFi del edificio (solo el nombre, NUNCA la clave). La mesh no arranca sin él.
+#define MESH_ROUTER_SSID "CAMBIAR"
+
 // MAC de la placa en la que DEBE correr este sketch (herramientas/leer_mac).
 #define MAC_ESPERADA {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}

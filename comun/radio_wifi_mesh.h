@@ -205,8 +205,24 @@ static inline bool radio_iniciar(AuraRol rol, const AuraMeshConfig* cfg, uint8_t
   memset(&radio_aura, 0, sizeof(radio_aura));
   radio_aura.rol = rol;
 
+  // esp_mesh_set_config rechaza un router sin SSID (ESP_ERR_MESH_ARGUMENT, visto en placa el
+  // 2026-10-09): la hoja y el relevo necesitan el SSID del edificio, aunque no su clave.
+  if (!cfg->router_ssid || !cfg->router_ssid[0]) {
+    Serial.println("[MESH] !! falta el SSID del WiFi del edificio (MESH_ROUTER_SSID en config_local.h)");
+    return false;
+  }
+
+  // Sin esto, en placa, Arduino guarda SSID y clave en la NVS y reconecta por su cuenta al
+  // desconectarse: se pelea con la mesh y genera cientos de desconexiones por segundo que
+  // saturan el canal. La mesh maneja sola la conexion al padre y al router.
+  WiFi.persistent(false);         // antes de WiFi.mode(): decide si el driver usa la NVS
   // WiFi.mode() inicializa netif, el loop de eventos y el driver WiFi.
   WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(false);
+  // El driver arranca con el pais "01" (mundial, canales 1-11): con el router en el canal 12 o
+  // 13, esp_mesh_set_config devuelve ESP_ERR_INVALID_ARG y la placa reinicia en bucle (visto en
+  // placa el 2026-10-16). En Argentina van del 1 al 13; sin 802.11d, para que un AP no lo cambie.
+  AURA_ERR(esp_wifi_set_country_code("AR", false));
   esp_read_mac(radio_aura.mi_mac, ESP_MAC_WIFI_STA);
   radio_aura.sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
   if (radio_aura.sta) esp_netif_dhcpc_stop(radio_aura.sta);   // el raiz lo arranca al asociarse

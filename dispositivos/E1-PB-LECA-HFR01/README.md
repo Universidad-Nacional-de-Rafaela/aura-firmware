@@ -2,171 +2,249 @@
 
 | | |
 |---|---|
-| **Ubicación** | Propuesta: Edificio 1, planta baja, LabECA; confirmar instalación en clase. |
-| **Responsable** | Grupo IC IV 2026: VainstubTomas, Bernidb, Kinggrass265, JuanCruz46. |
-| **Estado** | En desarrollo; validación de software y banco físico por separado. |
+| **Ubicación** | Propuesta: Edificio 1, planta baja, LabECA; confirmar instalación. |
+| **Responsable** | Grupo de IC IV 2026: @VainstubTomas, @Bernidb, @Kinggrass265, @JuanCruz46. |
+| **Estado** | Firmware portado a ESP-IDF; pendiente la validación física con la C3. |
 | **Instalado** | Todavía no. |
-| **Transporte** | Interior: hoja ESP-WIFI-MESH de AURA; no reenvía tráfico de otras placas. |
-| **Contrato** | docs/CONTRATO_MQTT.md v4.0, propuesta publicada el 07/10/2026. |
-| **Basado en** | Plantilla de dispositivo y comun/nodo_mesh.h de aura-firmware; lógica propia IC IV. |
+| **Transporte** | Interior: hoja ESP-WIFI-MESH; no reenvía tráfico de otras placas. |
+| **Contrato** | [MQTT v4.1](../../docs/CONTRATO_MQTT.md), [ADR-007](../../docs/adr/ADR-007-mesh-en-esp-idf-con-concentrador-por-aula.md). |
+| **Basado en** | [Mesh3_Hoja](../../Mesh_Red_Completa/Mesh3_Hoja/) y su biblioteca pública `nodo_mesh`. |
 | **Códigos anteriores** | Ninguno confirmado. |
 
 ## Qué hace
 
-Una XIAO ESP32S3 mide dos DS18B20, con intervalos y umbrales independientes,
-controla la alarma local, muestra temperaturas y conserva lecturas pendientes.
-La placa es una hoja: la mesh elige el camino al raíz de la cátedra. Su identidad
-es `mac-` más la MAC STA de fábrica, en minúsculas y sin separadores. No configura
-UUID de AURA, MAC del padre ni MAC del raíz. La cátedra asigna su hw_id en AURA.
+Una **ESP32-C3 SuperMini** lee dos sondas DS18B20: una de heladera y otra de freezer.
+Cada una tiene su intervalo y sus umbrales. El LED de alarma se enciende cuando
+cualquiera sale de su rango, incluso sin conexión. Una pantalla SH1106 muestra
+temperaturas y pendientes; el DS3231 con pila permite conservar UTC sin red.
+
+La biblioteca de la cátedra administra la conexión, el concentrador de aula, la
+cola híbrida y los ACK de AURA. El dispositivo usa exclusivamente su API pública:
+no accede a variables internas ni a `esp_wifi_*` o `esp_mesh_*`.
+El conector Python de [conectores/E1-PB-LECA-HFR01](../../conectores/E1-PB-LECA-HFR01/)
+valida y guarda mediciones, y genera alertas al cruzar umbrales.
 
 ## Organización del código
 
-| Archivo | Responsabilidad |
+| Archivo o carpeta | Responsabilidad |
 |---|---|
-| E1-PB-LECA-HFR01.ino / app.h | Entrada Arduino, arranque y ciclo principal. |
-| configuracion.h / config_local.h.example | Pines y plantilla de datos privados de la mesh. |
-| estado_nodo.h | Objetos de hardware y estado compartido. |
-| sondas.h | Dos conversiones sin espera, intervalos independientes y fallas de sondas. |
-| pantalla.h | OLED y ambos LEDs; alarma local sin depender de AURA. |
-| reloj.h | RTC, UTC y reloj de sistema sincronizable por confirmaciones del raíz. |
-| energia.h | Entrada configurable de batería/red, antirrebote y captura del corte. |
-| almacenamiento.h / mesh_storage.h / mesh_core.h | Journal NVS, FIFO, configuración y primera captura. Guarda solo lecturas; las alertas usan la biblioteca de AURA. |
-| modelo_envio.h / envio_persistente.h | Mensaje completo en vuelo y asociación de las dos lecturas de una misma medición. |
-| adaptador_aura.h | JSON de mediciones y validación/configuración compacta. |
-| politica_envio.h | Presupuesto de reintentos y recuperación espaciada. |
-| comunicacion.h | Callbacks de configuración y adaptación a comun/nodo_mesh.h. |
-| tests/ | Pruebas locales; no se cargan en la placa. |
+| `CMakeLists.txt`, `sdkconfig.defaults`, `partitions.csv` | Proyecto ESP-IDF 6.1, C3 y partición de cola de 256 KiB. |
+| `main/main.c` | Arranque y tarea de medición; intervalos independientes y API de AURA. |
+| `main/hardware.h` | Propuesta de GPIO y opciones de pantalla, RTC y entrada de alimentación. |
+| `main/config_local.ejemplo.h` | Plantilla del ID y la clave privados de la mesh. |
+| `main/logica.c/.h` | Rangos, alarma, CRC, registro de corte y calendario UTC. |
+| `main/config_parser.c`, `main/configuracion.c/.h` | Parche JSON, validación completa, aplicación y reporte de configuración. |
+| `main/almacenamiento.c/.h` | NVS de configuración y registro protegido del primer corte. |
+| `main/sondas.c/.h` | Dos buses 1-Wire, detección y lectura de DS18B20 con el controlador de Espressif. |
+| `main/bus_i2c.c/.h` | Bus I2C compartido por OLED y RTC. |
+| `main/reloj.c/.h` | DS3231, validación de la hora y reloj de sistema. |
+| `main/pantalla.c/.h` | SH1106 128×64 y LEDs externos de umbral y desconexión. |
+| `main/energia.c/.h` | Antirrebote de alimentación y captura local de la primera lectura del corte. |
+| `main/idf_component.yml`, `dependencies.lock` | Dependencias declaradas y versiones resueltas por ESP-IDF. |
+| `tests/` | Pruebas de lógica y configuración en computadora; no se cargan en la placa. |
 
-La biblioteca compartida se incluye desde `../../comun/nodo_mesh.h`, sin
-modificarla. Para Arduino IDE se puede generar `autocontenido/` con la herramienta
-de AURA. Los módulos siguen separados en ambos casos.
+La versión anterior de Arduino queda en el historial de Git. Este proyecto ya
+no usa `.ino`, `comun/nodo_mesh.h` ni una copia en `autocontenido/`: se compila
+directamente desde esta carpeta con los componentes de `Mesh_Red_Completa/`.
 
 ## Hardware
 
-| Componente | Modelo | Conexión inicial configurable |
-|---|---|---|
-| Placa | XIAO ESP32S3, flash 8 MiB | ESP-WIFI-MESH |
-| Sonda heladera | DS18B20, bus 1-Wire con pull-up propio | D2 |
-| Sonda freezer | DS18B20, bus 1-Wire con pull-up propio | D3 |
-| LED umbral | LED con resistencia | D0 |
-| LED desconexión | LED con resistencia | D1 |
-| OLED SH1106 / RTC DS3231 | I2C | D4/D5 |
-| Presencia de alimentación | Circuito del grupo pendiente | -1: entrada deshabilitada |
+Los siguientes GPIO son una **propuesta nueva para la C3**, no una equivalencia
+de los D0…D5 de la XIAO. Confirmar cableado y niveles antes de energizar.
+
+| Componente | Conexión inicial en `main/hardware.h` |
+|---|---|
+| ESP32-C3 SuperMini | Flash de 4 MiB; placa provista por el proyecto. |
+| DS18B20 heladera | GPIO3, bus independiente con pull-up externo de 4,7 kΩ a 3,3 V. |
+| DS18B20 freezer | GPIO4, otro bus con su pull-up de 4,7 kΩ a 3,3 V. |
+| LED umbral, externo con resistencia | GPIO7, activo alto. |
+| LED desconexión, externo con resistencia | GPIO10, activo alto. |
+| OLED SH1106 128×64 | SDA GPIO5, SCL GPIO6; dirección 0x3c. |
+| RTC DS3231 con pila | Mismo I2C, dirección 0x68; hora guardada en UTC. |
+| Detección de alimentación | Deshabilitada (`HFR_PIN_ALIMENTACION = -1`) hasta confirmar el circuito. |
+
+Evitar GPIO18/19 (USB) y GPIO2/8/9 (arranque) en este cableado. Todos los GPIO
+trabajan a 3,3 V; revisar también los pull-up de los módulos I2C. Las sondas se
+usan con alimentación externa, sin modo parásito. La resolución es de 9 bits
+(0,5 °C); cada conversión ocupa unos 100 ms de la tarea de medición.
+
+El LED de desconexión indica **asociación a la mesh**, según la API pública.
+No distingue por sí solo una caída del broker o de AURA: se observa también la
+cola de pendientes. Tras 15 s sin mesh, o al detectar batería, se apaga la OLED
+para ahorrar energía; medir y evaluar umbrales continúa. No se usa deep sleep,
+porque la hoja debe permanecer en la mesh.
 
 ## Lo que envía a AURA
 
-El raíz publica en `hw/<hw_id>/data` un objeto `values`, su `ingest_id` estable
-y `ts` UTC cuando la placa tiene hora válida. No hay REST desde el dispositivo,
-UUID ni `tenant_id` ni `type`. RSSI, colas, alimentación y configuración van en
-estado, nunca entre las temperaturas. No se inventa un campo de una sonda que falla.
+La identidad es `hw_id = mac-<MAC de fábrica>`. El raíz publica en
+`hw/<hw_id>/data`; el firmware no contiene UUID, aula, MAC del padre ni datos
+del broker. AURA asigna el dispositivo y el aula después del alta. Todas las
+placas de este tipo llevan el mismo binario y parámetros de mesh.
 
-| Campo | Unidad | Rango físico | Valor inicial de intervalo |
+| Campo de `values` | Unidad | Rango válido | Intervalo inicial |
 |---|---|---|---|
-| temp_heladera_c | °C | -55..125; 85 se omite como centinela | 60 s |
-| temp_freezer_c | °C | -55..125; 85 se omite como centinela | 300 s |
+| `temp_heladera_c` | °C | -55…125, excepto el centinela 85 | 60 s |
+| `temp_freezer_c` | °C | -55…125, excepto el centinela 85 | 300 s |
 
-Si ambas lecturas pendientes tienen el mismo timestamp válido y corresponden
-al mismo tipo de captura, se agrupan en un mensaje. Si sus intervalos/horas son
-distintos, se envían por separado; sin hora no se supone simultaneidad.
+Se omiten lecturas fallidas, no finitas, -127 y 85; no se envían valores ficticios,
+`null` ni diagnósticos entre las temperaturas. Cuando vencen ambos intervalos,
+las dos lecturas válidas se incluyen en una muestra. En otros ciclos solo se
+envía la sonda que corresponde medir. El JSON queda por debajo de los 160 bytes
+permitidos para `values`.
 
-Una confirmación del raíz significa que AURA resolvió el ingest_id: puede ser
-persistido, duplicado, cuarentena, descartado o rechazado. No significa siempre
-que la temperatura se guardó con un dispositivo. La placa libera esos registros
-solo con la confirmación del ID correspondiente, nunca por envío aceptado o PUBACK.
+Las muestras se encolan inmediatamente tras medir; `nodo_mesh` asigna la hora
+y el `ingest_id`, y las libera con la confirmación de AURA. Si hay un RTC válido,
+se carga UTC al arrancar; la mesh ajusta el reloj. Sin RTC ni hora de la mesh,
+no se inventa una fecha: se aplica el mecanismo de uptime de la biblioteca.
 
-Falla/recuperación de sonda y alimentación usan las alertas normativas `sensor`
-y `energia`, por transición. Las alertas de umbral las calcula el conector en
-AURA. El LED evalúa ambas sondas localmente, incluso sin comunicación.
+Falla y recuperación de sonda usan `nodo_mesh_sonda()` (alerta `sensor` por
+transición). Los cambios de alimentación usan `energia` con
+`details.alimentacion = "red" | "bateria"`. Las alertas de temperatura las
+genera el conector; el LED de umbral se resuelve localmente.
 
-## Configuración
+## Configuración remota
 
-`set_config` recibe un parche: valida todo, guarda en NVS y confirma aplicado.
-Los nombres son compactos para que el reporte completo entre en los 180 bytes
-de la biblioteca. Son parámetros del dispositivo, no nuevos campos de medición.
+`set_config` valida el parche completo antes de modificar nada. Solo informa
+éxito si la escritura y el commit en NVS terminan bien. Un rechazo conserva
+los ajustes anteriores. Arranca con valores iniciales si no hay configuración
+válida guardada. No borra toda la NVS automáticamente si esta falla.
 
 | Parámetro | Significado y rango | Inicial |
 |---|---|---|
-| intervalo_s | Intervalo de heladera, entero 5..86400 s; el raíz lo usa para inferir offline | 60 |
-| f_s | Intervalo de freezer, entero 5..86400 s | 300 |
-| hlo / hhi | Mínimo/máximo de heladera, °C, -55..125, mínimo < máximo, resolución de centésima | 2 / 6 |
-| flo / fhi | Mínimo/máximo de freezer, mismas reglas | -25 / -15 |
-| r_s | Recuperación de envío sin confirmación, entero 60..86400 s | 300 |
+| `intervalo_s` | Heladera: entero 5…86400 s. También lo usa el raíz para inferir desconexión. | 60 |
+| `f_s` | Freezer: entero 5…86400 s. | 300 |
+| `hlo`, `hhi` | Mínimo y máximo de heladera, °C, -55…125, mínimo < máximo. | 2, 6 |
+| `flo`, `fhi` | Mínimo y máximo de freezer, mismas reglas. | -25, -15 |
+| `aula` | Asignada y guardada por la biblioteca de AURA; el dispositivo no la fija. | Sin asignar |
+
+Los umbrales aceptan hasta dos decimales, aunque la resolución de la sonda es
+0,5 °C. Se rechazan tipos incorrectos, nombres desconocidos, claves duplicadas
+del dispositivo y rangos invertidos. Los campos ausentes conservan su valor.
 
 ```json
-{"command":"set_config","params":{"intervalo_s":120,"f_s":600},"command_id":"iciv-1"}
+{"command":"set_config","params":{"intervalo_s":120,"f_s":600},"command_id":"hfr-1"}
 ```
 
-Se conserva el intervalo de la otra sonda si no aparece. `intervalo_s` no fuerza
-una medición del freezer. Usar command_id corto o UUID de 36 caracteres y parches
-pequeños; el comando entero debe entrar en 180 bytes. La configuración completa
-en el resultado positivo también entra con un ID de 36 caracteres. IDs más largos
-pueden hacer que la biblioteca omita config del resultado; el reporte posterior
-mantiene la configuración completa. Las limitaciones de integración se detallan en la sección Notas.
+Usar parches y `command_id` cortos: el comando completo tiene un límite de
+180 bytes. La configuración vigente se agrega mediante `describir_config`.
+El parámetro anterior `r_s` se rechaza con
+`reintentos_gestionados_por_biblioteca`: la API actual no permite cambiar esos
+tiempos. Tampoco se configuran DR, ADR ni uplinks confirmados de LoRaWAN.
 
-## Compilar y probar
+## Cola, cortes y límites pendientes de la API
 
-1. Core Arduino ESP32 3.3.11, placa XIAO_ESP32S3, USB CDC On Boot Enabled.
-2. Instalar las versiones de bibliotecas.txt; incluye ArduinoJson 7.4.3.
-3. Conservar la estructura dispositivos/ y comun/ y abrir el .ino de esta carpeta.
-   Alternativa: generar y abrir autocontenido/E1-PB-LECA-HFR01/.
-4. Crear config_local.h desde el ejemplo, sin pisar un archivo existente. Pedir
-   MESH_ID, MESH_CLAVE y canal a la cátedra. Sin esos datos mide y guarda, no comunica.
-5. Conservar partitions.csv, NVS 128 KiB y flash 8 MiB. Respaldar NVS/LittleFS si
-   la placa ya tiene datos. No cambiar tabla ni borrar flash para resolver un error.
-6. Monitor 115200: hw_id, NVS, muestras, unión de mesh y confirmaciones de AURA.
-7. Tests sin placa: make -C dispositivos/E1-PB-LECA-HFR01/tests (C++17).
-   Parser JSON real, opcional: target json con ARDUINOJSON_INCLUDE apuntando a
-   ArduinoJson/src. El CI de host estándar no requiere bibliotecas Arduino.
-8. Conector: python -m unittest discover -s conectores/E1-PB-LECA-HFR01/tests -v
-   desde la raíz del repo, Python 3.11 o posterior, sin instalar paquetes.
+La **única cola de mediciones** es la de la cátedra: hasta 400 registros en RAM
+(puede reducirse si no hay memoria), respaldo en flash cuando una muestra lleva
+5 minutos sin confirmación, recuperación tras reinicio y descarte de la más vieja
+al llenarse. En operación normal las mediciones no escriben flash. Un reinicio
+puede perder los últimos 5 minutos que todavía estaban solo en RAM; no equivale
+a persistencia inmediata de todas las lecturas.
 
-## Notas
+Para la primera captura de un corte existe además un registro pequeño, con
+UTC, máscara de validez y dos temperaturas, protegido por CRC en NVS. Se guarda
+la hora incluso si ambas sondas faltan, y se completa con la primera conversión.
+Solo se activa al configurar y conectar la entrada de alimentación. Si no hay
+hora válida, conserva `utc = 0` y no afirma conocer la hora exacta.
 
-Capacidad propia: 30 registros ordinarios por sonda + primera captura protegida
-por sonda. La hora del inicio del corte se conserva en el índice local. Un mensaje en vuelo tiene una copia adicional
-NVS y otra en la cola oficial de LittleFS. Se conserva su JSON completo para que
-un reinicio entre confirmación y limpieza no cambie los valores del mismo UUID.
-La cola oficial tiene 1440 ranuras según la base, pero este adaptador entrega un
-mensaje por vez: no convierte la capacidad de nuestro journal en 1440 lecturas.
+La API publicada el 20/10 todavía no ofrece todas las capacidades del dispositivo:
 
-Las primeras lecturas del corte llevan su hora real en ts. Si ambas sondas fallan,
-se conserva localmente journal.cutAt y se emite alerta energía, sin
-telemetría falsa. El raíz de la base fecha esa alerta al publicarla; exportar la
-hora original estructurada a AURA necesita acordarse con la cátedra.
+- **Primera captura:** la cola oficial no permite fijar un registro contra
+  overflow ni recibir un ACK correlacionado para retirarlo. El corte local no
+  se sobrescribe con cortes posteriores y se imprime al arrancar. No se lo
+  reinyecta como una medición nueva: falta una API para reenviar con su timestamp
+  original y liberar el registro al confirmarlo. Esta función requiere acordar
+  con la cátedra la continuación de [#10](https://github.com/Universidad-Nacional-de-Rafaela/aura-firmware/issues/10)
+  para ESP-IDF; no se presenta como resuelta de extremo a extremo.
+- **Reintentos:** se usan los oficiales, con espera creciente de 15 s a 5 min y
+  azar. No hay ajuste remoto de `r_s` ni un modo propio de exactamente tres
+  intentos por lectura. La detección/reconexión de la mesh la maneja la biblioteca.
+- **Alimentación dinámica:** la API recibe `alimentacion` solo al iniciar.
+  Se declara `desconocida` en status y los cambios viajan como alertas `energia`;
+  falta un setter público para actualizar también el status. No se modifica
+  el estado interno de la biblioteca.
+- **Tamaño del reporte:** el reporte oficial agrega aula, cola, modo, señal y
+  alimentación a los seis ajustes. Por ejemplo, sin aula, con los ajustes
+  iniciales, RSSI -60 y capa 3, ocupa **185 bytes**. Excede los **180 bytes** y la biblioteca
+  descarta ese evento; un resultado de comando grande puede salir sin `config`.
+  Es necesario que la cátedra amplíe o fragmente ese reporte para garantizar la
+  configuración vigente completa. No se ocultan ajustes ni se inventa otro
+  tópico para sortear el límite. Verificar `status.details.config` en el banco.
 
-Sin confirmación: envío inicial + 3 reintentos, con esperas de la base (15, 30,
-60 y 120 s antes del paso a recuperación). Luego un intento cada r_s. Si la mesh
-rechaza un envío, el presupuesto también se cuenta. La radio sigue escuchando
-comandos y la mesh gestiona su asociación automáticamente. LED 2/OLED indican
-mesh desconectada o espera de AURA agotada. No hay un ACK intermedio del raíz:
-mesh conectada no demuestra que el raíz ni el broker estén funcionando.
+## Compilar y cargar
 
-El almacenamiento de esta entrega usa iciv_hfr para el journal e iciv_aura4 para
-el mensaje en vuelo. No hay migración de formatos experimentales: ninguna versión
-anterior se instaló. Otros namespaces no se consultan ni bloquean el arranque;
-no se borra NVS ni se reemplaza la tabla de particiones. La base puede inicializar
-LittleFS si no puede montarlo: respaldarlo antes de flashear.
-Las alertas de la biblioteca usan RAM y no tienen ACK durable; la protección de
-temperaturas y del corte local no implica entrega garantizada de esas alertas.
+1. Instalar **ESP-IDF 6.1** con [EIM](https://dl.espressif.com/dl/eim/) y abrir
+   su terminal con el entorno activado. El IDE de Arduino no compila esta versión.
+2. Desde la raíz del repositorio:
 
-### Dependencia pendiente: API pública de nodo_mesh.h
+   ```powershell
+   cd dispositivos/E1-PB-LECA-HFR01
+   Copy-Item main/config_local.ejemplo.h main/config_local.h
+   ```
 
-El [issue #10 de la cátedra](https://github.com/Universidad-Nacional-de-Rafaela/aura-firmware/issues/10)
-sigue pendiente: la biblioteca debe permitir pasar la hora de medición, proteger
-la primera captura de un corte y espaciar los reintentos. Hasta que esa API esté
-publicada, comunicacion.h conserva el acceso provisional al estado interno de
-nodo_mesh, la copia persistente en vuelo y la política propia de reintentos.
-La limpieza de esta entrega no resuelve ese punto. Cuando la cátedra publique la
-API, hay que adaptar esas funciones y retirar las piezas que queden duplicadas.
-No se modifica comun/ para anticipar una API que todavía no está definida.
+3. Completar **solo** `MESH_ID_BYTES` y `MESH_AP_PASS` con los datos de la
+   cátedra. No hace falta SSID, contraseña del WiFi, broker, UUID ni aula.
+   `main/config_local.h` está ignorado por Git; no subirlo.
+4. Revisar `main/hardware.h` contra el circuito real. Los componentes externos
+   se descargan automáticamente con sus versiones declaradas.
+5. En esa carpeta:
 
-### Banco
+   ```powershell
+   idf.py set-target esp32c3
+   idf.py -p COM5 build flash monitor
+   ```
 
-La prueba física se hará cuando la cátedra valide el raíz en placa con el broker
-autenticado. El usuario y la clave MQTT corresponden al raíz y a las herramientas
-del banco; la hoja recibe los datos de la mesh y no se conecta al broker.
-Confirmar con la cátedra el alta del hw_id, los datos de mesh y el estado de AURA;
-el grupo debe definir el circuito de alimentación y ajustar el RTC.
+   Cambiar `COM5` por el puerto real. Salir del monitor con `Ctrl+]`.
+   Sin datos de mesh válidos o sin NVS, el programa conserva diagnóstico local,
+   pero no promete guardar mediciones en la cola: revisar los errores del monitor.
 
-El procesamiento de las mediciones se documenta en el [README del conector](../../conectores/E1-PB-LECA-HFR01/README.md).
-No versionar config_local.h, respaldos, claves ni ejecutables de tests.
+El proyecto usa la partición `cola` de la plantilla oficial. La distribución de
+flash cambia respecto de Arduino; no se migran colas ni ajustes experimentales
+anteriores, porque ninguna versión previa llegó a instalarse. No usar `erase-flash`
+como paso rutinario: borra ajustes, corte protegido y datos pendientes.
+
+## Pruebas
+
+En computadora, desde la raíz del repositorio:
+
+```powershell
+python dispositivos/E1-PB-LECA-HFR01/tests/probar.py
+python -m unittest discover -s conectores/E1-PB-LECA-HFR01/tests -v
+python herramientas/validar_dispositivos.py
+python herramientas/validar_conectores.py
+```
+
+Validación de software del 20/10/2026: compilación completa con **ESP-IDF 6.1.0**
+para `esp32c3`, con parámetros de mesh ficticios y sin flashear; binario de
+1.130.128 bytes, con 28 % libre en la partición de aplicación. Pasaron los tests
+de host del nodo, los 20 del conector, los 36 del SDK y ambos validadores.
+Las copias Arduino restantes coinciden con el generador oficial.
+
+Las pruebas C requieren un compilador (`cc`, `gcc`, `clang` o `--cc "zig cc"`).
+La primera ejecución descarga cJSON 1.7.19 oficial y comprueba SHA256. Cubren
+parches inválidos, límites, atomicidad, fallos de escritura/commit NVS, CRC,
+centinelas de sonda, alarma y calendario del DS3231. No simulan la radio ni
+demuestran la entrega real de la cola de la cátedra.
+
+En banco, con el raíz y el concentrador actualizados y el alta hecha por la cátedra:
+
+1. Conectar la C3 por USB a la computadora y verificar arranque, hora y ambas
+   sondas; si falta una, debe omitirse y aparecer su alerta. Verificar OLED y LEDs.
+2. Probar intervalos distintos y umbrales distintos. Cambiar un umbral debe
+   afectar al LED local aun sin red. Probar un parche inválido: no cambia nada.
+   Reiniciar y comprobar que los ajustes válidos se conservaron.
+3. Observar `hw/<hw_id>/data`, `status`, `response`, `ack` y `alerts/...` con las
+   herramientas/credenciales del banco. La configuración completa de status es
+   una verificación pendiente por el límite de tamaño explicado arriba.
+4. Cortar AURA/broker más de 5 min, dejar acumular pendientes y recuperar.
+   Verificar hora original, ingest_id y retiro únicamente tras ACK. Probar
+   reinicio con datos ya respaldados y documentar pérdidas en RAM/overflow.
+5. Con el circuito de alimentación confirmado, habilitar su GPIO y simular
+   red→batería→red. Debe apagarse OLED, capturarse el primer corte y conservarse
+   al reiniciar, incluso sin sondas. Su reenvío histórico queda pendiente de API.
+6. Probar el cambio de concentrador y la asignación de aula desde AURA. No
+   fijar el aula en el binario. Si la alimentación externa impide asociar la
+   C3, repetir con USB de computadora: la cátedra informó un problema de antena.
+
+Quedan por confirmar cableado C3, circuito red/batería, datos privados de mesh,
+alta/asignación en AURA y las extensiones de API indicadas. Autonomía de batería,
+vida útil real de flash y comportamiento físico aún no están medidos.

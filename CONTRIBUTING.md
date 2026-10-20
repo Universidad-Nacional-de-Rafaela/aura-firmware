@@ -38,9 +38,11 @@ hardware), se copia esa carpeta con el código nuevo, y la ficha dice de cuál e
 ## 2. Tu carpeta
 
 1. Hacé un **fork** de este repositorio y trabajá en una rama.
-2. Copiá [`ejemplos/plantilla_dispositivo/`](ejemplos/plantilla_dispositivo/) a
-   `dispositivos/<CÓDIGO>/`, y renombrá el `.ino` igual que la carpeta
-   (`E1-PB-LECA-HFR01.ino`): Arduino lo exige.
+2. **Mesh (interior):** copiá [`Mesh_Red_Completa/Mesh3_Hoja/`](Mesh_Red_Completa/Mesh3_Hoja/) a
+   `dispositivos/<CÓDIGO>/` (ver abajo). **LoRaWAN (exterior):** copiá
+   [`ejemplos/plantilla_dispositivo/`](ejemplos/plantilla_dispositivo/) a `dispositivos/<CÓDIGO>/`
+   y renombrá el `.ino` igual que la carpeta (`E1-AZ-TERR-TAN01.ino`): Arduino lo exige. En los
+   dos casos te llevás también la ficha (`README.md`) de la plantilla.
 3. Completá el `README.md`, que es la ficha: ubicación, responsable, hardware, campos de
    `values`, alertas, parámetros de `set_config` y su valor en esta placa.
 4. Listá en `bibliotecas.txt` cada biblioteca con su versión (`OneWire@2.3.8`). El CI instala
@@ -48,21 +50,35 @@ hardware), se copia esa carpeta con el código nuevo, y la ficha dice de cuál e
 5. Sumá el dispositivo a la tabla *Dispositivos* de `dispositivos/README.md`, y tu carpeta a
    `.github/CODEOWNERS` con los usuarios de GitHub del grupo.
 
-**Si el dispositivo va por la mesh**, la plantilla ya viene armada sobre
-[`comun/nodo_mesh.h`](comun/nodo_mesh.h). Tu placa es una **hoja**: no reenvía tráfico de otros.
-Esa biblioteca se ocupa de unirse a la mesh, de la cola en flash, del
-`ingest_id`, de reintentar hasta que AURA confirma, de `set_config` y de las alertas. A vos te
-queda escribir la medición y dos funciones: `aplicar_config()`, que valida y guarda los
-parámetros, y `describir_config()`, que devuelve la configuración vigente e incluye
-`intervalo_s`. Si tu dispositivo acciona algo, agregás `ejecutar_comando()` para tus comandos
-propios. Tu nodo no conoce su UUID ni la MAC del raíz: se identifica por la MAC de su placa.
-[`ejemplos/sensor_ejemplo/`](ejemplos/sensor_ejemplo/) es el ejemplo completo más chico, y
-[`ejemplos/actuador_ejemplo/`](ejemplos/actuador_ejemplo/) muestra un comando propio.
+**Si el dispositivo va por la mesh**, se programa en **ESP-IDF 6.1**, no en Arduino
+([ADR-007](docs/adr/ADR-007-mesh-en-esp-idf-con-concentrador-por-aula.md), desde el 2026-10-20).
+Se instala con el instalador de Espressif, [EIM](https://dl.espressif.com/dl/eim/). La placa es
+la **ESP32-C3 SuperMini** y la pone el proyecto.
 
-Para probar sin la mesh: sin `config_local.h` el sketch compila, mide y guarda en la cola, y el
-monitor serie muestra cada medición. Con la mesh y sin AURA, la cátedra levanta el raíz y
-[`herramientas/ack_falso.py`](herramientas/ack_falso.py), y con `herramientas/broker.sh datos`
-ves lo que llega.
+1. Copiá `Mesh_Red_Completa/Mesh3_Hoja/` como `dispositivos/<CÓDIGO>/`. En su `CMakeLists.txt`,
+   cambiá la ruta de los componentes a
+   `set(EXTRA_COMPONENT_DIRS "${CMAKE_CURRENT_LIST_DIR}/../../Mesh_Red_Completa/componentes")`
+   y el nombre del proyecto (`project(...)`) por tu código en minúsculas.
+2. Copiá `main/config_local.ejemplo.h` como `main/config_local.h` y completá el ID y la clave de
+   la mesh, que te da la cátedra. **No hace falta el WiFi del edificio**: solo el raíz se
+   conecta al router.
+3. En `main/main.c` escribís lo propio del dispositivo: la medición, `aplicar_config()` (valida
+   **todo** y recién después aplica y guarda), `describir_config()` (incluye `intervalo_s`) y,
+   si acciona algo, `ejecutar_comando()`. Lo demás lo hace la biblioteca
+   [`nodo_mesh`](Mesh_Red_Completa/componentes/nodo_mesh/): la unión a la mesh, el aula, la cola,
+   el `ingest_id`, los reintentos hasta que AURA confirma y la hora.
+4. `idf.py set-target esp32c3` y `idf.py -p <puerto> build flash monitor`.
+
+La guía completa (API, reglas, checklist, problemas frecuentes) es
+[`Mesh_Red_Completa/GUIA_NODOS_HOJA.md`](Mesh_Red_Completa/GUIA_NODOS_HOJA.md). El aula no va en
+el firmware: la asigna AURA con `set_config {"aula": …}`; hasta entonces la hoja manda directo al
+raíz y sus datos llegan igual. Para probar sin AURA, la cátedra levanta el banco
+([`Mesh_Red_Completa/Broker_MQTT/`](Mesh_Red_Completa/Broker_MQTT/)).
+
+> La versión Arduino de la mesh (`comun/nodo_mesh.h`, `ejemplos/sensor_ejemplo/`,
+> `ejemplos/actuador_ejemplo/`) queda **obsoleta**: no se usa para dispositivos nuevos, y los que
+> ya están escritos así se portan. El CI todavía no compila los proyectos ESP-IDF: compilalos
+> vos antes de abrir el PR.
 
 Si usás código de `comun/`, incluilo con ruta relativa (`#include "../../comun/protocolo_aura.h"`)
 y corré `herramientas/generar_autocontenidos.sh` antes de commitear. Si tu lógica se puede probar
@@ -124,6 +140,6 @@ Abrilo contra `main` de este repo. La plantilla del PR trae un checklist. El CI:
 | Códigos de dispositivos | Cada carpeta respeta el formato y el mapa, tiene su ficha y su `.ino` se llama igual |
 | Tests de host | `comun/tests`, `infraestructura/*/tests`, `herramientas/tests` y los `tests/` de cada dispositivo |
 | Conectores | Tests de `aura_sdk`, manifiesto y clase de cada conector, y sus `tests/` |
-| Compilar sketches | Compila cada sketch para XIAO ESP32S3 y verifica que `autocontenido/` esté al día |
+| Compilar sketches | Compila cada sketch para ESP32-C3 SuperMini (o para el FQBN de su `fqbn.txt`) y verifica que `autocontenido/` esté al día |
 
 Con todo en verde, la cátedra revisa y mergea.

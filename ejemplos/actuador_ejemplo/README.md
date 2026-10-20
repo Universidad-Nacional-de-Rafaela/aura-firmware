@@ -1,6 +1,6 @@
 # actuador_ejemplo
 
-Ejemplo de **actuador** sobre la mesh ESP-WIFI-MESH: acciona el LED de la XIAO ESP32S3 (GPIO 21)
+Ejemplo de **actuador** sobre la mesh ESP-WIFI-MESH: acciona el LED de la ESP32-C3 SuperMini (GPIO 8)
 con un comando propio, además de `set_config`. No necesita hardware extra.
 
 | Desde AURA (`hw/<hw_id>/command`) | Qué hace | Respuesta (`hw/<hw_id>/response`) |

@@ -35,6 +35,7 @@
 #include "protocolo_aura.h"
 #include "radio_wifi_mesh.h"
 #include "cola_persistente.h"
+#include "cola_archivos.h"
 #include "buffer_circular.h"
 #include "ingest_id.h"
 #include "nodo_mesh_logica.h"
@@ -80,7 +81,8 @@ typedef struct {
 } NodoMeshCallbacks;
 
 // ===== Estado interno =====
-#define NODO_MESH_ARCHIVO_COLA "/cola.bin"
+#define NODO_MESH_DIR_COLA "/cola"
+#define NODO_MESH_COLA_VIEJA "/cola.bin"   // hasta 2026-10: la cola en un solo archivo
 #define NODO_MESH_REINTENTO_SALTO_MS 2000UL   // la mesh no acepto el envio: reintento corto
 #define NODO_MESH_INTENTOS_EVENTO 3
 
@@ -109,47 +111,67 @@ typedef struct {
 static NodoMesh nodo_mesh;
 
 // ===== Almacenamiento de la cola en LittleFS =====
-// Abrir y cerrar en cada operacion: cerrar es lo que asegura que quedo escrito
-// en flash. A una muestra por minuto, el costo no importa.
-static inline bool nodo_mesh_fs_leer(void* ctx, uint32_t off, void* buf, uint32_t n) {
+// Un archivo por tramo de la cola (cola_archivos.h). Abrir y cerrar en cada
+// operacion: cerrar es lo que asegura que quedo escrito en flash.
+static inline String nodo_mesh_fs_ruta(uint32_t archivo) {
+  return String(NODO_MESH_DIR_COLA "/") + archivo + ".bin";
+}
+
+static inline bool nodo_mesh_fs_leer(void* ctx, uint32_t archivo, uint32_t off, void* buf, uint32_t n) {
   (void)ctx;
-  File f = LittleFS.open(NODO_MESH_ARCHIVO_COLA, "r");
+  File f = LittleFS.open(nodo_mesh_fs_ruta(archivo), "r");
   if (!f) return false;
   bool ok = f.seek(off) && f.read((uint8_t*)buf, n) == n;
   f.close();
   return ok;
 }
 
-static inline bool nodo_mesh_fs_escribir(void* ctx, uint32_t off, const void* buf, uint32_t n) {
+static inline bool nodo_mesh_fs_escribir(void* ctx, uint32_t archivo, uint32_t off, const void* buf, uint32_t n) {
   (void)ctx;
-  File f = LittleFS.open(NODO_MESH_ARCHIVO_COLA, "r+");
+  File f = LittleFS.open(nodo_mesh_fs_ruta(archivo), "r+");
   if (!f) return false;
   bool ok = f.seek(off) && f.write((const uint8_t*)buf, n) == n;
   f.close();
   return ok;
 }
 
-// El archivo se crea una vez con su tamano final, para no escribir mas alla
+// Cada archivo se crea una vez con su tamano final, para no escribir mas alla
 // del final despues.
 static inline bool nodo_mesh_fs_preparar() {
   if (!LittleFS.begin(true)) return false;
-  uint32_t necesario = cola_bytes(AURA_COLA_CAP);
-  File f = LittleFS.open(NODO_MESH_ARCHIVO_COLA, "r");
-  uint32_t actual = f ? f.size() : 0;
-  if (f) f.close();
-  if (actual >= necesario) return true;
+  // La cola vieja no se migra: lo que tuviera sin confirmar se pierde una vez,
+  // al actualizar el firmware. Ocupaba 260 KB de la particion.
+  if (LittleFS.exists(NODO_MESH_COLA_VIEJA)) {
+    Serial.println("[MESH] borrando la cola de un solo archivo (formato anterior)");
+    LittleFS.remove(NODO_MESH_COLA_VIEJA);
+  }
+  if (!LittleFS.exists(NODO_MESH_DIR_COLA) && !LittleFS.mkdir(NODO_MESH_DIR_COLA)) return false;
 
-  Serial.printf("[MESH] creando la cola en flash (%lu bytes)...\n", (unsigned long)necesario);
-  f = LittleFS.open(NODO_MESH_ARCHIVO_COLA, actual ? "a" : "w");
-  if (!f) return false;
   uint8_t ceros[512];
   memset(ceros, 0, sizeof(ceros));
-  for (uint32_t escrito = actual; escrito < necesario; ) {
-    uint32_t n = necesario - escrito < sizeof(ceros) ? necesario - escrito : sizeof(ceros);
-    if (f.write(ceros, n) != n) { f.close(); return false; }
-    escrito += n;
+  bool aviso = false;
+  for (uint32_t a = 0; a < cola_archivos_cantidad(AURA_COLA_CAP); a++) {
+    uint32_t necesario = cola_archivo_bytes(a, AURA_COLA_CAP);
+    String ruta = nodo_mesh_fs_ruta(a);
+    File f = LittleFS.open(ruta, "r");
+    uint32_t actual = f ? f.size() : 0;
+    if (f) f.close();
+    if (actual >= necesario) continue;
+
+    if (!aviso) {
+      Serial.printf("[MESH] creando la cola en flash (%lu archivos)...\n",
+                    (unsigned long)cola_archivos_cantidad(AURA_COLA_CAP));
+      aviso = true;
+    }
+    f = LittleFS.open(ruta, actual ? "a" : "w");
+    if (!f) return false;
+    for (uint32_t escrito = actual; escrito < necesario; ) {
+      uint32_t n = necesario - escrito < sizeof(ceros) ? necesario - escrito : sizeof(ceros);
+      if (f.write(ceros, n) != n) { f.close(); return false; }
+      escrito += n;
+    }
+    f.close();
   }
-  f.close();
   return true;
 }
 
@@ -410,7 +432,8 @@ static inline bool nodo_mesh_iniciar(NodoMeshCallbacks cb) {
   buffer_init(&nodo_mesh.eventos);
   aura_sondas_init(&nodo_mesh.sondas);
 
-  AlmacenAura alm = {nodo_mesh_fs_leer, nodo_mesh_fs_escribir, NULL};
+  static ArchivosAura archivos = {nodo_mesh_fs_leer, nodo_mesh_fs_escribir, NULL};
+  AlmacenAura alm = cola_archivos_almacen(&archivos);
   nodo_mesh.cola_ok = nodo_mesh_fs_preparar() && cola_abrir(&nodo_mesh.cola, alm, AURA_COLA_CAP);
   if (!nodo_mesh.cola_ok) Serial.println("[MESH] !! no se pudo abrir la cola en flash");
   else if (nodo_mesh.cola.formateada) Serial.println("[MESH] cola nueva (no habia una valida en flash)");
@@ -418,6 +441,12 @@ static inline bool nodo_mesh_iniciar(NodoMeshCallbacks cb) {
   if (!nodo_mesh.configurada) {
     // Sin mesh se puede igual desarrollar la medicion: se guarda en la cola.
     Serial.println("[MESH] AVISO: MESH_ID sin configurar (config_local.h): se mide y se guarda, no se envia");
+    return nodo_mesh.cola_ok;
+  }
+
+  if (!MESH_ROUTER_SSID[0]) {
+    // Sin el SSID la mesh no arranca: mejor seguir midiendo que reiniciar en bucle.
+    Serial.println("[MESH] !! falta MESH_ROUTER_SSID (config_local.h): se mide y se guarda, no se envia");
     return nodo_mesh.cola_ok;
   }
 

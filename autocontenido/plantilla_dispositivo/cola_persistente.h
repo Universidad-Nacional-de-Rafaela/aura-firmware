@@ -7,15 +7,15 @@
 // AURA y del propio nodo, dentro de su capacidad.
 //
 // Formato: una cabecera y AURA_COLA_CAP ranuras de MuestraAura, en anillo. El
-// almacenamiento esta abstraido: en la placa es un archivo de LittleFS y en
-// los tests de host, un arreglo en RAM.
+// almacenamiento esta abstraido: en la placa son archivos chicos de LittleFS
+// (cola_archivos.h) y en los tests de host, un arreglo en RAM.
 //
 // Orden de escritura: primero la ranura, despues la cabecera. Si se corta la
 // luz entre las dos, la cabecera vieja sigue siendo coherente y solo se pierde
 // la muestra que se estaba guardando.
 
-// 1440 muestras = 24 h a una por minuto, ~260 KB. La particion de datos del
-// XIAO ESP32S3 es de 1,5 MB.
+// 1440 muestras = 24 h a una por minuto, ~260 KB. La particion de datos por
+// defecto de la ESP32-C3 SuperMini (4 MB de flash) es de 1,5 MB.
 #ifndef AURA_COLA_CAP
 #define AURA_COLA_CAP 1440
 #endif

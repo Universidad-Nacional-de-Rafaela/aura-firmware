@@ -9,7 +9,8 @@ permissions:
   contents: read
 
 env:
-  FQBN: esp32:esp32:XIAO_ESP32S3:CDCOnBoot=cdc
+  # Placa de la mesh. Un sketch para otra placa (LoRaWAN en XIAO ESP32S3) trae su fqbn.txt.
+  FQBN: esp32:esp32:nologo_esp32c3_super_mini:CDCOnBoot=cdc
   ESP32_CORE: esp32:esp32@3.3.11
   ESP32_INDEX: https://espressif.github.io/arduino-esp32/package_esp32_index.json
 
@@ -112,8 +113,10 @@ jobs:
           for sketch in infraestructura/*/ dispositivos/*/ ejemplos/*/ herramientas/*/ autocontenido/*/; do
             nombre=$(basename "$sketch")
             [ -f "$sketch/$nombre.ino" ] || continue
-            echo "::group::$sketch"
-            if ! arduino-cli compile --fqbn "$FQBN" "$sketch"; then
+            fqbn="$FQBN"
+            [ -f "$sketch/fqbn.txt" ] && fqbn=$(tr -d ' \r\n' < "$sketch/fqbn.txt")
+            echo "::group::$sketch ($fqbn)"
+            if ! arduino-cli compile --fqbn "$fqbn" "$sketch"; then
               echo "::error::No compila: $sketch"
               fallos=1
             fi

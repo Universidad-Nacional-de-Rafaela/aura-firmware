@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tablero AURA</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --card: #ffffff; --text: #1d2330; --muted: #6b7385; --line: #e3e6ec;
+    --accent: #2f6fde; --ok: #1f9d55; --bad: #c9372c; --warn: #b7791f; --led: #3b82f6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --card: #1b2029; --text: #e6e9ef; --muted: #8d95a7; --line: #2a303c;
+      --accent: #6c9cff; --ok: #3ccf7c; --bad: #ff6b5e; --warn: #f0b429; --led: #60a5fa;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.4 system-ui, "Segoe UI", Roboto, sans-serif; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+           padding: 14px 20px; border-bottom: 1px solid var(--line); background: var(--card); }
+  header h1 { font-size: 17px; margin: 0; }
+  header .ruta { color: var(--muted); font-size: 13px; }
+  .derecha { margin-left: auto; display: flex; align-items: center; gap: 14px; font-size: 13px; color: var(--muted); }
+  .punto { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--bad);
+           margin-right: 6px; vertical-align: middle; }
+  .punto.ok { background: var(--ok); }
+  select, input { font: inherit; padding: 5px 8px; border-radius: 7px; border: 1px solid var(--line);
+                  background: var(--bg); color: var(--text); }
+  input { width: 90px; }
+  main { padding: 16px 20px; display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+         max-width: 1300px; margin: 0 auto; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; min-width: 0; }
+  .card h2 { font-size: 14px; margin: 0 0 4px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .hw { font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+  .chip { font-size: 11px; padding: 1px 8px; border-radius: 99px; border: 1px solid var(--line); color: var(--muted); font-weight: 500; }
+  .chip.online { color: var(--ok); border-color: var(--ok); }
+  .chip.offline { color: var(--bad); border-color: var(--bad); }
+  .chip.pendiente { color: var(--warn); border-color: var(--warn); }
+  .ancho { grid-column: 1 / -1; }
+  .meta { color: var(--muted); font-size: 12px; display: flex; gap: 12px; flex-wrap: wrap; margin: 4px 0 10px; }
+  .meta b { color: var(--text); font-weight: 500; }
+  .valores { display: grid; grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); gap: 10px; }
+  .valor b { display: block; font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .valor span { color: var(--muted); font-size: 12px; }
+  .led { display: inline-block; width: 16px; height: 16px; border-radius: 50%; background: var(--line); vertical-align: middle; }
+  .led.on { background: var(--led); box-shadow: 0 0 10px var(--led); }
+  .botones { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; align-items: center; }
+  button { font: inherit; padding: 5px 11px; border-radius: 7px; border: 1px solid var(--line);
+           background: var(--bg); color: var(--text); cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  .resp { margin-top: 8px; font-size: 12px; color: var(--muted); min-height: 1.4em; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  td, th { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; }
+  td.t { white-space: nowrap; color: var(--muted); font-variant-numeric: tabular-nums; }
+  td.p { font-family: ui-monospace, Consolas, monospace; word-break: break-all; }
+  .log { max-height: 360px; overflow: auto; }
+  .vacio { color: var(--muted); }
+  @media (max-width: 500px) { main, header { padding-left: 16px; padding-right: 16px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>AURA · banco de la mesh</h1>
+  <span class="ruta">hojas → concentrador → gateway → MQTT (contrato v4.0, árbol hw/)</span>
+  <span class="derecha">
+    <label>AURA falsa
+      <select id="aura" title="Qué contesta el broker a cada data (ack)">
+        <option value="ok">ok (persistido)</option>
+        <option value="sin_ack">sin_ack (base caída)</option>
+        <option value="cuarentena">cuarentena</option>
+        <option value="rechazado">rechazado</option>
+        <option value="apagada">apagada (backend real)</option>
+      </select></label>
+    <span><span id="punto" class="punto"></span><span id="conexion">conectando…</span></span>
+  </span>
+</header>
+
+<main id="placas">
+  <section class="card ancho vacio" id="sin-placas">Esperando que alguna placa publique en hw/…</section>
+</main>
+<main>
+  <section class="card ancho">
+    <h2>Mensajes</h2>
+    <div class="log"><table><thead><tr><th>hora</th><th>tópico</th><th>payload</th></tr></thead>
+      <tbody id="log"></tbody></table></div>
+  </section>
+</main>
+
+<script>
+const placas = {};          // hw_id -> {status, details, values, ts, rol, ...}
+const $ = (id) => document.getElementById(id);
+
+function hora(t) { return new Date(t * 1000).toLocaleTimeString("es-AR"); }
+
+function placa(hw) {
+  if (placas[hw]) return placas[hw];
+  $("sin-placas")?.remove();
+  const p = placas[hw] = { hw, values: null, details: {}, status: "?", ultimo: null, resp: "" };
+  const el = document.createElement("section");
+  el.className = "card";
+  el.id = "p-" + hw;
+  $("placas").appendChild(el);
+  return p;
+}
+
+function comando(hw, command, params) {
+  fetch(`/cmd?hw=${hw}&command=${command}&params=${encodeURIComponent(JSON.stringify(params))}`, { method: "POST" });
+}
+
+function dibujar(hw) {
+  const p = placas[hw];
+  const d = p.details || {};
+  const cfg = d.config || {};
+  const rol = d.rol || (p.values ? "hoja" : "nodo");
+  const aula = cfg.aula === undefined ? "–" : (cfg.aula || "sin asignar");
+  const estado = p.status === "offline" ? "offline" : (rol !== "raiz" && cfg.aula === null ? "pendiente" : p.status);
+  let html = `<h2><span class="hw">${hw}</span><span class="chip">${rol}</span>
+              <span class="chip ${estado}">${estado}</span></h2>`;
+  html += `<div class="meta">`;
+  if (rol === "raiz") {
+    html += `<span>red <b>${d.red ?? "–"}</b></span><span>canal <b>${d.canal ?? "–"}</b></span>
+             <span>nodos <b>${d.nodos_en_mesh ?? "–"}</b></span><span>publicadas <b>${d.publicadas ?? "–"}</b></span>
+             <span>confirmadas <b>${d.confirmadas ?? "–"}</b></span><span>lotes <b>${d.lotes ?? "–"}</b></span>
+             <span>uptime <b>${d.uptime_s ?? "–"} s</b></span>`;
+  } else {
+    html += `<span>aula <b>${aula}</b></span>`;
+    if (d.modo) html += `<span>modo <b>${d.modo}</b></span>`;
+    if (cfg.intervalo_s) html += `<span>intervalo <b>${cfg.intervalo_s} s</b></span>`;
+    if (d.pendientes !== undefined) html += `<span>en cola <b>${d.pendientes}</b></span><span>descartadas <b>${d.descartadas}</b></span>`;
+    if (d.hojas_aula !== undefined) html += `<span>hojas <b>${d.hojas_aula}</b></span><span>capa <b>${d.capa}</b></span>`;
+  }
+  html += `</div>`;
+  if (p.values) {
+    html += `<div class="valores">` + Object.entries(p.values).map(([k, v]) =>
+      k === "led" ? `<div class="valor"><b><span class="led ${v ? "on" : ""}"></span></b><span>led</span></div>`
+                  : `<div class="valor"><b>${typeof v === "boolean" ? (v ? "sí" : "no") : v}</b><span>${k}</span></div>`
+    ).join("") + `</div><div class="meta"><span>medido <b>${p.ts || "sin hora"}</b></span>
+      <span>llegó <b>${p.ultimo ? hora(p.ultimo) : "–"}</b></span></div>`;
+  }
+  if (rol !== "raiz") {
+    html += `<div class="botones">`;
+    if (p.values && "led" in p.values) {
+      html += `<button onclick='comando("${hw}","led",{encendido:true})'>LED on</button>
+               <button onclick='comando("${hw}","led",{encendido:false})'>LED off</button>
+               <button onclick='comando("${hw}","led",{invertir:true})'>Invertir</button>`;
+    }
+    html += `<input id="aula-${hw}" placeholder="aula" value="${cfg.aula || ""}">
+             <button onclick='comando("${hw}","set_config",{aula:document.getElementById("aula-${hw}").value})'>Asignar aula</button>`;
+    if (cfg.intervalo_s && rol === "hoja") {
+      html += `<input id="iv-${hw}" type="number" min="2" max="3600" value="${cfg.intervalo_s}">
+               <button onclick='comando("${hw}","set_config",{intervalo_s:Number(document.getElementById("iv-${hw}").value)})'>Intervalo</button>`;
+    }
+    html += `</div><div class="resp">${p.resp}</div>`;
+  }
+  const el = $("p-" + hw);
+  if (!el.contains(document.activeElement) || document.activeElement.tagName !== "INPUT") el.innerHTML = html;
+}
+
+function procesar(ev) {
+  const m = ev.topico.match(/^hw\/([a-z0-9-]+)\/(data|status|response|ack|command|alerts\/[a-z_]+)$/);
+  let datos = null;
+  try { datos = JSON.parse(ev.payload); } catch { }
+  if (!ev.retenido || ev.cliente !== "retenido") {
+    const fila = document.createElement("tr");
+    fila.innerHTML = `<td class="t">${hora(ev.t)}</td><td class="p">${ev.topico}</td><td class="p"></td>`;
+    fila.lastChild.textContent = ev.payload;
+    $("log").prepend(fila);
+    while ($("log").children.length > 200) $("log").lastChild.remove();
+  }
+  if (!m || !datos) return;
+  const [, hw, tipo] = m;
+  if (tipo === "ack" || tipo === "command") return;
+  const p = placa(hw);
+  if (tipo === "data") {
+    p.values = datos.values; p.ts = datos.ts ? new Date(datos.ts).toLocaleTimeString("es-AR") : null; p.ultimo = ev.t;
+    if (p.status === "?" || p.status === "offline") p.status = "online";
+  } else if (tipo === "status") {
+    p.status = datos.status;
+    if (datos.details && Object.keys(datos.details).length && !datos.details.motivo) p.details = datos.details;
+  } else if (tipo === "response") {
+    const det = datos.details || {};
+    p.resp = `${det.command_id || ""}: <b>${datos.status}</b>${det.motivo ? " (" + det.motivo + ")" : ""}`;
+    if (det.config) p.details = { ...p.details, config: det.config };
+  } else if (tipo.startsWith("alerts/")) {
+    p.resp = `alerta ${tipo.slice(7)}: <b>${datos.message || ""}</b>`;
+  }
+  dibujar(hw);
+}
+
+$("aura").onchange = (e) => fetch(`/aura?modo=${e.target.value}`, { method: "POST" });
+
+function conectar() {
+  const es = new EventSource("/eventos");
+  es.onopen = () => { $("punto").classList.add("ok"); $("conexion").textContent = "en vivo"; };
+  es.onerror = () => { $("punto").classList.remove("ok"); $("conexion").textContent = "reconectando…"; };
+  es.onmessage = (m) => {
+    const ev = JSON.parse(m.data);
+    if (ev.aura) { $("aura").value = ev.aura; return; }
+    procesar(ev);
+  };
+}
+conectar();
+</script>
+</body>
+</html>
