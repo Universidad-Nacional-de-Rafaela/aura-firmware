@@ -209,7 +209,7 @@ comunicación mucho tiempo): no dependen de AURA ni del concentrador.
 
 ## 3. Checklist para una hoja nueva
 
-- [ ] Copié `Mesh3_Hoja` a una carpeta nueva **al lado de `componentes/`** (el `CMakeLists.txt` la busca en `../componentes`), sin espacios ni tildes, fuera de Google Drive/OneDrive.
+- [ ] Copié `Mesh3_Hoja` como `dispositivos/<CÓDIGO>/` y en su `CMakeLists.txt` apunté `EXTRA_COMPONENT_DIRS` a `../../Mesh_Red_Completa/componentes` (ver `CONTRIBUTING.md`). Ruta sin espacios ni tildes, fuera de Google Drive/OneDrive.
 - [ ] Cambié el nombre en `project(...)` del `CMakeLists.txt` raíz.
 - [ ] Copié `main/config_local.ejemplo.h` como `main/config_local.h` y completé el ID y la clave de la mesh (los da la cátedra; **no se sube**).
 - [ ] Ajusté `sdkconfig.defaults` a la placa (target, flash), mantuve `partitions.csv` con la partición `cola` y borré `sdkconfig` y `build`.
@@ -250,7 +250,7 @@ Después de cambiar un parámetro hay que **recompilar y grabar todos los firmwa
 
 | Parámetro | Valor actual | Dónde | Efecto / cuidado |
 |---|---|---|---|
-| `REDES_WIFI` | `Personal-419`, `IngComputacion` (claves en el archivo) | Gc | Lista `{"SSID", "clave"}` en orden de preferencia (2,4 GHz, sin portal de login ni aislamiento de clientes). Usa la primera al alcance; si queda 5 min sin router (`REINICIO_SIN_ROUTER_MS`), se reinicia y empieza por la siguiente. |
+| `REDES_WIFI` | las redes del edificio (las da la cátedra; claves en el archivo) | Gc | Lista `{"SSID", "clave"}` en orden de preferencia (2,4 GHz, sin portal de login ni aislamiento de clientes). Usa la primera al alcance; si queda 5 min sin router (`REINICIO_SIN_ROUTER_MS`), se reinicia y empieza por la siguiente. |
 | `BROKER_URI` | `""` | Gc | Vacío = prueba el **último broker que le anduvo en esa red** (NVS) y, si falla 3 veces, lo busca por broadcast UDP. `"mqtt://IP:puerto"` = fijo (Mosquitto, servidor de AURA). |
 | `MQTT_USUARIO`, `MQTT_CLAVE` | vacíos (anónimo) | Gc | El broker de aura-app no acepta anónimos: usuario `raiz` y la clave de su `.env`. |
 | `PUERTO_DESCUBRIMIENTO` | `18830` (UDP) | G **y** PC | Tiene que coincidir con `broker.py`. |

@@ -7,6 +7,10 @@ credenciales.h
 
 # Compilación
 build/
+# ESP-IDF: se generan al compilar
+sdkconfig
+sdkconfig.old
+managed_components/
 *.bin
 *.elf
 

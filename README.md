@@ -29,8 +29,9 @@ Según [ADR-003](docs/adr/ADR-003-dos-transportes-mesh-interior-lorawan-exterior
 
 | Carpeta | Qué hay | Quién la mantiene |
 |---|---|---|
-| [`comun/`](comun/) | Trama de la mesh, `nodo_mesh.h` (la biblioteca de las hojas), cola persistente, `ingest_id`, radio ESP-WIFI-MESH, y sus tests de host; `python/aura_sdk/`, la biblioteca de los conectores | cátedra |
-| [`infraestructura/`](infraestructura/) | `nodo_raiz` y `nodo_relevo` de la mesh, con sus `config_local.h.example` | cátedra |
+| [`Mesh_Red_Completa/`](Mesh_Red_Completa/) | **La mesh de interior, en ESP-IDF**: raíz (`Mesh3_Gateway`), concentrador del aula (`Mesh3_Intermedio`), la biblioteca de las hojas (`componentes/nodo_mesh`), la hoja de ejemplo (`Mesh3_Hoja`), el banco en Python y la [guía para hacer hojas](Mesh_Red_Completa/GUIA_NODOS_HOJA.md) | cátedra |
+| [`comun/`](comun/) | `python/aura_sdk/`, la biblioteca de los conectores; la trama de la mesh y sus tests de host. La mesh en Arduino (`nodo_mesh.h`, radio ESP-WIFI-MESH) queda **obsoleta** | cátedra |
+| [`infraestructura/`](infraestructura/) | `nodo_raiz` y `nodo_relevo` de la mesh en Arduino: **obsoletos**, reemplazados por `Mesh_Red_Completa/` | cátedra |
 | [`conectores/`](conectores/) | **Un conector por dispositivo**: el código que procesa sus datos dentro de AURA (valida, guarda, alerta, predice), en Python | cada grupo |
 | [`dispositivos/`](dispositivos/) | **Una carpeta por dispositivo, con todo adentro** (firmware, ficha, bibliotecas, tests), nombrada con su código de ubicación (`E1-PB-LECA-HFR01`); y el mapa de códigos | cada grupo |
 | [`ejemplos/`](ejemplos/) | Firmware: `plantilla_dispositivo/`, `sensor_ejemplo/` (una medición) y `actuador_ejemplo/` (un comando). Conectores: `plantilla_conector/` y `conector_ejemplo/` | cátedra |
@@ -40,26 +41,31 @@ Según [ADR-003](docs/adr/ADR-003-dos-transportes-mesh-interior-lorawan-exterior
 
 ## Estado
 
-La mesh implementa la **versión 4.0 del contrato** sobre **ESP-WIFI-MESH** (trama v3).
-
-> ⚠️ **Compilado y con tests de host, pero todavía sin probar en placa.** Lo que falta verificar
-> está en [`docs/mesh-wifi/estado-de-banco.md`](docs/mesh-wifi/estado-de-banco.md). La versión
-> anterior, sobre ESP-NOW y probada en placa, está en el tag `mesh-espnow-v2`.
+La mesh implementa la **versión 4.1 del contrato** sobre **ESP-WIFI-MESH** (trama v3), en
+**ESP-IDF nativo** desde el 2026-10-20
+([ADR-007](docs/adr/ADR-007-mesh-en-esp-idf-con-concentrador-por-aula.md)): ver
+[`Mesh_Red_Completa/`](Mesh_Red_Completa/). Probada en placa de punta a punta; falta una prueba
+larga. La versión en Arduino (`comun/nodo_mesh.h`, `infraestructura/`) queda obsoleta, y su
+registro de pruebas, en [`docs/mesh-wifi/estado-de-banco.md`](docs/mesh-wifi/estado-de-banco.md).
+La mesh sobre ESP-NOW está en el tag `mesh-espnow-v2`.
 
 - Cada dispositivo se identifica por la **MAC de su placa** (`hw_id` `mac-…`): no conoce su
   UUID en AURA ni la MAC del raíz. AURA asigna la placa a su dispositivo.
 - La telemetría sale por el raíz a `hw/<hw_id>/data`. AURA contesta en `hw/<hw_id>/ack` cuando
   la guardó, y recién ahí el raíz se la confirma a la hoja.
-- Cada hoja guarda sus muestras en flash con su `ingest_id` antes de enviarlas, y las conserva
-  hasta esa confirmación: un corte del raíz, del WiFi o de AURA no pierde datos, dentro de la
-  capacidad de la cola (24 h a una muestra por minuto).
+- Cada hoja guarda sus muestras en una cola en RAM con su `ingest_id` antes de enviarlas, y las
+  conserva hasta esa confirmación. Lo que pasa 5 min sin confirmar se respalda en flash y
+  sobrevive a un reinicio de la hoja. En marcha normal no se escribe la flash.
+- Cada aula tiene un **concentrador**, padre de las hojas de esa aula. El aula la asigna AURA con
+  `set_config {"aula": …}`: no está en el firmware, y todas las hojas de un tipo llevan el mismo
+  binario. Las hojas no necesitan el WiFi del edificio.
 - `set_config` y los comandos propios llegan a la hoja, que responde con el resultado y la
   configuración vigente (`aplicado` o `rechazado`). Hay reportes de estado, alertas de sonda una
   vez por cambio y offline inferido.
 
-Un dispositivo de la mesh se arma sobre [`comun/nodo_mesh.h`](comun/nodo_mesh.h): ver
-[`ejemplos/sensor_ejemplo/`](ejemplos/sensor_ejemplo/), [`ejemplos/actuador_ejemplo/`](ejemplos/actuador_ejemplo/)
-y la plantilla. El diseño está en [`docs/mesh-wifi/`](docs/mesh-wifi/).
+Un dispositivo de la mesh se arma copiando [`Mesh_Red_Completa/Mesh3_Hoja/`](Mesh_Red_Completa/Mesh3_Hoja/),
+sobre la biblioteca `nodo_mesh`: ver la [guía](Mesh_Red_Completa/GUIA_NODOS_HOJA.md) y
+[`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 El backend de aura-app ya escucha el árbol `hw/` de la v4.0 y publica el `ack`. Su broker no
 acepta anónimos: el raíz entra con el usuario `raiz` (ver
@@ -76,7 +82,11 @@ compila, corre los tests, valida los códigos y busca secretos.
 
 ## Compilar
 
-La mesh corre en **ESP32-C3 SuperMini** (placa "Nologo ESP32C3 Super Mini" en el IDE) con
+**Mesh (ESP-IDF 6.1, instalador [EIM](https://dl.espressif.com/dl/eim/)):** desde la carpeta del
+proyecto, `idf.py set-target esp32c3` (o `esp32s3` para el raíz y el concentrador) y
+`idf.py -p <puerto> build flash monitor`. Detalle en [`Mesh_Red_Completa/README.md`](Mesh_Red_Completa/README.md).
+
+**LoRaWAN y la mesh en Arduino (obsoleta):** la mesh en Arduino corría en **ESP32-C3 SuperMini** (placa "Nologo ESP32C3 Super Mini" en el IDE) con
 **USB CDC On Boot: Enabled** (sin eso el monitor serie queda mudo), core `esp32:esp32` 3.3.11. La
 XIAO ESP32S3 es la placa de los nodos LoRaWAN. Con `arduino-cli`:
 

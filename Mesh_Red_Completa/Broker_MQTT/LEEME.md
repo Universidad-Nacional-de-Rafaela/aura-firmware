@@ -122,7 +122,7 @@ al volver; lo más reciente se pierde si se la desenchufa.
 
 ## Resultado con el contrato v4.0 (20/10/2026)
 
-- ✅ Gateway: red `Personal-419` de la lista, broker guardado en 0,1 s, publica en `hw/`, status propio con LWT.
+- ✅ Gateway: primera red de la lista, broker guardado en 0,1 s, publica en `hw/`, status propio con LWT.
 - ✅ Hoja sin aula: entra directo a la raíz y sus datos llegan como `hw/mac-907069add964/data` (pendiente para AURA).
 - ✅ Cola (entonces en flash; desde la tarde, en RAM): al conectarse vació 96 mediciones guardadas, todas con `ts`.
 - ✅ Asignación de aula desde el tablero: `transmitido` → `recibido` → `aplicado` con la config vigente, en hoja y concentrador.
@@ -150,6 +150,6 @@ al volver; lo más reciente se pierde si se la desenchufa.
 ## Resultados anteriores (formato JSON propio, 19–20/10/2026)
 
 - La malla funcionó toda una noche sin reinicios (~8 h, n = 14 181, sin mensajes perdidos).
-- LED ida y vuelta con `led_blink.py`: 14 a 27 ms en la red de la casa; 77–242 ms en la red de la facultad (IngComputacion, canal 1).
+- LED ida y vuelta con `led_blink.py`: 14 a 27 ms en la red de la casa; 77–242 ms en la red de la facultad (canal 1).
 - Alcance de la hoja (C3 SuperMini): ~3 m con una pared a 10 dBm; ~10 m a través de una vidriera con antena de alambre de 31 mm
   y 15 dBm. Con la antena y 19,5 dBm andaba solo conectada a la PC.
