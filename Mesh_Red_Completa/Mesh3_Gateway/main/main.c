@@ -18,16 +18,19 @@
  *   nodos conocidos con {"dest":"<id>","hora":<ms desde 1970, UTC>} (también apenas
  *   aparece un nodo o cambia de ruta). Así cada medición sale con su marca de tiempo.
  * - Los JSON se leen y se arman con cJSON (componente espressif/cjson).
- * - Broker: si BROKER_URI (credenciales.h) está vacío, lo busca solo preguntando por
+ * - Broker: si BROKER_URI (credenciales.h) está vacío, primero prueba la última dirección
+ *   que le anduvo en esa red (guardada en NVS); si no conecta, lo busca preguntando por
  *   broadcast UDP "AURA_BROKER?" (broker.py contesta). Si pierde el broker
  *   FALLOS_PARA_REBUSCAR veces seguidas, lo vuelve a buscar (p. ej. si cambió la IP).
- * - Es el ÚNICO nodo que depende del WiFi: para cambiar de red se edita
- *   credenciales.h y se regraba solo el gateway.
+ * - Es el ÚNICO nodo que depende del WiFi. Conoce una LISTA de redes (REDES_WIFI en
+ *   credenciales.h): al arrancar usa la primera de la lista que esté al alcance. Si se
+ *   queda sin router REINICIO_SIN_ROUTER_MS, se reinicia para volver a elegir.
  *
  * MESH_ID y MESH_AP_PASS deben ser IGUALES en todos los nodos.
  * El canal no es fijo: la malla usa el canal de 2,4 GHz del router.
  */
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
 #include <time.h>
@@ -36,6 +39,8 @@
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_err.h"
+#include "esp_attr.h"
+#include "esp_system.h"
 #include "esp_mac.h"
 #include "esp_event.h"
 #include "esp_netif.h"
@@ -68,15 +73,33 @@ static const uint8_t MESH_ID[6] = {MESH_ID_BYTES};
 #define PERIODO_HORA_MS     60000                /* cada cuánto se reparte la hora */
 #define PUERTO_DESCUBRIMIENTO 18830              /* UDP; tiene que coincidir con broker.py */
 #define FALLOS_PARA_REBUSCAR  3                  /* desconexiones seguidas -> volver a buscar el broker */
+#define REINICIO_SIN_ROUTER_MS (5 * 60 * 1000)   /* sin router tanto tiempo -> reiniciar y elegir otra red (0 = nunca) */
+#define NVS_ESPACIO         "gateway"            /* NVS: último broker que anduvo en cada red */
+
+typedef struct {
+    const char *ssid;
+    const char *clave;
+} red_wifi_t;
+
+static const red_wifi_t REDES[] = { REDES_WIFI };
+#define CANT_REDES          (sizeof(REDES) / sizeof(REDES[0]))
 
 static const char *TAG = "GATEWAY";
+static int red_actual = -1;                      /* índice en REDES; -1 = ninguna al alcance */
+/* Sobrevive al esp_restart() (no a un corte de luz): la red que falló, para empezar por la siguiente */
+#define RTC_MAGICO          0x41555241u          /* "AURA" */
+static RTC_NOINIT_ATTR uint32_t rtc_magico;
+static RTC_NOINIT_ATTR int rtc_red_fallida;
+static volatile TickType_t sin_router_desde = 0; /* 0 = conectado al router */
 static uint8_t rx_buf[1500];
 static esp_netif_t *netif_sta = NULL;
 static esp_mqtt_client_handle_t mqtt = NULL;
 static volatile bool mqtt_conectado = false;
 static volatile bool tiene_ip = false;
 static volatile bool buscar_broker = false;     /* lo atiende tarea_broker */
+static volatile bool probar_guardado = false;   /* antes del broadcast, probar el broker guardado */
 static volatile int fallos_mqtt = 0;
+static char uri_broker[64];                      /* dirección con la que arrancó el cliente MQTT */
 static volatile bool repartir_hora_ya = false;
 
 /* ------------------------------------------------------------------ */
@@ -254,6 +277,50 @@ static void tarea_hora(void *arg)
 }
 
 /* ------------------------------------------------------------------ */
+/*  Último broker que anduvo, uno por red (NVS)                        */
+/* ------------------------------------------------------------------ */
+static void clave_broker(char *clave, size_t tam)
+{
+    snprintf(clave, tam, "broker%d", red_actual);
+}
+
+static bool broker_guardado_leer(char *uri, size_t tam)
+{
+    if (red_actual < 0) {
+        return false;
+    }
+    nvs_handle_t h;
+    if (nvs_open(NVS_ESPACIO, NVS_READONLY, &h) != ESP_OK) {
+        return false;
+    }
+    char clave[16];
+    clave_broker(clave, sizeof(clave));
+    size_t largo = tam;
+    bool ok = nvs_get_str(h, clave, uri, &largo) == ESP_OK && uri[0] != '\0';
+    nvs_close(h);
+    return ok;
+}
+
+/* Se llama al conectar: solo escribe si la dirección cambió (cuida la flash) */
+static void broker_guardado_escribir(const char *uri)
+{
+    char previo[64];
+    if (red_actual < 0 || (broker_guardado_leer(previo, sizeof(previo)) && strcmp(previo, uri) == 0)) {
+        return;
+    }
+    nvs_handle_t h;
+    if (nvs_open(NVS_ESPACIO, NVS_READWRITE, &h) != ESP_OK) {
+        return;
+    }
+    char clave[16];
+    clave_broker(clave, sizeof(clave));
+    if (nvs_set_str(h, clave, uri) == ESP_OK && nvs_commit(h) == ESP_OK) {
+        ESP_LOGI(TAG, "Broker guardado para la red %s: %s", REDES[red_actual].ssid, uri);
+    }
+    nvs_close(h);
+}
+
+/* ------------------------------------------------------------------ */
 /*  MQTT                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -295,6 +362,9 @@ static void manejador_mqtt(void *arg, esp_event_base_t base, int32_t id, void *e
         fallos_mqtt = 0;
         buscar_broker = false;                 /* volvió solo: no hace falta seguir buscando */
         ESP_LOGI(TAG, "MQTT conectado");
+        if (BROKER_URI[0] == '\0') {
+            broker_guardado_escribir(uri_broker);
+        }
         esp_mqtt_client_subscribe(mqtt, TOPICO_CMD_PREFIJO "+", 0);
         break;
     case MQTT_EVENT_DATA:
@@ -369,10 +439,14 @@ static bool descubrir_broker(char *uri, size_t tam)
     return true;
 }
 
-/* Busca el broker cuando hace falta y (re)arranca el cliente MQTT con esa dirección */
+/*
+ * Busca el broker cuando hace falta y (re)arranca el cliente MQTT con esa dirección.
+ * Orden: BROKER_URI fija; si no hay, el último broker que anduvo en esta red (una vez
+ * por conexión al router); si ese falla FALLOS_PARA_REBUSCAR veces, el broadcast.
+ */
 static void tarea_broker(void *arg)
 {
-    static char uri[64];
+    char *uri = uri_broker;
     int intentos = 0;
 
     while (true) {
@@ -381,8 +455,11 @@ static void tarea_broker(void *arg)
             continue;
         }
         if (BROKER_URI[0] != '\0') {
-            strlcpy(uri, BROKER_URI, sizeof(uri));          /* dirección fija */
-        } else if (!descubrir_broker(uri, sizeof(uri))) {
+            strlcpy(uri, BROKER_URI, sizeof(uri_broker));   /* dirección fija */
+        } else if (probar_guardado && broker_guardado_leer(uri, sizeof(uri_broker))) {
+            probar_guardado = false;
+            ESP_LOGI(TAG, "Pruebo el último broker que anduvo en esta red (si no responde, lo busco)");
+        } else if (!descubrir_broker(uri, sizeof(uri_broker))) {
             if (++intentos % 5 == 1) {
                 ESP_LOGW(TAG, "No encuentro el broker (¿broker.py corriendo? ¿misma red? ¿firewall?)");
             }
@@ -507,6 +584,9 @@ static void manejador_eventos_mesh(void *arg, esp_event_base_t base,
     case MESH_EVENT_PARENT_DISCONNECTED: {
         mesh_event_disconnected_t *d = (mesh_event_disconnected_t *)event_data;
         ESP_LOGW(TAG, "Sin conexión al router (motivo %d), reintentando...", d->reason);
+        if (sin_router_desde == 0) {
+            sin_router_desde = xTaskGetTickCount() | 1;   /* | 1: nunca 0, que es "conectado" */
+        }
         break;
     }
     case MESH_EVENT_CHILD_CONNECTED: {
@@ -537,38 +617,83 @@ static void manejador_ip(void *arg, esp_event_base_t base, int32_t id, void *eve
     ip_event_got_ip_t *e = (ip_event_got_ip_t *)event_data;
     ESP_LOGI(TAG, "IP del gateway: " IPSTR, IP2STR(&e->ip_info.ip));
     iniciar_sntp();
+    sin_router_desde = 0;
     tiene_ip = true;
+    probar_guardado = true;                      /* primero, el último broker que anduvo en esta red */
     buscar_broker = true;                        /* IP nueva (quizás otra red): buscar el broker */
 }
 
-/* Busca el router en 2,4 GHz para conocer su canal y BSSID */
-static bool buscar_router(uint8_t *canal, uint8_t bssid[6])
+/* Si el router no vuelve en REINICIO_SIN_ROUTER_MS, reinicia para elegir otra red de la lista */
+static void tarea_router(void *arg)
 {
+    while (true) {
+        vTaskDelay(pdMS_TO_TICKS(5000));
+        TickType_t desde = sin_router_desde;
+        if (REINICIO_SIN_ROUTER_MS > 0 && desde != 0 &&
+            (xTaskGetTickCount() - desde) >= pdMS_TO_TICKS(REINICIO_SIN_ROUTER_MS)) {
+            ESP_LOGW(TAG, "%d min sin router: reinicio para volver a elegir red",
+                     REINICIO_SIN_ROUTER_MS / 60000);
+            rtc_red_fallida = red_actual;        /* al volver se empieza por la siguiente */
+            rtc_magico = RTC_MAGICO;
+            vTaskDelay(pdMS_TO_TICKS(200));
+            esp_restart();
+        }
+    }
+}
+
+/*
+ * Elige la red: la primera de REDES_WIFI que esté al alcance en 2,4 GHz (el orden
+ * de la lista es la preferencia). Si se reinició porque una red no anduvo, empieza
+ * por la siguiente a esa, y la que falló queda última. De la red elegida toma el AP
+ * con mejor señal, para conocer su canal y su BSSID.
+ * Devuelve el índice en REDES, o -1 si no ve ninguna.
+ */
+static int buscar_router(uint8_t *canal, uint8_t bssid[6])
+{
+    int inicio = 0;
+    if (rtc_magico == RTC_MAGICO && rtc_red_fallida >= 0 && rtc_red_fallida < (int)CANT_REDES) {
+        inicio = (rtc_red_fallida + 1) % CANT_REDES;
+        ESP_LOGW(TAG, "La red %s no anduvo: empiezo por la siguiente de la lista",
+                 REDES[rtc_red_fallida].ssid);
+    }
+    rtc_magico = 0;
+
     wifi_scan_config_t sc = {
-        .ssid = (uint8_t *)ROUTER_SSID,
         .show_hidden = false,
     };
     if (esp_wifi_scan_start(&sc, true) != ESP_OK) {
-        return false;
+        return -1;
     }
-    uint16_t n = 10;
-    wifi_ap_record_t ap[10];
+    uint16_t n = 0;
+    esp_wifi_scan_get_ap_num(&n);
+    wifi_ap_record_t *ap = calloc(n ? n : 1, sizeof(wifi_ap_record_t));
+    if (ap == NULL) {
+        esp_wifi_clear_ap_list();
+        return -1;
+    }
     esp_wifi_scan_get_ap_records(&n, ap);
 
-    int mejor = -1;
-    for (int i = 0; i < n; i++) {
-        ESP_LOGI(TAG, "Router visto: %s " MACSTR " canal %d RSSI %d",
-                 (char *)ap[i].ssid, MAC2STR(ap[i].bssid), ap[i].primary, ap[i].rssi);
-        if (mejor < 0 || ap[i].rssi > ap[mejor].rssi) {
-            mejor = i;
+    int red = -1, mejor = -1;
+    for (int k = 0; k < CANT_REDES && red < 0; k++) {
+        int r = (inicio + k) % CANT_REDES;
+        for (int i = 0; i < n; i++) {
+            if (strcmp((char *)ap[i].ssid, REDES[r].ssid) != 0) {
+                continue;
+            }
+            ESP_LOGI(TAG, "Router visto: %s " MACSTR " canal %d RSSI %d",
+                     (char *)ap[i].ssid, MAC2STR(ap[i].bssid), ap[i].primary, ap[i].rssi);
+            if (mejor < 0 || ap[i].rssi > ap[mejor].rssi) {
+                mejor = i;
+                red = r;
+            }
         }
     }
-    if (mejor < 0) {
-        return false;
+    if (red >= 0) {
+        *canal = ap[mejor].primary;
+        memcpy(bssid, ap[mejor].bssid, 6);
     }
-    *canal = ap[mejor].primary;
-    memcpy(bssid, ap[mejor].bssid, 6);
-    return true;
+    free(ap);
+    return red;
 }
 
 void app_main(void)
@@ -591,18 +716,26 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_wifi_init(&wcfg));
     ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    /* Argentina: canales 1 a 13 (con el país por defecto, "01", solo 1 a 11). Sin 802.11d,
+       para que un AP no lo cambie. */
+    ESP_ERROR_CHECK(esp_wifi_set_country_code("AR", false));
     ESP_ERROR_CHECK(esp_wifi_start());
 
-    /* Antes de armar la malla se busca el router para usar su canal */
+    /* Antes de armar la malla se elige la red y se busca su router para usar su canal */
     uint8_t canal = CANAL_SIN_ROUTER;
     uint8_t bssid[6] = {0};
-    bool hay_router = buscar_router(&canal, bssid);
+    red_actual = buscar_router(&canal, bssid);
+    bool hay_router = red_actual >= 0;
+    const red_wifi_t *red = &REDES[hay_router ? red_actual : 0];
     if (hay_router) {
-        ESP_LOGI(TAG, "Router %s en canal %d", ROUTER_SSID, canal);
+        ESP_LOGI(TAG, "Red elegida: %s (%d de %d en la lista), canal %d",
+                 red->ssid, red_actual + 1, (int)CANT_REDES, canal);
     } else {
-        ESP_LOGW(TAG, "No se encontró %s en 2,4 GHz; malla en canal %d sin MQTT",
-                 ROUTER_SSID, canal);
+        ESP_LOGW(TAG, "No se ve ninguna de las %d redes de la lista en 2,4 GHz; malla en canal %d sin MQTT",
+                 (int)CANT_REDES, canal);
     }
+    /* Cuenta como "sin router" hasta que tome IP: si la clave está mal, también reinicia y prueba otra */
+    sin_router_desde = xTaskGetTickCount() | 1;
 
     ESP_ERROR_CHECK(esp_mesh_init());
     ESP_ERROR_CHECK(esp_event_handler_register(MESH_EVENT, ESP_EVENT_ANY_ID,
@@ -619,9 +752,9 @@ void app_main(void)
     cfg.channel = canal;
     cfg.allow_channel_switch = false;
 
-    cfg.router.ssid_len = strlen(ROUTER_SSID);
-    memcpy(cfg.router.ssid, ROUTER_SSID, cfg.router.ssid_len);
-    memcpy(cfg.router.password, ROUTER_PASS, strlen(ROUTER_PASS));
+    cfg.router.ssid_len = strlen(red->ssid);
+    memcpy(cfg.router.ssid, red->ssid, cfg.router.ssid_len);
+    memcpy(cfg.router.password, red->clave, strlen(red->clave));
     if (hay_router) {
         memcpy(cfg.router.bssid, bssid, 6);            /* fija el BSSID de 2,4 GHz */
     }
@@ -637,5 +770,6 @@ void app_main(void)
     xTaskCreate(tarea_recepcion, "mesh_rx", 6144, NULL, 5, NULL);
     xTaskCreate(tarea_hora, "hora", 4096, NULL, 4, NULL);
     xTaskCreate(tarea_broker, "broker", 4096, NULL, 4, NULL);
+    xTaskCreate(tarea_router, "router", 2048, NULL, 3, NULL);
     ESP_LOGI(TAG, "Gateway listo en canal %d. Esperando nodos...", canal);
 }

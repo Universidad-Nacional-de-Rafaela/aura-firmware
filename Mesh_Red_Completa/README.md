@@ -3,10 +3,14 @@
 Prototipo **completo y probado en placas** de la red de un aula, de punta a punta: hoja → concentrador del aula →
 gateway (raíz) → MQTT → tablero, y las órdenes en sentido inverso. Está hecho en **ESP-IDF 6.1** (C, sin Arduino).
 
-> **Ojo:** es un banco de pruebas, separado del firmware oficial del repositorio (`infraestructura/`, `dispositivos/` y
-> `comun/`, en Arduino). Todavía **no** respeta [`docs/CONTRATO_MQTT.md`](../docs/CONTRATO_MQTT.md): usa un JSON propio,
-> descrito en la guía. Sirve para probar la arquitectura (modo aula, plan B, reemplazo de placas sin reprogramar, hora,
-> descubrimiento del broker) antes de llevarla al firmware oficial.
+> **⚠️ Desde el 2026-10-20, esta es la base de la mesh de AURA.** Todos los nodos de la mesh (raíz, concentradores y
+> las hojas de los grupos) pasan a **ESP-IDF nativo** con esta estructura. La versión Arduino de `main`
+> (`infraestructura/`, `comun/radio_wifi_mesh.h`, `comun/nodo_mesh.h`) **se reemplaza** por esta, así que quien trabaje
+> sobre la mesh tiene que pasarse a este formato. Motivo: la capa `WiFi.h` de Arduino se pelea con `esp_mesh`
+> (reconexión propia, credenciales en la NVS) y no deja elegir el padre por aula.
+>
+> **Todavía no cumple** [`docs/CONTRATO_MQTT.md`](../docs/CONTRATO_MQTT.md) (v4.0): usa un JSON propio, descrito en la
+> guía. Lo que falta está en [Adaptación al contrato v4.0](#adaptación-al-contrato-v40), al final.
 
 ```
                         broker MQTT (Broker_MQTT/broker.py) + tablero web
@@ -57,7 +61,7 @@ Google Drive y OneDrive.
 1. **Configuración local (no se sube al repo):**
    - En los tres proyectos, copiar `main/config_local.ejemplo.h` como `main/config_local.h` y completar `MESH_ID_BYTES` y
      `MESH_AP_PASS`. Los da la cátedra y tienen que ser **iguales en los tres**. Sin ese archivo, la compilación avisa con un error.
-   - En el gateway, copiar `main/credenciales.ejemplo.h` como `main/credenciales.h` y poner `ROUTER_SSID` y `ROUTER_PASS`.
+   - En el gateway, copiar `main/credenciales.ejemplo.h` como `main/credenciales.h` y completar `REDES_WIFI`: una o más redes `{"SSID", "clave"}`, en orden de preferencia.
      La red tiene que ser de **2,4 GHz**, sin portal de login y sin aislamiento de clientes. Si `BROKER_URI` queda vacío,
      el gateway encuentra el broker solo.
 2. **Compilar y grabar** cada proyecto, desde su carpeta:
@@ -72,7 +76,10 @@ Google Drive y OneDrive.
    Abrir http://localhost:8080. En alrededor de un minuto aparecen los datos de la hoja y del concentrador. Los botones del
    tablero (o `python Broker_MQTT/led_blink.py`) comandan el LED de la hoja, y el botón BOOT del concentrador también.
 
-Para cambiar de red WiFi se edita **solo** `credenciales.h` y se regraba **solo el gateway**: ningún otro nodo depende del WiFi.
+Para cambiar o agregar una red WiFi se edita **solo** `credenciales.h` y se regraba **solo el gateway**: ningún otro nodo
+depende del WiFi. El gateway usa la primera red de la lista que esté al alcance. Si se queda 5 minutos sin router, se
+reinicia y empieza por la siguiente. Para el broker, primero prueba la última dirección que le anduvo en esa red (guardada
+en la NVS) y, si no responde, lo busca por broadcast.
 
 ## Tópicos MQTT
 
@@ -100,3 +107,24 @@ Para cambiar de red WiFi se edita **solo** `credenciales.h` y se regraba **solo 
   Ver la guía, sección 6.
 
 Los resultados con fecha y los detalles están en [`Broker_MQTT/LEEME.md`](Broker_MQTT/LEEME.md).
+
+## Adaptación al contrato v4.0
+
+Decisiones del 2026-10-20 para llevar este prototipo al contrato. Se **mantiene** lo que ya hace mejor que la versión
+Arduino: ESP-IDF nativo, `esp-mqtt` en su propia tarea, concentrador por aula anunciado en el beacon, plan B, vigilante de
+envío, hojas sin datos del WiFi del edificio y descubrimiento del broker.
+
+| Tema | Decisión |
+|---|---|
+| Formato dentro de la mesh | **Trama binaria v3** de [`comun/protocolo_aura.h`](../comun/protocolo_aura.h): cabecera de 5 B (versión, tipo, `seq`, largo) con `values` en JSON adentro. Ocupa menos tiempo de aire que el JSON actual y se valida antes de interpretarla. |
+| Tipos | Los de la v3 (TELEMETRÍA, COMANDO, CONFIRMACIÓN, RESULTADO, REPORTE, ALERTA), más dos internos de la mesh que AURA no ve: **LOTE** (varias muestras en una trama, para vaciar la cola y para que el concentrador empaquete) y **HORA** (la hoja la pide al arrancar). |
+| Sin duplicados | Cada dato viaja **una sola vez**. En modo aula, la hoja se lo manda a su concentrador, que lo ve, puede filtrarlo o empaquetarlo, y lo reenvía una vez a la raíz. Nunca se manda una copia a la raíz y otra al concentrador. |
+| Identidad | `hw_id = mac-<MAC de la hoja>`, como pide el contrato. Como el concentrador reenvía, **la MAC de la hoja viaja dentro de la trama**, y la raíz publica con esa y no con la de quien le entregó el paquete. El `id` lógico del firmware desaparece. |
+| Alta y recambio de placa | Todas las hojas de un mismo tipo llevan **el mismo binario**. Una placa nueva entra sin aula (plan B, directo a la raíz) y AURA la ve **pendiente** (cuarentena). Al aceptarla, AURA le asigna el dispositivo y le manda `set_config {"aula": "…"}`. La hoja lo guarda en NVS y se pasa a su concentrador. El emparejamiento por botón del concentrador queda para más adelante. |
+| Elección del padre | **A mano, por aula** (vendor IE del concentrador), para que un sensor del aula 2 no termine en el concentrador del aula 1. Se mantiene. |
+| Hoja | Tiene que ser **`MESH_LEAF`**. Hoy es `MESH_NODE` con `max_connection = 1`, como parche a un error de `esp_mesh_set_parent` con `MESH_LEAF` en IDF 6.1. Así emite beacons y acepta un hijo, sin ninguna utilidad. Hay que corregirlo. |
+| Entrega garantizada | Cola persistente en flash e `ingest_id` generado en la hoja. La muestra sale de la cola solo con la CONFIRMACIÓN, que la raíz manda cuando AURA publica el `ack` (contrato §3.6 y §5). |
+| Hora | La raíz la toma por SNTP y la reparte. Cada muestra lleva su `ts`. Si la hoja todavía no tiene hora, guarda el uptime y el número de arranque, y corrige el `ts` de esas muestras cuando recibe la hora. |
+| País | `AR` (canales 1 a 13) en todos los nodos. El gateway ya lo tiene. |
+| Raíz | Árbol `hw/`, `ack`, LWT, sesión persistente, usuario y clave del broker, `status` con los details de la mesh, offline inferido y estados de comando (`transmitido`, `recibido`, `aplicado`, `rechazado`). |
+| Hojas de los grupos | Un componente IDF `nodo_mesh` con la misma API simple de `comun/nodo_mesh.h` (medir, aplicar la configuración, ejecutar comandos). La elección del padre, la cola y la hora quedan adentro del componente. |

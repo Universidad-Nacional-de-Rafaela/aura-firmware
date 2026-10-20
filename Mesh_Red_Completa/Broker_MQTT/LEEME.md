@@ -116,7 +116,8 @@ Los firmwares quedan grabados en el flash: **no hay que volver a flashear nada**
 
 ### En otra red WiFi
 
-1. Editar **solo** `Mesh3_Gateway/main/credenciales.h` (`ROUTER_SSID` y `ROUTER_PASS`) y **regrabar solo el gateway**.
+1. Agregar la red a `REDES_WIFI` en `Mesh3_Gateway/main/credenciales.h` (la lista va en orden de preferencia) y
+   **regrabar solo el gateway**.
    Concentrador y hoja no dependen del WiFi y no se tocan. La IP de la PC no hace falta: el gateway la descubre.
 2. La red tiene que tener **2,4 GHz**, **no** tener portal de login ni aislamiento de clientes (muchas redes institucionales
    lo tienen: en ese caso, usar un router propio o el hotspot del celular).

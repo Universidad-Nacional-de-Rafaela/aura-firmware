@@ -206,13 +206,13 @@ Después de cambiar un parámetro hay que **recompilar y grabar todos los firmwa
 
 ### 4.2 Solo en el gateway
 
-> **El gateway es el único nodo que depende del WiFi.** Para cambiar de red se edita `credenciales.h` y se
+> **El gateway es el único nodo que depende del WiFi.** Para cambiar o agregar una red se edita `credenciales.h` y se
 > regraba **solo el gateway**. Concentradores y hojas no se tocan.
 
 | Parámetro | Valor actual | Dónde | Efecto / cuidado |
 |---|---|---|---|
-| `ROUTER_SSID`, `ROUTER_PASS` | `IngComputacion`, (en el archivo) | Gc | Red WiFi del router (2,4 GHz, sin portal de login y sin aislamiento de clientes). |
-| `BROKER_URI` | `""` (vacío) | Gc | Vacío = el gateway **busca el broker solo** por broadcast UDP y no hace falta saber la IP de la PC. `"mqtt://IP:puerto"` = dirección fija (para un broker que no responda el descubrimiento, como Mosquitto o el servidor de AURA). |
+| `REDES_WIFI` | `Personal-419`, `IngComputacion` (claves en el archivo) | Gc | Lista de redes `{"SSID", "clave"}` en orden de preferencia (2,4 GHz, sin portal de login y sin aislamiento de clientes). Usa la primera que esté al alcance; si queda 5 min sin router (`REINICIO_SIN_ROUTER_MS`, en G), se reinicia y empieza por la siguiente. |
+| `BROKER_URI` | `""` (vacío) | Gc | Vacío = el gateway prueba primero el **último broker que le anduvo en esa red** (guardado en NVS) y, si no responde 3 veces, **lo busca solo** por broadcast UDP y no hace falta saber la IP de la PC. `"mqtt://IP:puerto"` = dirección fija (para un broker que no responda el descubrimiento, como Mosquitto o el servidor de AURA). |
 | `PUERTO_DESCUBRIMIENTO` | `18830` (UDP) | G **y** PC (`broker.py`) | Puerto de la pregunta `AURA_BROKER?`. Tiene que coincidir en los dos. |
 | `FALLOS_PARA_REBUSCAR` | `3` | G | Desconexiones seguidas del broker antes de volver a buscarlo (por si la PC cambió de IP). |
 | Canal de la malla | el del router en 2,4 GHz | automático | El gateway busca el router y usa su canal. Concentradores y hojas usan canal `0` (buscan en todos). **No fijar el canal** en C ni H. |
