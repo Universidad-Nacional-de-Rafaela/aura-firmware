@@ -311,6 +311,9 @@ void nodo_mesh_reportar(void)
     describir(cJSON_AddObjectToObject(d, "config"));
     cJSON_AddNumberToObject(d, "pendientes", cola_cantidad());
     cJSON_AddNumberToObject(d, "descartadas", cola_descartadas());
+    if (cola_en_flash()) {
+        cJSON_AddNumberToObject(d, "en_flash", cola_en_flash());
+    }
     if (eventos_perdidos) {
         cJSON_AddNumberToObject(d, "eventos_perdidos", eventos_perdidos);
     }
@@ -441,11 +444,10 @@ static void enviar_muestra(void)
     }
     intentos = misma ? intentos + 1 : 0;
 
-    /* Sin hora al medir: ahora que hay hora, se fecha con el uptime (la cola está en RAM:
-       toda medición pendiente es de este arranque) */
+    /* Sin hora al medir: ahora que hay hora, se fecha con el uptime (si es de este arranque) */
     uint32_t ts = m.ts;
     uint32_t hoy = ahora_epoca();
-    if (ts == 0 && hoy != 0) {
+    if (ts == 0 && hoy != 0 && !m.otro_arranque) {
         ts = hoy - (uptime_s() - m.uptime_s);
     }
     aura_trama_t t;
@@ -665,9 +667,15 @@ static void tarea_rx(void *arg)
 
 static void tarea_nodo(void *arg)
 {
-    TickType_t ultimo_pedido_hora = 0;
+    TickType_t ultimo_pedido_hora = 0, ultimo_respaldo = 0;
     while (true) {
         procesar_recibidas(pdMS_TO_TICKS(50));
+        /* Cada 5 s, haya conexión o no: fecha lo medido sin hora y respalda en flash lo que
+           lleva COLA_A_FLASH_S sin confirmar */
+        if (xTaskGetTickCount() - ultimo_respaldo >= pdMS_TO_TICKS(5000)) {
+            ultimo_respaldo = xTaskGetTickCount();
+            cola_respaldar(uptime_s(), ahora_epoca());
+        }
         if (!conectado) {
             continue;
         }

@@ -65,9 +65,10 @@ PLAN B / SIN AULA     Hoja ──────────────> Raíz (u 
 
 ## Entrega garantizada y hora
 
-- La hoja guarda cada medición en una **cola en RAM** (400 lugares, sin escribir la flash) con su `ingest_id` antes de
-  enviarla, y la saca solo con la CONFIRMACIÓN que manda la raíz cuando llega el `ack` de AURA. Sin `ack` reintenta
-  (15 s, 30 s, 1 min… 5 min, con azar). Lo pendiente se pierde si la hoja se reinicia.
+- La hoja guarda cada medición en una **cola en RAM** (400 lugares) con su `ingest_id` y su hora antes de enviarla, y la
+  saca solo con la CONFIRMACIÓN que manda la raíz cuando llega el `ack` de AURA. Sin `ack` reintenta (15 s, 30 s, 1 min…
+  5 min, con azar). **Híbrido:** si una medición pasa 5 min sin confirmar, se respalda en la flash (partición `cola`) y
+  sobrevive a un reinicio de la hoja. En marcha normal no se escribe la flash.
 - **Eventos** (resultado, reporte, alerta): la raíz los confirma (`EVENTO_OK`) recién cuando los publicó; hasta entonces
   el nodo los reintenta. **Cuando vuelve el broker**, la raíz pide reporte a todos (`REPORTAR`): cada nodo publica su
   estado actual y la hoja manda lo pendiente enseguida.
@@ -94,7 +95,8 @@ PLAN B / SIN AULA     Hoja ──────────────> Raíz (u 
 ### Desconectar y volver a armar todo
 
 Los firmwares y las aulas quedan en flash: **no hay que volver a flashear ni a asignar nada**. Alimentar las placas,
-levantar `broker.py` y esperar ~1 minuto. (Lo que una hoja tenía sin confirmar se pierde si se la desenchufa.)
+levantar `broker.py` y esperar ~1 minuto. Lo que una hoja tenía sin confirmar hace más de 5 min está en su flash y sale
+al volver; lo más reciente se pierde si se la desenchufa.
 
 ### En otra red WiFi
 
@@ -139,6 +141,10 @@ levantar `broker.py` y esperar ~1 minuto. (Lo que una hoja tenía sin confirmar 
 - ✅ Broker caído 40 s con la hoja reconectándose (cola en RAM y eventos confirmados): el reporte se reintentó durante el
   corte; al volver, la raíz pidió reporte a los 2 nodos, se publicaron los reportes y las 5 mediciones pendientes salieron
   en el acto (~250 ms cada una).
+- ✅ Cola híbrida, AURA caída 6,5 min y reinicio de la hoja: en marcha normal, 0 escrituras en flash; a los 5 min cada
+  medición sin confirmar se respaldó en flash (15 en total); al reiniciar la hoja se recuperaron las 15, y al volver AURA
+  llegaron primero, en orden y con su hora original (~70 min después). Lo medido en los últimos 5 min antes del reinicio
+  estaba solo en RAM y se perdió, como está previsto.
 - ⏳ Falta: una prueba larga (horas).
 
 ## Resultados anteriores (formato JSON propio, 19–20/10/2026)

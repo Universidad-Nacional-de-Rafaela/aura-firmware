@@ -36,10 +36,10 @@ MQTT (`hw/<hw_id>/...`) y los comandos en sentido inverso. Hecha en **ESP-IDF 6.
 | Carpeta / archivo | Qué es |
 |---|---|
 | [`componentes/aura_mesh/`](componentes/aura_mesh/) | Trama común de la mesh (solo encabezados): la **trama binaria v3**, igual a [`comun/protocolo_aura.h`](../comun/protocolo_aura.h), más dos tipos internos (**LOTE** y **HORA**), y utilidades (ingest_id, hw_id, tópicos, hora ISO, vendor IE). La usan los tres firmwares. |
-| [`componentes/nodo_mesh/`](componentes/nodo_mesh/) | **Biblioteca de la hoja**: elección del padre por aula, aula en NVS, cola de mediciones en RAM con confirmación de AURA, eventos confirmados, comandos, hora y alertas. El grupo solo escribe qué mide, sus parámetros y sus comandos. |
+| [`componentes/nodo_mesh/`](componentes/nodo_mesh/) | **Biblioteca de la hoja**: elección del padre por aula, aula en NVS, cola de mediciones híbrida (RAM, y flash si pasan 5 min sin confirmar) con confirmación de AURA, eventos confirmados, comandos, hora y alertas. El grupo solo escribe qué mide, sus parámetros y sus comandos. |
 | [`Mesh3_Gateway/`](Mesh3_Gateway/) | **Gateway (raíz).** Único nodo con WiFi y adaptador del contrato: publica en `hw/<hw_id>/...` con el `hw_id` de la placa que midió (también lo que llega en un LOTE del concentrador), baja comandos y `ack`, infiere offline, publica su status con LWT. Lista de redes WiFi, broker guardado por red y descubrimiento por broadcast. Placa: Waveshare ESP32-S3-DEV-KIT, módulo WROOM-2 (flash octal 32 MB). |
 | [`Mesh3_Intermedio/`](Mesh3_Intermedio/) | **Concentrador del aula.** Aula en NVS (la asigna AURA), anunciada en el beacon. Ve los datos de sus hojas, los muestra ("pantalla": LED RGB + serie), puede filtrarlos y los reenvía **una sola vez** en un LOTE. Contesta la hora a sus hojas y tiene **mando local** (botón BOOT). Placa: Waveshare ESP32-S3-DEV-KIT, módulo WROOM-1 (flash quad 16 MB). |
-| [`Mesh3_Hoja/`](Mesh3_Hoja/) | **Hoja de ejemplo** sobre `nodo_mesh` (datos simulados + LED como actuador, parámetro `intervalo_s`). Es la **base para hacer hojas nuevas**. Placa: ESP32-C3 SuperMini. |
+| [`Mesh3_Hoja/`](Mesh3_Hoja/) | **Hoja de ejemplo** sobre `nodo_mesh` (datos simulados + LED como actuador, parámetro `intervalo_s`). Es la **base para hacer hojas nuevas**. Placa: ESP32-C3 SuperMini (partición `cola` de 256 KB para el respaldo). |
 | [`Broker_MQTT/`](Broker_MQTT/) | Banco en la PC, en Python sin dependencias: `broker.py` (broker con retenidos y LWT, **AURA falsa** que contesta los `ack`, descubrimiento y tablero en http://localhost:8080), `dashboard.html`, `led_blink.py` y [`LEEME.md`](Broker_MQTT/LEEME.md) (cómo probar y resultados). |
 | [`GUIA_NODOS_HOJA.md`](GUIA_NODOS_HOJA.md) | **Guía para quienes hagan hojas:** la API de `nodo_mesh`, reglas, qué va en `values`, comandos, checklist, **parámetros de red y dónde replicar cada cambio**, problemas frecuentes y alcance. |
 | [`CONTEXTO_PROYECTO.md`](CONTEXTO_PROYECTO.md) | Contexto técnico: entorno, decisiones, errores resueltos y próximos pasos (copia del `CLAUDE.md` local). |
@@ -50,6 +50,7 @@ Dentro de cada proyecto ESP-IDF:
 |---|---|
 | `CMakeLists.txt` | Proyecto (`project(...)`); suma `../componentes` |
 | `sdkconfig.defaults` | Ajustes de la placa (target, flash, particiones). El `sdkconfig` se genera al compilar. |
+| `partitions.csv` | Solo en la hoja: app de 1,5 MB + partición `cola` de 256 KB |
 | `dependencies.lock` | Versiones fijas de los componentes externos (`espressif/cjson`, `espressif/mqtt`, `espressif/led_strip`) |
 | `main/main.c` | El firmware, comentado |
 | `main/config_local.ejemplo.h` | Plantilla del **ID y la clave de la mesh** |
@@ -92,7 +93,7 @@ autenticarse (ver la guía, sección 5).
 | Alta y recambio | Placa nueva → entra sin aula (directo a la raíz) → AURA la ve **pendiente** (cuarentena) → al aceptarla le asigna el dispositivo y `set_config {"aula":…}` → la hoja lo guarda en NVS y se pasa a su concentrador. |
 | Elección del padre | **A mano, por aula** (vendor IE del concentrador), con plan B a la raíz u otro concentrador. Si al concentrador le cambian el aula, sus hojas de otra aula se van en ~5 s. |
 | Hoja y `MESH_LEAF` | IDF 6.1 rechaza `MESH_LEAF` en `esp_mesh_set_parent` (probado). La hoja intenta `MESH_LEAF` y, si no, usa `MESH_NODE` con el beacon de su AP a 60 000 TU (~200 veces menos) y rechazando hijos. |
-| Entrega garantizada | **Cola en RAM** (400 mediciones, sin escribir la flash; lo pendiente se pierde si la hoja se reinicia), `ingest_id` generado en la hoja, sale solo con la CONFIRMACIÓN que sigue al `ack` de AURA (§3.6, §5). Reintentos con espera creciente y azar. |
+| Entrega garantizada | **Cola híbrida**: RAM (400 mediciones, sin escribir la flash en marcha normal) y respaldo en flash de lo que pasa 5 min sin confirmar, que sobrevive a un reinicio de la hoja; `ingest_id` generado en la hoja, sale solo con la CONFIRMACIÓN que sigue al `ack` de AURA (§3.6, §5). Reintentos con espera creciente y azar. |
 | Eventos | Resultado, reporte y alerta se reintentan hasta que la raíz confirma que los **publicó** (`EVENTO_OK`). Al volver el broker, la raíz pide reporte a todos (`REPORTAR`) y la hoja manda lo pendiente enseguida. |
 | Hora | SNTP en la raíz; la hoja la pide y la ajusta con cada confirmación. Lo medido sin hora se fecha con el uptime si es del mismo arranque. |
 | País | `AR` (canales 1 a 13) en los tres. |
@@ -102,7 +103,7 @@ autenticarse (ver la guía, sección 5).
 
 - Hoja sin aula publicando como pendiente; asignación de aula desde el tablero (`aplicado` con la config vigente) y paso
   automático al concentrador; datos en LOTE (55 lotes, 0 tramas inválidas).
-- Cola: mediciones guardadas sin conexión, enviadas y confirmadas al volver, todas con `ts`. Broker caído 40 s: el reporte se reintentó, y al volver la raíz pidió reporte y las 5 pendientes salieron en el acto. Broker caído justo al cambiar el LED: AURA terminó con el estado real.
+- Cola: mediciones guardadas sin conexión, enviadas y confirmadas al volver, todas con `ts`. Broker caído 40 s: el reporte se reintentó, y al volver la raíz pidió reporte y las 5 pendientes salieron en el acto. Broker caído justo al cambiar el LED: AURA terminó con el estado real. Cola híbrida: 15 mediciones respaldadas en flash, recuperadas tras reiniciar la hoja y entregadas con su hora original.
 - Comandos a través del concentrador (`aplicado` en 29–51 ms; uno desconocido, `rechazado`); botón local del concentrador solo sobre hojas de su aula.
 - Plan B y vuelta sin pérdidas; offline inferido a los 3 intervalos; AURA caída (`sin_ack`) con reintentos 15 s/30 s/60 s y
   vaciado al volver; cambio de aula del concentrador con la hoja de otra aula pasando a plan B en ~5 s.

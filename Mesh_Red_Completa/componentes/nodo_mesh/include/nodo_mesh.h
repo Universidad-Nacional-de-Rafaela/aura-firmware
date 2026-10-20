@@ -10,9 +10,10 @@
  *  - El aula NO está en el firmware: se guarda en NVS y la asigna AURA con
  *    set_config {"aula": "..."}. Una placa recién grabada no tiene aula: entra por plan B
  *    y AURA la ve pendiente (cuarentena) hasta que la acepta y le asigna el aula.
- *  - Cada medición se guarda en una cola en RAM con su ingest_id ANTES del primer envío y
- *    sale de la cola solo cuando la raíz confirma que AURA la guardó. Sobrevive a cortes del
- *    WiFi, del broker, de AURA y del concentrador (no a un reinicio de la propia hoja).
+ *  - Cada medición se guarda en una cola en RAM con su ingest_id y su hora ANTES del primer
+ *    envío, y sale de la cola solo cuando la raíz confirma que AURA la guardó. Si pasan 5 min
+ *    sin confirmar (hay un corte), se respalda en flash y sobrevive a un reinicio de la hoja.
+ *    En marcha normal no se escribe la flash.
  *  - Los eventos (resultado de un comando, reporte, alertas) se reintentan hasta que la raíz
  *    confirma que los publicó. Cuando vuelve el broker, la raíz pide un reporte nuevo.
  *  - Hora: la pide al arrancar y la ajusta con cada confirmación. Una medición tomada sin

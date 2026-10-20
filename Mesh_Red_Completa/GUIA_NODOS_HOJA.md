@@ -76,8 +76,12 @@ mano (no por señal) para que un sensor del aula 2 no termine en el concentrador
   cuando la raíz le manda la CONFIRMACIÓN, que llega cuando AURA guardó la muestra (`ack`). Si AURA, el broker, el WiFi
   o el concentrador se caen, la hoja guarda y reintenta (15 s, 30 s, 1 min... hasta 5 min, **con azar** para que después
   de un corte no reintenten todas juntas). La cola tiene lugar para **400 mediciones** (~66 min de corte midiendo cada
-  10 s); llena, se pierde la más vieja (`descartadas` en el status). **No usa la flash**: lo pendiente se pierde si la
-  hoja se reinicia o se queda sin alimentación (decisión del 2026-10-20).
+  10 s); llena, se pierde la más vieja (`descartadas` en el status).
+- **Híbrido RAM + flash:** en marcha normal la cola vive en RAM y **la flash no se escribe**. Si una medición pasa
+  **5 minutos** sin confirmar (hay un corte de verdad), se respalda en la partición `cola` de la flash, con su hora.
+  Así sobrevive a un reinicio o a un corte de luz de la hoja: al arrancar, lo pendiente vuelve a la cola, primero que
+  todo. Al confirmarse, en la flash solo se cambia un byte de estado (de 0xFF a 0x00, sin borrar); un sector se borra
+  recién cuando el registro circular da la vuelta completa, así que el desgaste es despreciable.
 - **Eventos** (resultado de un comando, reporte, alertas): se reintentan (2 s, 4 s... hasta 30 s, con azar) hasta que la
   raíz confirma que los **publicó** (`EVENTO_OK`). Un reporte nuevo reemplaza al viejo que todavía no salió.
 - **Cuando vuelve el broker**, la raíz les pide reporte a todos los nodos (`REPORTAR`): cada hoja publica su estado
@@ -208,7 +212,7 @@ comunicación mucho tiempo): no dependen de AURA ni del concentrador.
 - [ ] Copié `Mesh3_Hoja` a una carpeta nueva **al lado de `componentes/`** (el `CMakeLists.txt` la busca en `../componentes`), sin espacios ni tildes, fuera de Google Drive/OneDrive.
 - [ ] Cambié el nombre en `project(...)` del `CMakeLists.txt` raíz.
 - [ ] Copié `main/config_local.ejemplo.h` como `main/config_local.h` y completé el ID y la clave de la mesh (los da la cátedra; **no se sube**).
-- [ ] Ajusté `sdkconfig.defaults` a la placa (target, flash) y borré `sdkconfig` y `build`.
+- [ ] Ajusté `sdkconfig.defaults` a la placa (target, flash), mantuve `partitions.csv` con la partición `cola` y borré `sdkconfig` y `build`.
 - [ ] Escribí la medición, `aplicar_config`, `describir_config` (con `intervalo_s`) y `ejecutar_comando`.
 - [ ] Ajusté pines y `potencia_tx` a la placa.
 - [ ] Probé con el broker de banco (`Broker_MQTT/broker.py`): la placa aparece **pendiente** en el tablero, le asigné el aula, se pasó a `modo: aula` y llegan los `data` con `ts`.
@@ -278,7 +282,9 @@ Después de cambiar un parámetro hay que **recompilar y grabar todos los firmwa
 | `REVISAR_AULA_MS` | `30000` | NM | En plan B, cada cuánto se fija si volvió. Al recibir un aula nueva revisa 5 veces seguidas, cada 3 s. |
 | `LIMITE_ENVIO_MS`, `FALLOS_PARA_RECONECTAR` | `5000`, `3` | NM, C | Vigilante de envío: tras 3 envíos fallidos fuerza la reconexión (evita el `[WND-RX] timeout`). |
 | `BEACON_HOJA_TU` | `60000` | NM | El AP de la hoja casi no emite beacons (ver 4.6). |
-| `COLA_CAPACIDAD` | `400` (~73 KB de RAM) | NM (`cola.h`) | Mediciones que aguanta sin confirmación. Llena: se pierden las más viejas (`descartadas`). Si no hay RAM, usa la mitad. |
+| `COLA_CAPACIDAD` | `400` (~75 KB de RAM) | NM (`cola.h`) | Mediciones que aguanta sin confirmación. Llena: se pierden las más viejas (`descartadas`). Si no hay RAM, usa la mitad. |
+| `COLA_A_FLASH_S` | `300` (5 min) | NM (`cola.h`) | Sin confirmar tanto tiempo, la medición se respalda en la flash. |
+| Partición `cola` | 256 KB (1024 registros de 256 B) | `partitions.csv` | Respaldo de lo que no se confirmó tras un corte. |
 | `EVENTO_ESPERA_MIN_MS`, `EVENTO_ESPERA_MAX_MS` | `2000`, `30000` | NM | Reintento de eventos sin `EVENTO_OK`. |
 | `potencia_tx` | `60` (15 dBm) | H | Pasos de 0,25 dBm. Ver la sección 6. |
 | `PIN_LED`, `LED_ACTIVO_BAJO` | `8`, `1` | H | LED de la C3 SuperMini (activo en bajo). |
@@ -287,7 +293,7 @@ Después de cambiar un parámetro hay que **recompilar y grabar todos los firmwa
 
 | Placa | Ajustes |
 |---|---|
-| ESP32-C3 SuperMini (hoja) | `FLASHSIZE_4MB`, `PARTITION_TABLE_SINGLE_APP_LARGE` |
+| ESP32-C3 SuperMini (hoja) | `FLASHSIZE_4MB`, `PARTITION_TABLE_CUSTOM` con `partitions.csv` (app 1,5 MB + `cola` 256 KB) |
 | Waveshare S3, módulo WROOM-1 N16R8 (concentrador) | flash quad 16 MB (`FLASHMODE_DIO`, `FLASHSIZE_16MB`), app grande |
 | Waveshare S3, módulo WROOM-2 N32R16V (gateway) | flash **octal** 32 MB (`OCT_FLASH`, `FLASHMODE_OPI`, `FLASHSIZE_32MB`), app grande |
 
