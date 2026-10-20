@@ -1,28 +1,30 @@
 # AURA – Guía para desarrollar nodos hoja
 
 Esta guía es para quienes programen **nodos hoja** (sensores y actuadores de un aula) que se conectan a la malla
-ESP-WIFI-MESH de AURA. Explica cómo se conecta una hoja a su concentrador, qué tiene que cumplir su firmware y qué
-parámetros de red se pueden cambiar, indicando **en qué firmwares hay que replicar cada cambio**.
+ESP-WIFI-MESH de AURA. Todo es **ESP-IDF nativo** (sin Arduino) y cumple el **contrato MQTT v4.0**
+(`docs/CONTRATO_MQTT.md` del repositorio `aura-firmware`).
 
-El ejemplo de referencia es `Mesh3_Hoja/main/main.c` (ESP32-C3 SuperMini). Para una hoja nueva conviene **copiar
-ese proyecto** y modificar solo lo que se indica acá.
+Una hoja se programa sobre la biblioteca **`nodo_mesh`** (`componentes/nodo_mesh`): el grupo escribe **qué mide,
+qué parámetros tiene y qué comandos acepta**. La conexión, el aula, la cola, la confirmación de AURA, los eventos
+y la hora ya están resueltos en la biblioteca. El ejemplo de referencia es `Mesh3_Hoja/main/main.c` (ESP32-C3 SuperMini):
+para una hoja nueva conviene **copiar ese proyecto** y cambiar solo lo que se indica acá.
 
 ---
 
 ## 1. Cómo funciona la red
 
 ```
-                           MQTT (broker / AURA)
+                         MQTT: árbol hw/<hw_id>/... (AURA)
                                    ▲
                                    │ WiFi del router (2,4 GHz)
                          ┌─────────┴─────────┐
-                         │  GATEWAY (raíz)   │  capa 1 · ESP32-S3
+                         │  GATEWAY (raíz)   │  capa 1 · ESP32-S3 · único nodo con IP
                          └─────────┬─────────┘
                     malla          │
             ┌──────────────────────┴───────────────────┐
    ┌────────┴─────────┐                       ┌─────────┴────────┐
    │ CONCENTRADOR     │  capa 2 · ESP32-S3    │ CONCENTRADOR     │
-   │ aula1            │  pantalla + botones   │ aula2            │
+   │ aula1            │  pantalla + botón     │ aula2            │
    └───┬─────────┬────┘                       └───┬──────────────┘
        │         │                                │
    ┌───┴───┐ ┌───┴───┐                        ┌───┴───┐
@@ -32,177 +34,210 @@ ese proyecto** y modificar solo lo que se indica acá.
 
 | Rol | Qué hace |
 |---|---|
-| **Gateway** | Raíz única de la malla. Puente entre la malla y MQTT. Toma la hora de internet y la reparte. |
-| **Concentrador** | Uno por aula. Es el padre de las hojas de su aula, muestra sus datos (pantalla), tiene mando local y reenvía todo hacia y desde el gateway. |
+| **Gateway** | Raíz única de la malla y **adaptador** del contrato: publica todo en `hw/<hw_id>/...` con el `hw_id` de la placa que lo midió, baja los comandos y los `ack` de AURA, toma la hora de internet y la reparte. |
+| **Concentrador** | Uno por aula. Padre de las hojas de su aula: **ve** sus datos (pantalla), puede filtrarlos, y los reenvía a la raíz **una sola vez**, juntos en un LOTE. Tiene mando local (botón). |
 | **Hoja** | Sensores y actuadores. Se cuelga del concentrador de **su** aula. |
 
-### 1.1 Cómo encuentra la hoja a su concentrador (sin MACs)
+### 1.1 Identidad: la MAC de la placa
 
-**Ningún firmware tiene MACs escritas.** Cada concentrador anuncia en su beacon WiFi un *vendor IE* de AURA que dice
-"soy el concentrador de `aula1`" e incluye su dirección en la malla. La hoja escanea y elige como padre al nodo
-que anuncia **su misma aula** (`AULA`).
+Cada placa se identifica con su MAC de fábrica: `hw_id = mac-<12 hex>` (por ejemplo `mac-907069add964`).
+**No hay MACs, ids ni aulas escritos en ningún firmware.** Todas las hojas de un mismo tipo llevan **el mismo binario**.
 
-Por eso **si se rompe una placa, se graba el mismo firmware en otra y listo**: las hojas encuentran al
-concentrador nuevo y el gateway aprende la ruta nueva con el primer mensaje.
+- **Alta de una placa nueva:** se graba el firmware y se enciende. Como todavía no tiene aula, se cuelga de la raíz
+  (o de cualquier concentrador) y manda directo. AURA no la conoce y la deja **pendiente** (cuarentena: guarda los
+  datos y los confirma igual). Al aceptarla, AURA le asigna el dispositivo y le manda
+  `set_config {"aula":"aula1"}`. La hoja lo guarda en NVS y se pasa a su concentrador.
+- **Recambio de una placa quemada:** se graba el mismo firmware en la nueva, y en AURA se le asigna esa placa
+  (aparece pendiente) al dispositivo viejo, con su aula. El dispositivo conserva su historial.
+- El concentrador también recibe su aula con `set_config` (en NVS); sin aula no anuncia nada.
 
-### 1.2 Modo aula y plan B
+### 1.2 Cómo encuentra la hoja a su concentrador
 
-| Modo | Cuándo | Padre | A quién manda | Campo `modo` |
-|---|---|---|---|---|
-| **Aula** (normal) | Ve a su concentrador | Su concentrador | **Solo** al concentrador, que muestra y reenvía | `"aula"` |
-| **Plan B** | No ve a su concentrador | La raíz u **otro concentrador** (nunca otra hoja) | Directo a la raíz | `"directo"` |
+Cada concentrador con aula anuncia en su beacon WiFi un *vendor IE* de AURA: "soy el concentrador de `aula1`",
+con su dirección en la malla. La hoja escanea y elige como padre al que anuncia **su** aula. El padre se elige a
+mano (no por señal) para que un sensor del aula 2 no termine en el concentrador del aula 1.
 
-- En modo aula cada mensaje sale **una sola vez**: no se duplica tráfico en el canal WiFi del aula.
-- Si la hoja pierde al concentrador, le da `ESPERA_RECONEXION_MS` (5 s) para volver. Si no vuelve, lo busca,
-  y después de `BUSQUEDAS_PLAN_B` (3) escaneos sin verlo pasa a plan B (unos 30 s en total).
-- En plan B revisa cada `REVISAR_AULA_MS` (30 s) si su concentrador volvió, con un escaneo rápido del canal actual,
-  y si volvió se pasa a él.
-- **AURA no nota nada:** los tópicos son los mismos y el gateway sigue la ruta del último mensaje de cada `id`.
+| Modo (`modo` en el status) | Cuándo | Padre | A quién manda |
+|---|---|---|---|
+| `sin_aula` | AURA todavía no le asignó aula | La raíz u otro concentrador | Directo a la raíz |
+| `aula` (normal) | Ve a su concentrador | Su concentrador | **Solo** al concentrador, que muestra y reenvía |
+| `directo` (plan B) | No ve a su concentrador | La raíz u **otro concentrador** (nunca otra hoja) | Directo a la raíz |
 
-> Toda esta lógica ya está resuelta en el ejemplo (`procesar_escaneo`, `tarea_vigia`, `conectar`). **No hace falta
-> tocarla** para hacer una hoja nueva.
+- **Cada dato viaja una sola vez.** En modo aula la hoja se lo manda al concentrador, que lo reenvía a la raíz dentro
+  de un LOTE con la MAC de la hoja: nada se duplica en el canal.
+- Si la hoja pierde al concentrador, le da 5 s para volver; si no, lo busca, y tras 3 escaneos sin verlo pasa a plan B
+  (~35 s en total, probado). En plan B revisa cada 30 s si volvió, y vuelve sola (probado: ~20 s).
+- **AURA no nota nada:** el `hw_id` es el de la hoja en cualquier modo.
+- Lo que AURA le manda a la hoja (comandos, confirmaciones) va a su MAC y la malla lo enruta sola.
+
+### 1.3 Entrega garantizada
+
+- **Mediciones:** cada una entra a una **cola en RAM** con su `ingest_id` (UUID) **antes** del primer envío, y sale solo
+  cuando la raíz le manda la CONFIRMACIÓN, que llega cuando AURA guardó la muestra (`ack`). Si AURA, el broker, el WiFi
+  o el concentrador se caen, la hoja guarda y reintenta (15 s, 30 s, 1 min... hasta 5 min, **con azar** para que después
+  de un corte no reintenten todas juntas). La cola tiene lugar para **400 mediciones** (~66 min de corte midiendo cada
+  10 s); llena, se pierde la más vieja (`descartadas` en el status). **No usa la flash**: lo pendiente se pierde si la
+  hoja se reinicia o se queda sin alimentación (decisión del 2026-10-20).
+- **Eventos** (resultado de un comando, reporte, alertas): se reintentan (2 s, 4 s... hasta 30 s, con azar) hasta que la
+  raíz confirma que los **publicó** (`EVENTO_OK`). Un reporte nuevo reemplaza al viejo que todavía no salió.
+- **Cuando vuelve el broker**, la raíz les pide reporte a todos los nodos (`REPORTAR`): cada hoja publica su estado
+  actual y manda lo pendiente enseguida (en un momento al azar de 0 a 3 s), sin esperar la espera de reintento.
+- Así AURA termina con el **estado real** después de cualquier corte: por ejemplo, si el LED cambia con el broker caído,
+  la medición con el `led` nuevo sale en cuanto vuelve, con la hora del cambio.
+
+### 1.4 Hora
+
+La raíz toma la hora de internet (SNTP). La hoja la pide al conectarse (`HORA`; si el concentrador la tiene, contesta
+él) y la ajusta con cada confirmación. Cada medición sale con su `ts`. Una medición tomada **antes** de tener hora se
+fecha al enviarla con el uptime. Para conservar la hora tras un corte de luz hace falta un RTC con pila (DS3231).
 
 ---
 
-## 2. Qué tiene que cumplir el firmware de una hoja
+## 2. Cómo se programa una hoja
 
-### 2.1 Reglas obligatorias
+### 2.1 Lo mínimo
 
-1. **Parámetros comunes de malla idénticos** a los del resto de la red (`MESH_ID_BYTES` y `MESH_AP_PASS` en
-   `main/config_local.h`, y `MESH_MAX_CAPAS`; ver la sección 4). `config_local.h` no se sube al repositorio. Si uno solo difiere, la hoja no se une.
-2. **`AULA` igual a la del concentrador** del aula donde se instala. Es lo que usa para elegir padre.
-3. **`DEVICE_ID` único en todo el edificio** (ver 2.2). Es el nombre con el que AURA la conoce.
-4. **Mandar siempre con `publicar()` / `publicar_json()`.** No llamar a `esp_mesh_send()` directo: esas funciones
-   eligen el destino según el modo (concentrador o raíz).
-5. **Todo mensaje lleva los campos comunes**: usar `mensaje_nuevo(topico)`, que agrega `topic`, `id`, `mac`,
-   `modo` y `ts`.
-6. **Responder cada orden con el estado real** del actuador (lo medido, no lo pedido) e incluir ese estado también
-   en el mensaje periódico. Así la pantalla y AURA se resincronizan aunque se pierda una respuesta.
-7. **No usar `esp_mesh_set_type(MESH_LEAF)`** ni `MESH_LEAF` en `esp_mesh_set_parent()`: en IDF 6.1 fallan
-   (`ESP_FAIL`). La hoja se une como `MESH_NODE` con `mesh_ap.max_connection = 1` (el mínimo que acepta la API).
-8. **Auto-organización apagada** (`esp_mesh_set_self_organized(false, false)` en `MESH_EVENT_STARTED`). El padre
-   lo elige el firmware, no la pila.
-9. **No bloquear** el manejador de eventos de la malla ni el callback del vendor IE (`vendor_ie_cb`): corren en
-   tareas del sistema. Nada de `vTaskDelay` ni esperas largas ahí.
-10. **JSON con cJSON** (componente `espressif/cjson` en `main/idf_component.yml`). Liberar siempre lo que se crea:
-    `cJSON_Delete()` para los objetos y `cJSON_free()` para los textos de `cJSON_PrintUnformatted()`.
-    `publicar_json()` ya libera el objeto que recibe.
-11. **Mensajes de menos de 500 bytes.** El concentrador recibe con un buffer de 600 bytes y la hoja recibe órdenes
-    con otro de 600. Si hace falta más, agrandar esos buffers (ver la sección 4).
-12. **Mantener el vigilante de envío** (`esp_mesh_send_block_time` y el conteo de `fallos_envio` en `publicar()`).
-    Si el padre se reinicia muy rápido, la hoja puede quedar "conectada" con el control de flujo de la malla trabado
-    (`[WND-RX] … timeout` en el monitor) y sin poder enviar nada. Sin el vigilante, la pila tarda unos 6 minutos en
-    recuperarse. Con el vigilante, después de 3 envíos fallidos la hoja fuerza la reconexión: se recupera en unos 20 s.
-13. **No depender del WiFi del edificio.** La hoja no lleva el SSID ni la clave del router (usa `ROUTER_FICTICIO`).
+```c
+#include "nodo_mesh.h"
 
-### 2.2 Nombres
+static bool aplicar_config(const cJSON *params, char *motivo, size_t tam);   /* set_config */
+static void describir_config(cJSON *config);                                 /* config vigente */
+static bool ejecutar_comando(const char *comando, const cJSON *params, bool local,
+                             char *motivo, size_t tam);                      /* comandos propios */
 
-| Elemento | Formato | Ejemplo |
-|---|---|---|
-| `AULA` | minúsculas, sin espacios ni tildes | `aula1`, `lab-redes` |
-| `DEVICE_ID` | `<AULA>-<tipo>[-<n>]`, **único**, menos de 32 caracteres | `aula1-hoja`, `aula1-ventana-2` |
-| Tópico de datos | `aura/<AULA>/<qué>` | `aura/aula1/sensores`, `aura/aula1/ventana` |
-
-> El concentrador reconoce como "hojas de su aula" a los `id` que empiezan con `<AULA>-`. Respetar ese prefijo.
-
-### 2.3 Mensajes que manda la hoja
-
-Todos son objetos JSON. Los campos comunes los arma `mensaje_nuevo()`:
-
-| Campo | Tipo | Lo pone | Descripción |
-|---|---|---|---|
-| `topic` | texto | hoja | Tópico MQTT donde el gateway lo publica. El gateway lo saca del payload. |
-| `id` | texto | hoja | `DEVICE_ID`. Con esto AURA y el gateway identifican el nodo. |
-| `mac` | texto | hoja | MAC propia, solo informativa (no se usa para rutear). |
-| `modo` | texto | hoja | `aula` o `directo` (plan B). |
-| `ts` | número | hoja | Hora de la medición en **milisegundos desde 1970, UTC**. No aparece hasta que la hoja recibe la hora. |
-| `ts_gw` | `true` | gateway | Aparece si el mensaje llegó sin `ts` y el gateway puso su propia hora. |
-| `via` | texto | gateway | MAC del nodo que le entregó el mensaje: el concentrador en modo aula, la hoja en plan B. |
-| `n` | número | hoja | Contador del mensaje (sirve para detectar pérdidas). |
-
-Ejemplo de mensaje periódico, tal como sale de la hoja y tal como lo publica el gateway:
-
-```jsonc
-// la hoja manda
-{"topic":"aura/aula1/sensores","id":"aula1-hoja","mac":"90:70:69:ad:d9:64","modo":"aula",
- "ts":1792423469362,"n":27,"capa":3,"temp":27,"hum":46.5,"pres":true,"led":0}
-
-// MQTT, tópico aura/aula1/sensores
-{"id":"aula1-hoja","mac":"90:70:69:ad:d9:64","modo":"aula","ts":1792423469362,"n":27,
- "capa":3,"temp":27,"hum":46.5,"pres":true,"led":0,"via":"dc:b4:d9:2a:58:78"}
+void app_main(void)
+{
+    nvs_flash_init();
+    nodo_mesh_config_t cfg = {
+        .mesh_id = {MESH_ID_BYTES},           /* de config_local.h */
+        .mesh_clave = MESH_AP_PASS,
+        .potencia_tx = 60,                    /* 15 dBm; 0 = la de fábrica */
+        .alimentacion = "red",
+        .aplicar_config = aplicar_config,
+        .describir_config = describir_config,
+        .ejecutar_comando = ejecutar_comando,
+    };
+    nodo_mesh_iniciar(&cfg);
+    /* ... y en una tarea propia, cada intervalo: */
+    cJSON *v = cJSON_CreateObject();
+    cJSON_AddNumberToObject(v, "temp_c", 24.5);
+    nodo_mesh_medicion(v);                    /* entra a la cola y sale cuando se pueda */
+    cJSON_Delete(v);
+}
 ```
 
-> **Números con decimales:** generarlos como `double` y redondeados (ver `tarea_envio`). Si se pasa un `float`,
-> cJSON escribe `24.100000381` en lugar de `24.1`.
+| Función | Para qué |
+|---|---|
+| `nodo_mesh_iniciar(&cfg)` | Una vez, después de `nvs_flash_init()`. Arranca WiFi, malla y sus tareas. |
+| `nodo_mesh_medicion(values)` | Guarda una medición en la cola. `values` lleva **solo mediciones válidas** (ver 2.3). |
+| `nodo_mesh_sonda(campo, ok, motivo)` | En cada medición, el estado de cada sonda: manda la alerta `sensor` **solo cuando cambia**. |
+| `nodo_mesh_alerta(tipo, severity, message, details)` | Otra alerta: `hw/<hw_id>/alerts/<tipo>`. |
+| `nodo_mesh_reportar()` | Manda el reporte de estado (la biblioteca ya lo manda al conectarse y tras un `set_config`). |
+| `nodo_mesh_conectada()`, `nodo_mesh_aula()`, `nodo_mesh_pendientes()` | Estado, por ejemplo para un LED. |
 
-### 2.4 Mensajes que recibe la hoja
+### 2.2 Reglas
 
-| Mensaje | Viene de | Qué hacer |
+1. **Parámetros de malla idénticos** al resto de la red: `MESH_ID_BYTES` y `MESH_AP_PASS` en `main/config_local.h`
+   (no se sube al repositorio). Si uno difiere, la hoja no se une.
+2. **Nada de MACs, ids ni aula en el código.** La identidad es la placa y el aula la asigna AURA.
+3. **`set_config` valida todo o no aplica nada** (contrato §3.3): `aplicar_config` primero revisa **todos** los
+   parámetros y solo si todos son válidos los aplica y los guarda en NVS. Tiene que **ignorar `aula`**, que la maneja
+   la biblioteca. Si algo no valida, devuelve `false` con el motivo (`intervalo_s_fuera_de_rango`, `parametro_desconocido`…).
+4. **`describir_config` incluye `intervalo_s`**: con eso la raíz publica `offline` si la hoja pasa 3 intervalos sin hablar.
+5. **Comandos:** `ejecutar_comando` devuelve `true` solo si **ejecutó**. Lo que AURA ve como `aplicado` sale de ahí.
+   `local = true` es una orden del botón del concentrador: no se le contesta a AURA, pero el estado nuevo tiene que
+   aparecer en la medición siguiente (el ejemplo mide enseguida).
+6. **No usar `esp_mesh_*` ni `esp_wifi_*` directamente**: la biblioteca maneja la radio.
+7. **JSON con cJSON**: liberar lo que se crea (`cJSON_Delete`). `nodo_mesh_medicion` no se queda con el objeto.
+8. **Números con decimales como `double` redondeados**: con `float`, cJSON escribe `24.100000381`.
+9. **Tamaños:** `values` hasta **160 bytes** de JSON; un comando, hasta 180 bytes.
+
+### 2.3 Qué va en `values` (contrato §3.1)
+
+- **Solo mediciones** (y el estado de los actuadores). Nombres en minúsculas con la unidad: `temp_c`, `hum_pct`, `co2_ppm`.
+- **Una sonda que falla no aparece**: ni centinela (`-127`, `85`), ni `null`. Se informa con `nodo_mesh_sonda()`.
+- **Nada del enlace**: RSSI, capa, cola o batería van en el **status**, y eso lo arma la biblioteca.
+
+### 2.4 Lo que publica la raíz por cada hoja
+
+| Tópico | Cuándo | Ejemplo |
 |---|---|---|
-| `{"hora":1792423428264,"dest":"aula1-hoja"}` | Gateway, cada 60 s y apenas la hoja aparece | Ya resuelto: `hora_ajustar()` pone el reloj. |
-| `{"led":1,"dest":"aula1-hoja"}` | AURA (MQTT `aura/cmd/aula1-hoja`) | Ejecutar y responder con el estado real. |
-| `{"led":"toggle","origen":"local"}` | Botón del concentrador | Igual, y responder con `"origen":"local"`. |
+| `hw/<hw_id>/data` | Cada medición (los reintentos traen el mismo `ingest_id`) | `{"values":{"temp_c":24.5,"led":0},"ingest_id":"9f75…","ts":"2026-10-20T04:18:21Z","adaptador":"mac-90e5b1d64a94"}` |
+| `hw/<hw_id>/status` (retenido) | Al conectarse, tras un `set_config` y al volver | `{"status":"online","details":{"config":{"aula":"aula1","intervalo_s":10},"pendientes":0,"descartadas":0,"alimentacion":"red","modo":"aula","rssi":-19,"capa":3,"evento":"reporte","transporte":"mesh"}}` |
+| `hw/<hw_id>/status` (retenido) | 3 intervalos sin datos | `{"status":"offline","details":{"motivo":"sin_tramas"}}` |
+| `hw/<hw_id>/response` | Cada comando: `transmitido`, `recibido`, `aplicado`/`rechazado` | `{"status":"aplicado","details":{"command_id":"c-1","config":{…}}}` |
+| `hw/<hw_id>/alerts/<tipo>` | Alertas de la hoja | `{"severity":"high","message":"Sonda temp_c con falla","details":{"campo":"temp_c","motivo":"sin_respuesta"}}` |
 
-- **`dest`** lo agrega el gateway para que el concentrador sepa a qué hoja pasar la orden. La hoja puede ignorarlo.
-- **`origen`**: si no viene, la orden es de AURA. En la respuesta se pone `"origen":"aura"` o `"origen":"local"`.
-- **Campos desconocidos se ignoran.** Así se pueden agregar cosas (por ejemplo, un futuro `"prio"`) sin romper
-  hojas viejas.
+### 2.5 Comandos que recibe (de AURA por `hw/<hw_id>/command`)
 
-### 2.5 Cómo agregar un actuador nuevo (ejemplo: ventana)
+| Comando | Lo atiende | Ejemplo |
+|---|---|---|
+| `set_config` | biblioteca (`aula`) + `aplicar_config` (el resto) | `{"command":"set_config","params":{"aula":"aula1","intervalo_s":30},"command_id":"c-7"}` |
+| propios | `ejecutar_comando` | `{"command":"led","params":{"encendido":true},"command_id":"c-8"}` |
 
-1. Definir el tópico: `#define TOPICO_VENTANA "aura/" AULA "/ventana"`.
-2. En `tarea_ordenes`, leer el campo nuevo con cJSON:
-   ```c
-   const cJSON *v = cJSON_GetObjectItemCaseSensitive(orden, "ventana");   /* % de apertura */
-   if (cJSON_IsNumber(v) && v->valueint >= 0 && v->valueint <= 100) {
-       ventana_mover(v->valueint);                       /* con fines de carrera y tiempo máximo */
-       cJSON *resp = mensaje_nuevo(TOPICO_VENTANA);
-       cJSON_AddNumberToObject(resp, "ventana", ventana_posicion_medida());  /* la REAL */
-       cJSON_AddStringToObject(resp, "origen", local ? "local" : "aura");
-       publicar_json(resp);
-   }
-   ```
-3. Agregar la posición medida al mensaje periódico (regla 6).
-4. **Seguridades en la propia hoja**: fines de carrera, tiempo máximo de motor y posición segura si pierde la
-   comunicación por mucho tiempo. No dependen de AURA ni del concentrador.
-5. Para mostrarlo en la pantalla del concentrador, agregarlo en `mostrar_en_pantalla()` de `Mesh3_Intermedio`.
+Un comando desconocido se contesta `rechazado` con `comando_desconocido`. Ningún comando queda sin respuesta: si la
+hoja no contesta en 30 s, la raíz publica `rechazado` con `sin_resultado_del_nodo`.
+
+### 2.6 Cómo agregar un actuador (ejemplo: ventana)
+
+```c
+static bool ejecutar_comando(const char *comando, const cJSON *params, bool local, char *motivo, size_t tam)
+{
+    if (strcmp(comando, "ventana") == 0) {
+        const cJSON *p = cJSON_GetObjectItemCaseSensitive(params, "apertura_pct");
+        if (!cJSON_IsNumber(p) || p->valuedouble < 0 || p->valuedouble > 100) {
+            snprintf(motivo, tam, "apertura_fuera_de_rango");
+            return false;
+        }
+        ventana_mover(p->valuedouble);       /* con fines de carrera y tiempo máximo de motor */
+        medir_ya = true;                     /* la medición siguiente lleva la apertura REAL */
+        return true;
+    }
+    snprintf(motivo, tam, "comando_desconocido");
+    return false;
+}
+```
+
+**Seguridades en la propia hoja** (fines de carrera, tiempo máximo de motor, posición segura si pierde la
+comunicación mucho tiempo): no dependen de AURA ni del concentrador.
 
 ---
 
 ## 3. Checklist para una hoja nueva
 
-- [ ] Copié `Mesh3_Hoja` a una carpeta nueva (sin espacios ni tildes, fuera de Google Drive/OneDrive).
+- [ ] Copié `Mesh3_Hoja` a una carpeta nueva **al lado de `componentes/`** (el `CMakeLists.txt` la busca en `../componentes`), sin espacios ni tildes, fuera de Google Drive/OneDrive.
 - [ ] Cambié el nombre en `project(...)` del `CMakeLists.txt` raíz.
-- [ ] Copié `main/config_local.ejemplo.h` como `main/config_local.h` y completé el ID y la clave de la mesh (los da la cátedra; ese archivo **no se sube** al repositorio).
-- [ ] Ajusté `sdkconfig.defaults` a la placa (target, tamaño de flash) y borré `sdkconfig` y `build`.
-- [ ] Puse `AULA` igual a la del concentrador y un `DEVICE_ID` único.
-- [ ] Revisé que los parámetros comunes de malla (sección 4.1) coinciden con el resto de la red.
-- [ ] Ajusté pines (`PIN_LED`, `LED_ACTIVO_BAJO`, sensores, actuadores).
-- [ ] Ajusté `POTENCIA_TX` a la placa (C3 SuperMini con antena de alambre: 60 = 15 dBm probado). Probé el alcance real mirando la "señal del padre" en el tablero.
-- [ ] Todo mensaje sale con `mensaje_nuevo()` + `publicar_json()`.
-- [ ] Cada orden responde con el estado medido, y ese estado también va en el mensaje periódico.
-- [ ] Probé: en el monitor aparece `Conectada a … MODO AULA` y en MQTT llegan los datos con `ts`.
-- [ ] Probé el plan B apagando el concentrador: la hoja pasa a `directo` y vuelve sola a `aula`.
+- [ ] Copié `main/config_local.ejemplo.h` como `main/config_local.h` y completé el ID y la clave de la mesh (los da la cátedra; **no se sube**).
+- [ ] Ajusté `sdkconfig.defaults` a la placa (target, flash) y borré `sdkconfig` y `build`.
+- [ ] Escribí la medición, `aplicar_config`, `describir_config` (con `intervalo_s`) y `ejecutar_comando`.
+- [ ] Ajusté pines y `potencia_tx` a la placa.
+- [ ] Probé con el broker de banco (`Broker_MQTT/broker.py`): la placa aparece **pendiente** en el tablero, le asigné el aula, se pasó a `modo: aula` y llegan los `data` con `ts`.
+- [ ] Probé un `set_config` inválido: `rechazado` con motivo, y la configuración no cambió.
+- [ ] Probé el plan B apagando el concentrador: pasa a `directo`, no pierde datos y vuelve sola a `aula`.
 
 ---
 
 ## 4. Parámetros de red y dónde replicarlos
 
 **G** = `Mesh3_Gateway/main/main.c` · **Gc** = `Mesh3_Gateway/main/credenciales.h` ·
-**C** = `Mesh3_Intermedio/main/main.c` (concentrador) · **H** = `Mesh3_Hoja/main/main.c` (y toda hoja nueva) ·
+**C** = `Mesh3_Intermedio/main/main.c` (concentrador) · **NM** = `componentes/nodo_mesh/nodo_mesh.c` (toda hoja) ·
+**H** = `Mesh3_Hoja/main/main.c` (la hoja de ejemplo) · **AM** = `componentes/aura_mesh/include/` (trama común) ·
 **PC** = `Broker_MQTT/` (broker, tablero y scripts de prueba)
 
-Después de cambiar un parámetro hay que **recompilar y grabar todos los firmwares donde aparece**.
+Después de cambiar un parámetro hay que **recompilar y grabar todos los firmwares donde aparece**. Un cambio en
+**NM** o **AM** afecta a todas las hojas (y en AM, también al gateway y a los concentradores).
 
 ### 4.1 Comunes a toda la malla: deben ser IDÉNTICOS
 
 | Parámetro | Valor actual | Dónde | Efecto / cuidado |
 |---|---|---|---|
-| `MESH_ID_BYTES` | (en `config_local.h`) | G, C, H — archivo `main/config_local.h` de cada proyecto | Identifica la red. Nodos con otro ID no se ven entre sí. Cambiarlo permite separar redes (por ejemplo, una de pruebas). |
-| `MESH_AP_PASS` | (en `config_local.h`) | G, C, H — archivo `main/config_local.h` de cada proyecto | Clave WPA2 entre nodos (mínimo 8 caracteres). La da la cátedra. |
-| `MESH_MAX_CAPAS` | `6` | G, C, H | Profundidad máxima del árbol. La hoja también la usa para descartar padres con capa inválida. |
-| `ROUTER_FICTICIO` | `aura-sin-router` | C, H | La API de la malla exige un SSID de router, pero estos nodos **nunca** se conectan al router. Es un valor fijo: **no se cambia al mudar la red**. Probado: se unen y el plan B funciona aunque difiera del SSID real del gateway. |
-| Vendor IE de AURA (`AURA_OUI_0..2`, `AURA_IE_CONCENTRADOR`) | `02:A5:52`, tipo `1` | C, H | Es como la hoja reconoce a los concentradores. Si no coincide, la hoja nunca encuentra padre. |
+| `MESH_ID_BYTES` | (en `config_local.h`) | G, C, H — `main/config_local.h` | Identifica la red. Nodos con otro ID no se ven. |
+| `MESH_AP_PASS` | (en `config_local.h`) | G, C, H — `main/config_local.h` | Clave WPA2 entre nodos (mínimo 8 caracteres). La da la cátedra. |
+| `MESH_MAX_CAPAS` | `6` | G, C, NM | Profundidad máxima del árbol. |
+| `ROUTER_FICTICIO` | `aura-sin-router` | C, NM | La API exige un SSID de router, pero estos nodos **nunca** se conectan al router. Fijo: **no se cambia al mudar la red**. |
+| Vendor IE (`AURA_OUI_0..2`, `AURA_IE_CONCENTRADOR`) | `02:A5:52`, tipo `1` | AM (`aura_util.h`) | Es como la hoja reconoce a los concentradores. |
+| Trama (`AURA_PROTO_VERSION`, tipos, `AURA_PAYLOAD_MAX`) | v3, 180 B | AM (`aura_trama.h`) | Igual a `comun/protocolo_aura.h` más los tipos internos HORA (9), LOTE (10), EVENTO_OK (11) y REPORTAR (12). Los tipos **no se renumeran**, solo se agregan. Una trama de otra versión se descarta y se cuenta (`version_distinta`). |
+| País | `AR` (canales 1–13) | G, C, NM | Sin esto, con el router en el canal 12 o 13 la malla no arranca. |
 
 ### 4.2 Solo en el gateway
 
@@ -211,95 +246,92 @@ Después de cambiar un parámetro hay que **recompilar y grabar todos los firmwa
 
 | Parámetro | Valor actual | Dónde | Efecto / cuidado |
 |---|---|---|---|
-| `REDES_WIFI` | `Personal-419`, `IngComputacion` (claves en el archivo) | Gc | Lista de redes `{"SSID", "clave"}` en orden de preferencia (2,4 GHz, sin portal de login y sin aislamiento de clientes). Usa la primera que esté al alcance; si queda 5 min sin router (`REINICIO_SIN_ROUTER_MS`, en G), se reinicia y empieza por la siguiente. |
-| `BROKER_URI` | `""` (vacío) | Gc | Vacío = el gateway prueba primero el **último broker que le anduvo en esa red** (guardado en NVS) y, si no responde 3 veces, **lo busca solo** por broadcast UDP y no hace falta saber la IP de la PC. `"mqtt://IP:puerto"` = dirección fija (para un broker que no responda el descubrimiento, como Mosquitto o el servidor de AURA). |
-| `PUERTO_DESCUBRIMIENTO` | `18830` (UDP) | G **y** PC (`broker.py`) | Puerto de la pregunta `AURA_BROKER?`. Tiene que coincidir en los dos. |
-| `FALLOS_PARA_REBUSCAR` | `3` | G | Desconexiones seguidas del broker antes de volver a buscarlo (por si la PC cambió de IP). |
-| Canal de la malla | el del router en 2,4 GHz | automático | El gateway busca el router y usa su canal. Concentradores y hojas usan canal `0` (buscan en todos). **No fijar el canal** en C ni H. |
-| `CANAL_SIN_ROUTER` | `6` | G | Canal que usa el gateway si no encuentra el router (la malla anda, pero sin MQTT). |
-| `MESH_MAX_HIJOS` | `6` | G | Hijos directos del gateway (máximo 10). |
-| `TOPICO_CMD_PREFIJO` | `aura/cmd/` | G **y** PC | Prefijo de las órdenes. Si cambia, cambiarlo también en `broker.py`, `dashboard.html` y `led_blink.py` (y en AURA). |
-| `TOPICO_POR_DEFECTO` | `aura/sin_topico` | G | Dónde publica los mensajes que llegan sin `topic` o con JSON inválido. |
-| `SERVIDOR_NTP` | `pool.ntp.org` | G | Servidor de hora. En la red de la facultad puede convenir el NTP institucional. |
-| `ZONA_HORARIA` | `<-03>3` (UTC-3) | G | Solo afecta los logs. `ts` siempre viaja en UTC. |
-| `PERIODO_HORA_MS` | `60000` | G | Cada cuánto reparte la hora. Más corto = relojes más parejos, con un poco más de tráfico. |
-| `MAX_NODOS` | `32` | G | Tamaño de la tabla `id → ruta`. Con más nodos en la red hay que agrandarla. |
+| `REDES_WIFI` | `Personal-419`, `IngComputacion` (claves en el archivo) | Gc | Lista `{"SSID", "clave"}` en orden de preferencia (2,4 GHz, sin portal de login ni aislamiento de clientes). Usa la primera al alcance; si queda 5 min sin router (`REINICIO_SIN_ROUTER_MS`), se reinicia y empieza por la siguiente. |
+| `BROKER_URI` | `""` | Gc | Vacío = prueba el **último broker que le anduvo en esa red** (NVS) y, si falla 3 veces, lo busca por broadcast UDP. `"mqtt://IP:puerto"` = fijo (Mosquitto, servidor de AURA). |
+| `MQTT_USUARIO`, `MQTT_CLAVE` | vacíos (anónimo) | Gc | El broker de aura-app no acepta anónimos: usuario `raiz` y la clave de su `.env`. |
+| `PUERTO_DESCUBRIMIENTO` | `18830` (UDP) | G **y** PC | Tiene que coincidir con `broker.py`. |
+| `ESPERA_RESULTADO_MS` | `30000` | G | Comando sin resultado del nodo → `rechazado` `sin_resultado_del_nodo`. |
+| `INTERVALO_STATUS_MS` | `60000` | G | Cada cuánto publica su propio status. |
+| `NODOS_CAP` | `64` | G | Nodos que sigue para offline y repetidos. |
+| `CANAL_SIN_ROUTER` | `6` | G | Canal si no ve ninguna red (la malla anda, sin MQTT). |
+| `SERVIDOR_NTP`, `ZONA_HORARIA` | `pool.ntp.org`, UTC-3 | G | La zona solo afecta los logs: `ts` siempre en UTC. |
 
 ### 4.3 Solo en el concentrador
 
 | Parámetro | Valor actual | Dónde | Efecto / cuidado |
 |---|---|---|---|
-| `AULA` | `aula1` | C **y** las H de esa aula | Tiene que ser **la misma** en el concentrador y en sus hojas. |
-| `DEVICE_ID` / `TOPICO_ESTADO` | `aula1-concentrador`, `aura/aula1/concentrador/estado` | C (y PC si cambian) | El tablero de prueba busca esos tópicos. |
-| `MESH_MAX_HIJOS` | `6` | C | Máximo de hojas directas del aula (máximo 10 por AP). |
-| `MAX_HOJAS` | `8` | C | Tamaño de la tabla de hojas del aula. |
-| Buffer de recepción | `600` bytes | C (`tarea_recepcion`) | Límite de tamaño de mensaje de las hojas. Si se agranda, revisar también el de H. |
-| `PIN_LED_RGB`, `BRILLO_LED`, `PIN_BOTON` | `38`, `150`, `0` | C | Placa Waveshare ESP32-S3-DEV-KIT: el WS2812 está en GPIO38 y usa **orden R-G-B**. En otras S3 suele ser GPIO48 con orden G-R-B. |
+| Aula | NVS (la asigna AURA) | — | `set_config {"aula":"…"}` al `hw_id` del concentrador. |
+| `ESPERA_LOTE_MS` | `50` | C | Cuánto junta datos de sus hojas antes de mandarlos en un LOTE. Más alto = menos paquetes, más demora. |
+| `INTERVALO_REPORTE_S` | `60` | C | Su propio status (offline a los 3 intervalos). |
+| `filtrar()` | deja pasar todo | C | Lógica local del aula. Ojo: una telemetría que no sigue nunca se confirma y la hoja la reintenta. |
+| `MESH_MAX_HIJOS` | `6` | C | Hojas directas del aula (máximo 10). |
+| `PIN_LED_RGB`, `BRILLO_LED`, `PIN_BOTON` | `38`, `150`, `0` | C | Waveshare ESP32-S3-DEV-KIT: WS2812 en GPIO38, orden **R-G-B**. |
 
 ### 4.4 Solo en las hojas
 
 | Parámetro | Valor actual | Dónde | Efecto / cuidado |
 |---|---|---|---|
-| `AULA`, `DEVICE_ID`, tópicos | `aula1`, `aula1-hoja` | H | Ver 2.2. `AULA` igual a la del concentrador. |
-| `ESPERA_RECONEXION_MS` | `5000` | H | Margen para que vuelva el padre tras un corte breve. Más corto = cambia de padre ante cualquier interferencia. |
-| `BUSQUEDAS_PLAN_B` | `3` | H | Escaneos sin ver al concentrador antes del plan B (~9 s cada uno). Menos = plan B más rápido, pero más "saltos". |
-| `REVISAR_AULA_MS` | `30000` | H | En plan B, cada cuánto se fija si volvió el concentrador. |
-| `ESPERA_CONEXION_MS` | `15000` | H | Tiempo que espera una conexión después de elegir padre. |
-| `LIMITE_ENVIO_MS` | `5000` | H, C (G usa el mismo valor) | Tiempo máximo de un `esp_mesh_send()`. Espressif recomienda no bajar de 5 s. |
-| `FALLOS_PARA_RECONECTAR` | `3` | H, C | Envíos fallidos seguidos antes de forzar la reconexión (ver 2.1, regla 12). |
-| Período de datos | `2000` ms | H (`tarea_envio`) | Cada cuánto manda mediciones. |
+| Aula | NVS (la asigna AURA) | — | Sin aula la hoja anda en `sin_aula` (directo a la raíz). |
+| `intervalo_s` | `10` (2 a 3600) | H, NVS | Cada cuánto mide. Se cambia con `set_config`. |
+| `ESPERA_RECONEXION_MS` | `5000` | NM | Margen para que vuelva el padre tras un corte breve. |
+| `BUSQUEDAS_PLAN_B` | `3` | NM | Escaneos sin ver al concentrador antes del plan B. |
+| `REVISAR_AULA_MS` | `30000` | NM | En plan B, cada cuánto se fija si volvió. Al recibir un aula nueva revisa 5 veces seguidas, cada 3 s. |
+| `LIMITE_ENVIO_MS`, `FALLOS_PARA_RECONECTAR` | `5000`, `3` | NM, C | Vigilante de envío: tras 3 envíos fallidos fuerza la reconexión (evita el `[WND-RX] timeout`). |
+| `BEACON_HOJA_TU` | `60000` | NM | El AP de la hoja casi no emite beacons (ver 4.6). |
+| `COLA_CAPACIDAD` | `400` (~73 KB de RAM) | NM (`cola.h`) | Mediciones que aguanta sin confirmación. Llena: se pierden las más viejas (`descartadas`). Si no hay RAM, usa la mitad. |
+| `EVENTO_ESPERA_MIN_MS`, `EVENTO_ESPERA_MAX_MS` | `2000`, `30000` | NM | Reintento de eventos sin `EVENTO_OK`. |
+| `potencia_tx` | `60` (15 dBm) | H | Pasos de 0,25 dBm. Ver la sección 6. |
 | `PIN_LED`, `LED_ACTIVO_BAJO` | `8`, `1` | H | LED de la C3 SuperMini (activo en bajo). |
-| `POTENCIA_TX` | `60` (15 dBm) | H | Pasos de 0,25 dBm (máx. 84 = 21 dBm). Define el **alcance de subida**: a 40 (10 dBm) la SuperMini solo llegaba a ~3 m con una pared. En la SuperMini, si a potencia alta no conecta (antena mal adaptada), bajar de a poco. |
-| `mesh_ap.max_connection` | `1` | H | No bajar a 0 (la API no lo acepta). Las otras hojas no la eligen como padre. |
-| Buffer de órdenes | `600` bytes | H (`tarea_ordenes`) | Tamaño máximo de una orden. |
 
 ### 4.5 Por placa (`sdkconfig.defaults` de cada proyecto)
 
 | Placa | Ajustes |
 |---|---|
-| ESP32-C3 SuperMini | `CONFIG_ESPTOOLPY_FLASHSIZE_4MB`, `CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE` |
-| Waveshare S3, módulo WROOM-1 N16R8 | flash quad 16 MB (`FLASHMODE_DIO`, `FLASHSIZE_16MB`), app grande |
-| Waveshare S3, módulo WROOM-2 N32R16V | flash **octal** 32 MB (`OCT_FLASH`, `FLASHMODE_OPI`, `FLASHSIZE_32MB`), app grande |
+| ESP32-C3 SuperMini (hoja) | `FLASHSIZE_4MB`, `PARTITION_TABLE_SINGLE_APP_LARGE` |
+| Waveshare S3, módulo WROOM-1 N16R8 (concentrador) | flash quad 16 MB (`FLASHMODE_DIO`, `FLASHSIZE_16MB`), app grande |
+| Waveshare S3, módulo WROOM-2 N32R16V (gateway) | flash **octal** 32 MB (`OCT_FLASH`, `FLASHMODE_OPI`, `FLASHSIZE_32MB`), app grande |
 
-Si se cambia `sdkconfig.defaults`, borrar `sdkconfig` y `build` antes de compilar: si no, el cambio no se aplica.
+Si se cambia `sdkconfig.defaults`, borrar `sdkconfig` y `build` antes de compilar.
+
+### 4.6 Por qué la hoja no es `MESH_LEAF`
+
+En IDF 6.1, `esp_mesh_set_parent()` con `MESH_LEAF` devuelve `ESP_FAIL` en el acto, y pasar a `MESH_LEAF` ya conectada
+hace que la pila se desconecte y reconecte en bucle (probado el 2026-10-20). Por eso la biblioteca intenta `MESH_LEAF`
+una vez (por si otra versión de IDF lo acepta) y, si no, se une como `MESH_NODE` y:
+- sube el intervalo de beacon de su AP de 300 a **60 000 TU** (~200 veces menos beacons en el canal del campus);
+- **rechaza** a cualquier nodo que intente colgarse de ella.
 
 ---
 
 ## 5. Problemas frecuentes
 
-| Síntoma en el monitor de la hoja | Causa probable | Qué revisar |
+| Síntoma | Causa probable | Qué revisar |
 |---|---|---|
-| `El concentrador de aula1 no está visible` y nunca conecta | `AULA` distinta, concentrador apagado o vendor IE distinto | Sección 4.1 y `AULA` del concentrador |
-| Ve nodos `malla:` pero ninguno marcado `<- concentrador` | Vendor IE (OUI o tipo) distinto entre C y H | `AURA_OUI_*` y `AURA_IE_CONCENTRADOR` |
-| No ve ningún nodo `malla:` | `MESH_ID` distinto, o gateway sin arrancar | `MESH_ID` en G, C y H |
-| `esp_mesh_set_parent: ESP_FAIL` | Se usó `MESH_LEAF` | Regla 7 |
-| `STA is connecting, scan are not allowed!` en bucle | Se quitó el corte de reintentos de `tarea_vigia` | Restaurar `esp_mesh_set_self_organized(false,false)` antes de escanear |
-| Los datos llegan con `"ts_gw":true` | La hoja todavía no recibió la hora | Normal en el primer minuto; si sigue, revisar que el gateway tenga internet |
-| AURA manda una orden y el gateway dice `Nodo desconocido` | La hoja todavía no mandó ningún mensaje, o el `id` del tópico no coincide | `DEVICE_ID` y el tópico `aura/cmd/<id>` |
-| La C3 conecta y se cae enseguida | Antena de la SuperMini mal adaptada | Bajar `POTENCIA_TX` de a poco (78 → 60 → 40) |
-| La hoja deja de mandar a pocos metros (el tablero sigue mostrando buena señal del padre) | Poca potencia de subida: el padre no la escucha | Subir `POTENCIA_TX`; si no alcanza, ver la sección 6 |
-| `[WND-RX] … timeout` repetido y no salen datos | Control de flujo trabado después de un reinicio rápido del padre | Regla 12. El vigilante lo resuelve solo en unos 20 s |
-| El gateway dice `No encuentro el broker` | `broker.py` apagado, PC en otra red, o firewall | La PC tiene que estar en la misma red. Windows tiene que marcarla como *Privada* para que la regla de Python aplique. O poner `BROKER_URI` fijo |
+| La hoja queda en `sin_aula` | AURA todavía no le asignó aula | `set_config {"aula":…}` desde AURA o el tablero |
+| `El concentrador de aula1 no está visible` y pasa a plan B | Concentrador apagado, sin aula, o con otra aula | El status del concentrador: `config.aula` |
+| No ve ningún nodo de la malla | `MESH_ID` distinto, o gateway sin arrancar | `config_local.h` en G, C y H |
+| `auth expire` en bucle, o el concentrador entra y sale de la raíz cada ~11 s (`reason = 209`) | **Placas tocándose o muy juntas** | Separarlas. Pasó en el banco el 2026-10-20: con las placas separadas anduvo todo |
+| `STA is connecting, scan are not allowed!` en bucle | Se tocó el corte de reintentos de `tarea_vigia` | Restaurar `esp_mesh_set_self_organized(false,false)` antes de escanear |
+| Los `data` llegan sin `ts` | La hoja todavía no tiene hora y la medición es de un arranque anterior | Normal tras un corte sin red; si sigue, revisar que el gateway tenga internet |
+| `rechazado` `nodo_no_alcanzable` | La hoja no está en la malla | Que esté encendida y conectada |
+| `rechazado` `sin_resultado_del_nodo` | La hoja recibió el comando pero no contestó en 30 s | Que `ejecutar_comando` no se bloquee |
+| La cola crece y no baja | AURA no confirma (sin backend, o la AURA falsa en `sin_ack`) | El modo de la AURA falsa en el tablero |
+| `descartadas` o `eventos_perdidos` en el status | Un corte más largo de lo que entra en la cola (400 mediciones, 8 eventos) | Normal tras cortes largos; con intervalos cortos, subir `COLA_CAPACIDAD` |
+| `[WND-RX] … timeout` repetido | Control de flujo trabado tras un reinicio rápido del padre | El vigilante lo resuelve solo en ~20 s |
+| El gateway dice `No encuentro el broker` | `broker.py` apagado, PC en otra red, o firewall | Misma red, Windows con la red como *Privada*, o `BROKER_URI` fijo |
+| La C3 conecta y se cae enseguida | Antena de la SuperMini mal adaptada | Sección 6 |
 
 ---
 
 ## 6. Alcance
 
-- **Señales de vida en el LED** (para diagnosticar sin PC): 2 destellos cortos al arrancar (si se repiten cada pocos
-  segundos, se reinicia en bucle) y 1 destello largo al conectarse al padre. El primer mensaje después de arrancar
-  trae `"reinicio"` con el motivo (`encendido`, `brownout`, `panic`, `watchdog`…).
-- La hoja manda en el mensaje de sensores `"rssi"`: la señal con que **recibe** a su padre, en dBm. El tablero la muestra
-  como "señal del padre": mejor que −67 es buena, entre −67 y −80 es justa, y peor que −80 está al límite.
-- El RSSI mide la bajada. La **subida** depende de `POTENCIA_TX` de la hoja. Si los datos se cortan con buena señal del
-  padre, el problema es la potencia o la antena de la hoja.
-- La **C3 SuperMini** tiene la antena de chip mal adaptada, y por eso tiene poco alcance y es sensible a la potencia.
-  Para más alcance, de más barato a más prolijo:
-  1. **Modificación de antena:** soldar un alambre de 31 mm (cuarto de onda a 2,4 GHz) en la alimentación de la antena.
-     Es una modificación muy difundida para esta placa y mejora mucho el alcance.
-     **Probado en AURA:** con la antena y `POTENCIA_TX 60` (15 dBm), la hoja pasó de ~3 m a ~10 m a través de una vidriera,
-     alimentada con powerbank. **Con la antena no subir a 19,5 dBm**: así andaba conectada a la PC pero no con cargador ni
-     powerbank. Probablemente la RF del alambre se mete en la alimentación cuando la placa no tiene la masa de la PC.
-  2. **Placa C3 con conector para antena externa** (u.FL/IPEX), por ejemplo la Seeed XIAO ESP32C3, que trae antena.
-  3. **Para la instalación final:** módulos con antena certificada (ESP32-C3-MINI-1 o ESP32-C3-WROOM-02) en una placa propia.
-- Del lado de la red, la solución de arquitectura son los **nodos de piso**: repetidores de la malla ubicados para cubrir
-  pasillos y zonas lejanas. En plan B, una hoja puede colgarse de la raíz o de otro concentrador si su concentrador no la alcanza.
+- El status de la hoja trae `rssi` (cómo **recibe** a su padre, en dBm) y `capa`: mejor que −67 es buena, entre −67 y
+  −80 justa, peor que −80 al límite. El RSSI mide la bajada; la **subida** depende de `potencia_tx` y de la antena.
+- La **C3 SuperMini** tiene la antena de chip mal adaptada. De más barato a más prolijo:
+  1. **Alambre de 31 mm** (cuarto de onda) en la alimentación de la antena. **Probado:** con `potencia_tx 60` (15 dBm),
+     de ~3 m a ~10 m a través de una vidriera, con powerbank. **Con la antena no subir a 19,5 dBm** (con cargador o
+     powerbank deja de andar).
+  2. **Placa C3 con conector de antena externa** (u.FL/IPEX), por ejemplo la Seeed XIAO ESP32C3.
+  3. **Instalación final:** módulos con antena certificada (ESP32-C3-MINI-1 o ESP32-C3-WROOM-02) en placa propia.
+- Del lado de la red, la solución son los **nodos de piso** (repetidores). En plan B, una hoja puede colgarse de la raíz
+  o de otro concentrador.

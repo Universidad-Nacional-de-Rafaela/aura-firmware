@@ -1,42 +1,59 @@
 """
-Broker MQTT mínimo para pruebas del Proyecto AURA (sin dependencias).
+Broker MQTT mínimo para el banco de pruebas del Proyecto AURA (sin dependencias).
 
 - MQTT 3.1.1: CONNECT, PUBLISH (QoS 0/1/2), SUBSCRIBE, UNSUBSCRIBE, PING, DISCONNECT.
+- Mensajes retenidos (el status de cada placa es retenido, contrato §3.2) y Last Will
+  (el gateway registra "offline" en su status).
 - Imprime cada mensaje publicado (tópico + payload) y lo guarda en mensajes.log.
-- Reenvía los mensajes a los clientes suscriptos (QoS 0), así se puede
-  mirar con cualquier cliente (MQTT Explorer, mosquitto_sub, etc.).
+- Reenvía los mensajes a los clientes suscriptos (QoS 0).
 
-- Tablero web en http://localhost:8080 (dashboard.html): muestra en vivo lo
-  que llega por MQTT y permite mandar comandos al LED de la hoja.
+- AURA falsa: como no hay backend en el banco, contesta cada hw/<hw_id>/data que trae
+  ingest_id con el ack que publicaría AURA después de guardar (contrato §3.6):
+  "persistido", o "duplicado" si ya vio ese ingest_id. Así el gateway confirma la muestra
+  y la hoja la saca de su cola. El modo se cambia desde el tablero:
+      ok          normal
+      sin_ack     base caída: no contesta (la hoja guarda y reintenta 15 s ... 5 min)
+      cuarentena  placa sin asignar: contesta cuarentena (la hoja libera la muestra)
+      rechazado   contesta rechazado (la hoja libera la muestra)
+  Con el backend real levantado, arrancar con --sin-aura: si no, cada muestra recibe dos ack.
 
-- Descubrimiento: contesta en UDP 18830 a la pregunta "AURA_BROKER?" con
-  "AURA_BROKER <puerto MQTT>". El gateway la manda por broadcast al conectarse,
-  así encuentra la IP de la PC solo, sin configurarla en el firmware.
+- Tablero web en http://localhost:8080 (dashboard.html): las placas que publican en
+  hw/<hw_id>/..., sus datos y su estado, y comandos (LED, aula, intervalo).
 
-Uso:   python broker.py            (MQTT en 0.0.0.0:1883, tablero en :8080)
-       python broker.py 1884       (otro puerto MQTT)
+- Descubrimiento: contesta en UDP 18830 a "AURA_BROKER?" con "AURA_BROKER <puerto MQTT>".
 
-No tiene usuarios, TLS ni mensajes retenidos: es solo para el laboratorio.
+Uso:   python broker.py               (MQTT en 0.0.0.0:1883, tablero en :8080)
+       python broker.py 1884          (otro puerto MQTT)
+       python broker.py --sin-aura    (sin la AURA falsa)
+
+No tiene usuarios ni TLS: es solo para el laboratorio.
 """
 import asyncio
 import datetime
+import itertools
 import json
 import os
+import re
 import sys
 import time
 from urllib.parse import parse_qs, urlparse
 
-PUERTO = int(sys.argv[1]) if len(sys.argv) > 1 else 1883
+ARGS = [a for a in sys.argv[1:] if not a.startswith("--")]
+PUERTO = int(ARGS[0]) if ARGS else 1883
 PUERTO_WEB = 8080
 PUERTO_DESCUBRIMIENTO = 18830        # UDP; tiene que coincidir con el gateway
 CARPETA = os.path.dirname(os.path.abspath(__file__))
 LOG = os.path.join(CARPETA, "mensajes.log")
-DESTINO = "aula1-hoja"               # id lógico del nodo que comanda el tablero
+MODOS_AURA = ("ok", "sin_ack", "cuarentena", "rechazado", "apagada")
+TOPICO_DATA = re.compile(r"^hw/((?:mac-[0-9a-f]{12})|(?:eui-[0-9a-f]{16})|(?:svc-[a-z0-9-]{1,32}))/data$")
 
-suscripciones = {}  # writer -> set de filtros
+suscripciones = {}   # writer -> set de filtros
 oyentes_web = set()  # colas asyncio de los navegadores conectados (SSE)
 historial = []       # últimos mensajes, para quien abre el tablero tarde
-parpadeo = None      # tarea del modo "parpadear"
+retenidos = {}       # tópico -> payload
+modo_aura = "apagada" if "--sin-aura" in sys.argv else "ok"
+vistos = set()       # ingest_id ya "guardados" por la AURA falsa
+numero_comando = itertools.count(1)
 
 
 def ahora():
@@ -83,10 +100,10 @@ async def leer_paquete(reader):
 
 def leer_str(buf, i):
     n = int.from_bytes(buf[i:i + 2], "big")
-    return buf[i + 2:i + 2 + n].decode("utf-8", "replace"), i + 2 + n
+    return buf[i + 2:i + 2 + n], i + 2 + n
 
 
-def mostrar(cliente, topico, payload):
+def mostrar(cliente, topico, payload, retenido=False):
     texto = payload.decode("utf-8", "replace")
     try:
         texto_lindo = json.dumps(json.loads(texto), ensure_ascii=False)
@@ -96,17 +113,22 @@ def mostrar(cliente, topico, payload):
     print(linea, flush=True)
     with open(LOG, "a", encoding="utf-8") as f:
         f.write(datetime.date.today().isoformat() + " " + linea + "\n")
-    evento = json.dumps({"t": time.time(), "cliente": cliente, "topico": topico, "payload": texto})
+    evento = json.dumps({"t": time.time(), "cliente": cliente, "topico": topico, "payload": texto,
+                         "retenido": retenido})
     historial.append(evento)
-    del historial[:-200]
+    del historial[:-300]
     for cola in list(oyentes_web):
         cola.put_nowait(evento)
 
 
-async def reenviar(topico, payload):
+def paquete_publish(topico, payload, retener=False):
     t = topico.encode()
     cuerpo = len(t).to_bytes(2, "big") + t + payload
-    paquete = bytes([0x30]) + codificar_largo(len(cuerpo)) + cuerpo
+    return bytes([0x31 if retener else 0x30]) + codificar_largo(len(cuerpo)) + cuerpo
+
+
+async def reenviar(topico, payload):
+    paquete = paquete_publish(topico, payload)
     for w, filtros in list(suscripciones.items()):
         if any(coincide(f, topico) for f in filtros):
             try:
@@ -116,9 +138,45 @@ async def reenviar(topico, payload):
                 suscripciones.pop(w, None)
 
 
+async def publicar(cliente, topico, payload, retener=False):
+    """Lo que publica un cliente, el tablero, el Last Will o la AURA falsa."""
+    if retener:
+        if payload:
+            retenidos[topico] = payload
+        else:
+            retenidos.pop(topico, None)
+    mostrar(cliente, topico, payload)
+    await reenviar(topico, payload)
+    await aura_falsa(topico, payload)
+
+
+async def aura_falsa(topico, payload):
+    """El ack que publicaría AURA después de guardar un data (contrato §3.6)."""
+    m = TOPICO_DATA.match(topico)
+    if not m or modo_aura in ("sin_ack", "apagada"):
+        return
+    try:
+        datos = json.loads(payload)
+    except ValueError:
+        return
+    ingest_id = datos.get("ingest_id")
+    if not isinstance(ingest_id, str) or not ingest_id:
+        return
+    if not isinstance(datos.get("values"), dict) or modo_aura == "rechazado":
+        ack = {"ingest_id": ingest_id, "resultado": "rechazado",
+               "motivo": "modo_rechazado" if modo_aura == "rechazado" else "values_invalido"}
+    elif ingest_id in vistos:
+        ack = {"ingest_id": ingest_id, "resultado": "duplicado"}
+    else:
+        vistos.add(ingest_id)
+        ack = {"ingest_id": ingest_id, "resultado": "cuarentena" if modo_aura == "cuarentena" else "persistido"}
+    await publicar("aura-falsa", f"hw/{m.group(1)}/ack", json.dumps(ack).encode())
+
+
 async def atender(reader, writer):
     ip = writer.get_extra_info("peername")[0]
     cliente = ip
+    voluntad = None          # (tópico, payload, retener) del Last Will
     try:
         while True:
             cab, cuerpo = await leer_paquete(reader)
@@ -126,9 +184,14 @@ async def atender(reader, writer):
 
             if tipo == 1:  # CONNECT
                 _, i = leer_str(cuerpo, 0)          # "MQTT"
+                flags = cuerpo[i + 1]
                 i += 1 + 1 + 2                      # nivel, flags, keepalive
-                client_id, _ = leer_str(cuerpo, i)
-                cliente = f"{client_id or '?'}@{ip}"
+                client_id, i = leer_str(cuerpo, i)
+                cliente = f"{client_id.decode('utf-8', 'replace') or '?'}@{ip}"
+                if flags & 0x04:                    # Last Will
+                    w_topico, i = leer_str(cuerpo, i)
+                    w_payload, i = leer_str(cuerpo, i)
+                    voluntad = (w_topico.decode(), w_payload, bool(flags & 0x20))
                 print(f"{ahora()}  + conectado {cliente}", flush=True)
                 writer.write(b"\x20\x02\x00\x00")   # CONNACK aceptado
 
@@ -139,40 +202,45 @@ async def atender(reader, writer):
                 if qos:
                     pid = cuerpo[i:i + 2]
                     i += 2
-                payload = cuerpo[i:]
-                mostrar(cliente, topico, payload)
                 if qos == 1:
                     writer.write(b"\x40\x02" + pid)  # PUBACK
                 elif qos == 2:
                     writer.write(b"\x50\x02" + pid)  # PUBREC
-                await reenviar(topico, payload)
+                await writer.drain()
+                await publicar(cliente, topico.decode("utf-8", "replace"), cuerpo[i:], bool(cab & 0x01))
 
             elif tipo == 6:  # PUBREL
                 writer.write(b"\x70\x02" + cuerpo[:2])  # PUBCOMP
 
             elif tipo == 8:  # SUBSCRIBE
-                pid, i, otorgados = cuerpo[:2], 2, bytearray()
+                pid, i, otorgados, nuevos = cuerpo[:2], 2, bytearray(), []
                 filtros = suscripciones.setdefault(writer, set())
                 while i < len(cuerpo):
                     f, i = leer_str(cuerpo, i)
+                    f = f.decode()
                     i += 1                          # QoS pedida
                     filtros.add(f)
+                    nuevos.append(f)
                     otorgados.append(0)
                     print(f"{ahora()}  {cliente} suscripto a {f}", flush=True)
                 resto = pid + bytes(otorgados)
                 writer.write(bytes([0x90]) + codificar_largo(len(resto)) + resto)
+                for t, p in list(retenidos.items()):          # lo retenido, al suscribirse
+                    if any(coincide(f, t) for f in nuevos):
+                        writer.write(paquete_publish(t, p, retener=True))
 
             elif tipo == 10:  # UNSUBSCRIBE
                 pid, i = cuerpo[:2], 2
                 while i < len(cuerpo):
                     f, i = leer_str(cuerpo, i)
-                    suscripciones.get(writer, set()).discard(f)
+                    suscripciones.get(writer, set()).discard(f.decode())
                 writer.write(b"\xb0\x02" + pid)
 
             elif tipo == 12:  # PINGREQ
                 writer.write(b"\xd0\x00")
 
-            elif tipo == 14:  # DISCONNECT
+            elif tipo == 14:  # DISCONNECT: desconexión prolija, sin Last Will
+                voluntad = None
                 break
 
             await writer.drain()
@@ -182,26 +250,15 @@ async def atender(reader, writer):
         suscripciones.pop(writer, None)
         print(f"{ahora()}  - desconectado {cliente}", flush=True)
         writer.close()
+        if voluntad:
+            await publicar(f"last-will {cliente}", voluntad[0], voluntad[1], voluntad[2])
 
 
 # ---------------------------------------------------------------------------
 #  Tablero web (HTTP + Server-Sent Events)
 # ---------------------------------------------------------------------------
-async def publicar_desde_web(topico, payload):
-    mostrar("tablero", topico, payload)
-    await reenviar(topico, payload)
-
-
-async def bucle_parpadeo(destino, periodo):
-    estado = 1
-    while True:
-        await publicar_desde_web(f"aura/cmd/{destino}", json.dumps({"led": estado}).encode())
-        estado ^= 1
-        await asyncio.sleep(periodo)
-
-
 async def atender_web(reader, writer):
-    global parpadeo
+    global modo_aura
     try:
         linea = (await reader.readline()).decode("latin-1")
         while (await reader.readline()) not in (b"\r\n", b"\n", b""):
@@ -220,8 +277,12 @@ async def atender_web(reader, writer):
             writer.write(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n"
                          b"Cache-Control: no-cache\r\n\r\n")
             cola = asyncio.Queue()
+            for t, p in retenidos.items():          # primero el estado retenido de cada placa
+                cola.put_nowait(json.dumps({"t": time.time(), "cliente": "retenido", "topico": t,
+                                            "payload": p.decode("utf-8", "replace"), "retenido": True}))
             for ev in historial:
                 cola.put_nowait(ev)
+            cola.put_nowait(json.dumps({"aura": modo_aura}))
             oyentes_web.add(cola)
             try:
                 while True:
@@ -235,16 +296,20 @@ async def atender_web(reader, writer):
                 oyentes_web.discard(cola)
 
         elif url.path == "/cmd" and metodo == "POST":
-            destino = q.get("id", DESTINO)
-            accion = q.get("led", "toggle")
-            if parpadeo:
-                parpadeo.cancel()
-                parpadeo = None
-            if accion == "blink":
-                parpadeo = asyncio.create_task(bucle_parpadeo(destino, float(q.get("periodo", "1"))))
-            elif accion != "stop":
-                valor = {"1": 1, "0": 0}.get(accion, "toggle")
-                await publicar_desde_web(f"aura/cmd/{destino}", json.dumps({"led": valor}).encode())
+            # /cmd?hw=mac-...&command=led&params={"encendido":true}
+            hw = q.get("hw", "")
+            params = json.loads(q.get("params", "{}"))
+            orden = {"command": q.get("command", ""), "params": params,
+                     "command_id": f"tablero-{next(numero_comando)}"}
+            await publicar("tablero", f"hw/{hw}/command", json.dumps(orden).encode())
+            writer.write(b"HTTP/1.1 204 No Content\r\n\r\n")
+
+        elif url.path == "/aura" and metodo == "POST":
+            if q.get("modo") in MODOS_AURA:
+                modo_aura = q["modo"]
+                print(f"{ahora()}  AURA falsa: modo {modo_aura}", flush=True)
+                for cola in list(oyentes_web):
+                    cola.put_nowait(json.dumps({"aura": modo_aura}))
             writer.write(b"HTTP/1.1 204 No Content\r\n\r\n")
 
         else:
@@ -276,6 +341,7 @@ async def main():
         Descubrimiento, local_addr=("0.0.0.0", PUERTO_DESCUBRIMIENTO))
     print(f"Broker MQTT de prueba escuchando en 0.0.0.0:{PUERTO}  (Ctrl+C para salir)")
     print(f"Descubrimiento: UDP {PUERTO_DESCUBRIMIENTO}")
+    print(f"AURA falsa (ack): {modo_aura}")
     print(f"Tablero: http://localhost:{PUERTO_WEB}")
     print(f"Log: {LOG}", flush=True)
     async with servidor, web:

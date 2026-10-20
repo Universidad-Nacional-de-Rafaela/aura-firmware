@@ -24,3 +24,10 @@
  *        el descubrimiento, como un Mosquitto o el servidor de AURA).
  */
 #define BROKER_URI      ""
+
+/*
+ * Usuario y clave del broker. Vacíos = anónimo (broker.py del banco).
+ * El broker de aura-app no acepta anónimos: usuario "raiz" y la clave MQTT_RAIZ_PASSWORD de su .env.
+ */
+#define MQTT_USUARIO    ""
+#define MQTT_CLAVE      ""

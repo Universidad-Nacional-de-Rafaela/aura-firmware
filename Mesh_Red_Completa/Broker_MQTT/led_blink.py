@@ -1,15 +1,14 @@
 """
-Prueba bidireccional AURA: prende y apaga el LED de la hoja cada 1 s por MQTT.
+Prueba bidireccional AURA (contrato v4.0): prende y apaga el LED de una hoja cada 1 s.
 
-  PC --MQTT--> gateway --malla--> concentrador --> hoja (LED GPIO8)
-  PC <--MQTT-- gateway <--malla-- concentrador <-- hoja (responde el estado)
+  PC --MQTT--> gateway --malla--> (concentrador) --> hoja (LED GPIO8)
+  PC <--MQTT-- gateway <--malla-- (concentrador) <-- hoja (resultado del comando)
 
-Publica {"led":1} / {"led":0} en aura/cmd/<id de la hoja> y escucha la
-respuesta en aura/<aula>/led, midiendo el tiempo de ida y vuelta.
+Publica {"command":"led","params":{"encendido":...},"command_id":...} en
+hw/<hw_id>/command y escucha hw/<hw_id>/response, midiendo el tiempo hasta "aplicado".
 
-Uso:   python led_blink.py                         (broker en localhost)
-       python led_blink.py 192.168.1.5             (otro broker)
-       python led_blink.py 127.0.0.1 aula2-hoja    (otra hoja)
+Uso:   python led_blink.py mac-907069add964                (broker en localhost)
+       python led_blink.py mac-907069add964 192.168.1.5    (otro broker)
 """
 import json
 import socket
@@ -17,13 +16,15 @@ import sys
 import threading
 import time
 
-BROKER = sys.argv[1] if len(sys.argv) > 1 else "127.0.0.1"
-ID_HOJA = sys.argv[2] if len(sys.argv) > 2 else "aula1-hoja"
-TOPICO_CMD = f"aura/cmd/{ID_HOJA}"
-TOPICO_RESP = f"aura/{ID_HOJA.split('-')[0]}/led"   # aula1-hoja -> aura/aula1/led
+if len(sys.argv) < 2:
+    sys.exit("Uso: python led_blink.py <hw_id de la hoja, p. ej. mac-907069add964> [broker]")
+HW_ID = sys.argv[1]
+BROKER = sys.argv[2] if len(sys.argv) > 2 else "127.0.0.1"
+TOPICO_CMD = f"hw/{HW_ID}/command"
+TOPICO_RESP = f"hw/{HW_ID}/response"
 PERIODO_S = 1.0
 
-enviados = {}  # estado del LED -> hora de envío del último comando
+enviados = {}  # command_id -> hora de envío
 
 
 def largo(n):
@@ -76,10 +77,12 @@ def escuchar(sock):
         topico = cuerpo[2:2 + n].decode()
         payload = cuerpo[2 + n:].decode("utf-8", "replace")
         try:
-            estado = json.loads(payload).get("led")
-        except ValueError:
-            estado = None
-        t0 = enviados.pop(estado, None)
+            r = json.loads(payload)
+            final = r.get("status") in ("aplicado", "rechazado")
+            command_id = r.get("details", {}).get("command_id")
+        except (ValueError, AttributeError):
+            final, command_id = False, None
+        t0 = enviados.pop(command_id, None) if final else None
         rtt = f"  ida y vuelta {1000 * (time.time() - t0):.0f} ms" if t0 else ""
         print(f"  <- {topico}  {payload}{rtt}", flush=True)
 
@@ -97,11 +100,14 @@ def main():
     threading.Thread(target=escuchar, args=(sock,), daemon=True).start()
 
     print(f"Broker {BROKER}:1883  ->  {TOPICO_CMD} cada {PERIODO_S} s  (Ctrl+C para salir)")
-    estado, ultimo_ping = 1, time.time()
+    estado, ultimo_ping, n = 1, time.time(), 0
     try:
         while True:
-            payload = json.dumps({"led": estado}).encode()
-            enviados[estado] = time.time()
+            n += 1
+            command_id = f"blink-{n}"
+            payload = json.dumps({"command": "led", "params": {"encendido": bool(estado)},
+                                  "command_id": command_id}).encode()
+            enviados[command_id] = time.time()
             sock.sendall(paquete(0x30, cadena(TOPICO_CMD) + payload))
             print(f"-> {TOPICO_CMD}  {payload.decode()}", flush=True)
             estado ^= 1
