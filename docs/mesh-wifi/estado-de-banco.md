@@ -1,19 +1,93 @@
 # Estado de banco — mesh ESP-WIFI-MESH
 
-**Al 2026-10-07: nada de esto se probó en placa.** El código compila para XIAO ESP32S3, los tests
-de host pasan y `herramientas/ack_falso.py` se probó contra un broker real. Lo que sigue es el
-protocolo de prueba, ordenado por cuántas placas hacen falta. Cada prueba anota su resultado acá.
+**Primera prueba en placa: 2026-10-09**, con tres **ESP32-C3 SuperMini** (la placa de la mesh; la
+XIAO ESP32S3 queda para LoRaWAN), FQBN `esp32:esp32:nologo_esp32c3_super_mini`, el hotspot de un
+celular como router (canal 1) y el broker de aura-app en la notebook. Lo que sigue es el protocolo
+de prueba, ordenado por cuántas placas hacen falta. Cada prueba anota su resultado acá.
 
 En la mesh ESP-NOW aparecieron **cinco defectos que solo se vieron en hardware**, pese a más de
 mil verificaciones de host que pasaban ([`../historico/mesh-v1/`](../historico/mesh-v1/), §9).
 Hay que esperar lo mismo.
 
+## Defectos que aparecieron en placa (2026-10-09)
+
+1. **Hoja o relevo sin `MESH_ROUTER_SSID`**: `esp_mesh_set_config` devuelve
+   `ESP_ERR_MESH_ARGUMENT` y la placa reiniciaba en bucle. El SSID es obligatorio (la clave no).
+   Ahora `radio_iniciar` lo avisa claro, la hoja sigue midiendo y guardando, y el relevo no arranca.
+2. **`WiFi.h` de Arduino reconecta por su cuenta** (autoReconnect, prendido por defecto) y se pelea
+   con la mesh: cientos de `MESH_EVENT_PARENT_DISCONNECTED` por segundo (motivos 106 `SCAN_FAIL` y
+   3), el raíz nunca vuelve a asociarse y el canal queda saturado (la notebook, en el mismo canal,
+   perdió el WiFi). Arreglo: `WiFi.setAutoReconnect(false)`.
+3. **SSID y clave guardados en la NVS** (por un `WiFi.begin` anterior en la misma placa) producen lo
+   mismo. Arreglo: `WiFi.persistent(false)` antes de `WiFi.mode()`. Probado flasheando el raíz sobre
+   una NVS con credenciales.
+
+## Defectos que aparecieron en placa (2026-10-16)
+
+4. **Router en el canal 12 o 13**: el driver WiFi arranca con el país `01` (mundial, canales 1-11),
+   `esp_mesh_set_config` devuelve `ESP_ERR_INVALID_ARG` y las tres placas reiniciaban en bucle
+   (`Channel number 13 is out of range from 1 to 11 in country code cc=01`). Arreglo:
+   `radio_iniciar` fija el país `AR` (canales 1-13) sin 802.11d.
+5. **Subred de Docker igual a la del WiFi** (no es del firmware): la red `aura_default` de aura-app
+   había quedado en `172.28.0.0/16` y el hotspot dio direcciones de `172.28.65.0/24`. El raíz tomaba
+   IP y le llegaba el SYN a Mosquitto, pero el contenedor contestaba por el bridge y no por el
+   gateway: `fallo la conexion, error -2` para siempre. Se diagnosticó apuntando el raíz a un
+   listener TCP fuera de Docker (ahí sí conectaba). Arreglo: aura-app fija su subred en el
+   `docker-compose.yml`. Si vuelve a pasar, comparar `docker network inspect aura_default` con la
+   IP que informa `[RAIZ] con IP …`.
+
+## Defectos que aparecieron en placa (2026-10-17)
+
+6. **La cola de la hoja paraba el loop ~2,5 s por escritura.** Con la cola en un solo archivo de
+   LittleFS (`/cola.bin`, 260 KB), cada escritura reescribía el archivo desde el offset hasta el
+   final (LittleFS es copy-on-write): la cabecera, en el offset 0, tardaba ~2,5 s y una ranura
+   ~2,2 s. Guardar una muestra paraba el loop ~4,7 s y cada confirmación ~2,5 s. Síntomas, con una
+   ráfaga de comandos al actuador: los comandos llegaban a la radio a tiempo pero se ejecutaban de
+   a tandas, el raíz contestaba `nodo_no_alcanzable` de comandos que la hoja sí ejecutó, y la hoja
+   descartaba resultados (`evento tipo 5 descartado`). Además, cada muestra borraba ~180 bloques:
+   la flash de una hoja se gastaba en meses. Arreglo: `comun/cola_archivos.h` reparte la cola en
+   archivos chicos (cabecera sola, 16 ranuras por archivo, menos de un bloque cada uno); medido en
+   placa: ranura ~40 ms, cabecera ~10 ms, loop nunca parado más de 300 ms, 10 de 10 comandos
+   `aplicado` en ráfaga de uno por segundo. Al actualizar, la hoja borra `/cola.bin`: lo que tuviera
+   sin confirmar se pierde una vez.
+
+## Problemas abiertos (2026-10-19)
+
+7. **La SuperMini no siempre se une con fuente externa.** Conectadas a la notebook por USB, el
+   relevo y la hoja se unen siempre. Con cargador o powerbank, a veces sí y a veces no, incluso
+   en el mismo lugar: el 2026-10-19 el relevo no se unió y, apagado y prendido una vez sin
+   moverlo, entró. No se reinician (la hoja sigue midiendo y encolando). Hipótesis: la falla
+   conocida de la antena cerámica de la C3 SuperMini, a la que el cable USB le hace de masa.
+   - **Bajar la potencia a 8,5 dBm** (`esp_wifi_set_max_tx_power(34)` después de
+     `esp_mesh_start`), el arreglo que suele recomendarse, **no sirve**: relevo y hoja entran y
+     salen de la mesh cada 20-40 s ya a ~5 m del raíz. Se volvió a potencia completa.
+   - En prueba (2026-10-19): reemplazar la antena cerámica de **una** placa por un alambre de un
+     cuarto de onda (~31 mm) en el pad de alimentación, y compararla con otra sin modificar a la
+     misma distancia. Si no alcanza, pasar a una C3 con conector de antena externa antes de
+     instalar: las placas las pone el proyecto, no los grupos.
+8. **Una ráfaga de comandos desde el broker desestabiliza al raíz** (observado, sin
+   diagnosticar). Un comando `led` a la hoja cada 3 s, con la hoja fuera de alcance, hizo que el
+   raíz se reconectara al broker cuatro veces en cuatro minutos y se reiniciara al menos una vez
+   (uptime de 120 s); ningún comando volvió `aplicado`. Al frenar los comandos, la mesh se
+   recompuso sola. Para medir la mesh **no se usa el broker**: el raíz imprime por serie su tabla
+   de ruteo (`esp_mesh_get_routing_table`) cada 10 s y cada vez que cambia, y los LED de estado
+   de relevo y hoja muestran la capa.
+
+El 2026-10-19 había otra mesh, de un grupo, en el mismo canal que el router: comparte el aire, aunque
+con otro `MESH_ID` no se mezclan.
+
+Si una placa vieja quedó con la tormenta, se la silencia dejándola en el bootloader:
+`esptool --port <puerto> --after no-reset read-mac`.
+
 ## Preparación
 
-- Placa `XIAO_ESP32S3`, **USB CDC On Boot: Enabled**. Cada placa con su `hw_id` anotado en una
+- Placa **ESP32-C3 SuperMini** (`nologo_esp32c3_super_mini`, CDC por defecto). Cada placa con su `hw_id` anotado en una
   etiqueta ([`herramientas/leer_mac`](../../herramientas/leer_mac/)).
 - Un broker en la notebook y `herramientas/ack_falso.py` contra él. El raíz tiene que llegar a la
   notebook por la red (ojo con el aislamiento de clientes en las redes de invitados).
+- Con la `api` de aura-app levantada, cada `data` recibe dos `ack`: `cuarentena` del backend real
+  (la placa no está dada de alta) y `persistido` de `ack_falso.py`. La hoja se queda con el primero
+  que la confirma; para probar los modos de `ack_falso.py`, frenar la `api`.
 - `config_local.h` en cada sketch a partir de su `.example`. Mismo `MESH_ID`, `MESH_CLAVE` y
   `MESH_CANAL` en todas las placas; el canal es el del WiFi al que se asocia el raíz.
 
@@ -21,10 +95,10 @@ Hay que esperar lo mismo.
 
 | # | Prueba | Qué se espera | Resultado |
 |---|---|---|---|
-| 1.1 | Flashear `nodo_raiz` y abrir el monitor serie | `[MESH] raiz iniciado`, después `[RAIZ] con IP …` | pendiente |
-| 1.2 | Broker | `[MQTT] conectado y suscripto a hw/+/ack y hw/+/command`; en el broker, `hw/mac-<raíz>/status` retenido con `rol: "raiz"` | pendiente |
-| 1.3 | `broker.sh comando mac-aabbccddeeff '{"command":"led"}'` (una MAC que no está) | `rechazado` con `nodo_no_alcanzable` en `hw/mac-aabbccddeeff/response` | pendiente |
-| 1.4 | Desenchufar el raíz | el broker publica el LWT: `hw/mac-<raíz>/status` → `offline` | pendiente |
+| 1.1 | Flashear `nodo_raiz` y abrir el monitor serie | `[MESH] raiz iniciado`, después `[RAIZ] con IP …` | ✅ 2026-10-09: con IP en 6-8 s |
+| 1.2 | Broker | `[MQTT] conectado y suscripto a hw/+/ack y hw/+/command`; en el broker, `hw/mac-<raíz>/status` retenido con `rol: "raiz"` | ✅ 2026-10-09 |
+| 1.3 | `broker.sh comando mac-aabbccddeeff '{"command":"led"}'` (una MAC que no está) | `rechazado` con `nodo_no_alcanzable` en `hw/mac-aabbccddeeff/response` | ✅ 2026-10-09 |
+| 1.4 | Desenchufar el raíz | el broker publica el LWT: `hw/mac-<raíz>/status` → `offline` | ✅ 2026-10-09: `offline` al desenchufarlo; al volver, `online` con los 3 nodos |
 | 1.5 | Dejarlo una hora | `status` cada 60 s, sin reinicios; anotar la RAM libre | pendiente |
 
 La 1.1 y la 1.2 son el riesgo (c) de la spec: que `WiFi.h` de Arduino y `esp_mesh` convivan en el
@@ -36,24 +110,24 @@ es el cliente MQTT de ESP-IDF (`esp-mqtt`, incluido en el core).
 
 | # | Prueba | Qué se espera | Resultado |
 |---|---|---|---|
-| 2.1 | Hoja con `sensor_ejemplo`, **sin** `MESH_ROUTER_SSID` (variante A) | se une a la mesh; en el raíz llega su REPORTE → `hw/mac-<hoja>/status` | pendiente |
-| 2.2 | Si 2.1 falla: con `MESH_ROUTER_SSID` y sin clave (variante B) | ídem | pendiente |
+| 2.1 | Hoja con `sensor_ejemplo`, **sin** `MESH_ROUTER_SSID` (variante A) | se une a la mesh; en el raíz llega su REPORTE → `hw/mac-<hoja>/status` | ❌ 2026-10-09: `ESP_ERR_MESH_ARGUMENT` (defecto 1) |
+| 2.2 | Si 2.1 falla: con `MESH_ROUTER_SSID` y sin clave (variante B) | ídem | ✅ 2026-10-09: se une en capa 2 en ~3 s |
 | 2.3 | Si 2.2 falla: con SSID y clave del router (variante C) | ídem; **si solo anda así, se reabre ADR-006** (las hojas llevarían la clave del WiFi del edificio) | pendiente |
-| 2.4 | Telemetría con `ack_falso.py` en modo `ok` | `hw/mac-<hoja>/data` → `ack` `persistido` → en la hoja, `AURA confirmo …, quedan 0` | pendiente |
+| 2.4 | Telemetría con `ack_falso.py` en modo `ok` | `hw/mac-<hoja>/data` → `ack` `persistido` → en la hoja, `AURA confirmo …, quedan 0` | ✅ 2026-10-09 |
 | 2.5 | `ack_falso.py` en `sin_ack` 3 minutos, después `ok` | la hoja acumula y reintenta (15 s, 30 s, 1 min…); al volver, se vacía y los reintentos salen `duplicado` | pendiente |
-| 2.6 | `set_config {"intervalo_s": 30}` | `transmitido`, `recibido`, `aplicado` con `config`; nuevo `status` | pendiente |
-| 2.7 | `actuador_ejemplo` y el comando `led` | el LED prende; `aplicado` | pendiente |
-| 2.8 | Reiniciar el raíz con la hoja andando | la hoja se reengancha sola y reporta; nada se pierde | pendiente |
-| 2.9 | Apagar la hoja más de 3 × su intervalo | el raíz publica `offline` con `motivo: "sin_tramas"`; al volver, `online` | pendiente |
-| 2.10 | `esp_mesh_get_type()` en la hoja | `MESH_LEAF`: no acepta hijos | pendiente |
+| 2.6 | `set_config {"intervalo_s": 30}` | `transmitido`, `recibido`, `aplicado` con `config`; nuevo `status` | ✅ 2026-10-09 |
+| 2.7 | `actuador_ejemplo` y el comando `led` | el LED prende; `aplicado` | ✅ 2026-10-09: LED azul (GPIO 8) prendido, `transmitido`/`recibido`/`aplicado`. Tras un reinicio el LED vuelve apagado (no se guarda) |
+| 2.8 | Reiniciar el raíz con la hoja andando | la hoja se reengancha sola y reporta; nada se pierde | ✅ 2026-10-09 con los arreglos 2 y 3: raíz con IP en 7-25 s, la hoja se reengancha en ~80 s y vacía la cola sin perder nada (3 reinicios). Antes: ❌ |
+| 2.9 | Apagar la hoja más de 3 × su intervalo | el raíz publica `offline` con `motivo: "sin_tramas"`; al volver, `online` | ✅ 2026-10-09: `offline` `sin_tramas` a los 2 min 14 s de apagarla; `online` 10 s después de volver |
+| 2.10 | `esp_mesh_get_type()` en la hoja | `MESH_LEAF`: no acepta hijos | ✅ 2026-10-09: la hoja informa tipo hoja |
 
 ## Con 3 placas (raíz + relevo + hoja)
 
 | # | Prueba | Qué se espera | Resultado |
 |---|---|---|---|
-| 3.1 | Hoja lejos del raíz y cerca del relevo (otro piso) | la hoja cuelga del relevo (capa 3); el raíz publica con la **MAC de la hoja**, no la del relevo | pendiente |
-| 3.2 | Comando a la hoja de 3.1 | llega por el relevo sin configurar rutas | pendiente |
-| 3.3 | Apagar el relevo | la hoja guarda en su cola; al volver el relevo, se reengancha y vacía la cola | pendiente |
+| 3.1 | Hoja lejos del raíz y cerca del relevo (otro piso) | la hoja cuelga del relevo (capa 3); el raíz publica con la **MAC de la hoja**, no la del relevo | ✅ 2026-10-19: con el relevo en el medio, la hoja en capa 3 (LED de estado) y sus `data` en `hw/mac-<hoja>/data` |
+| 3.2 | Comando a la hoja de 3.1 | llega por el relevo sin configurar rutas | pendiente: se intentó con una ráfaga de comandos y desestabilizó al raíz (problema 8); repetir con **un** comando |
+| 3.3 | Apagar el relevo | la hoja guarda en su cola; al volver el relevo, se reengancha y vacía la cola | a medias 2026-10-19: la hoja guardó 4 muestras sin descartar ninguna y vació la cola al volver, pero se reenganchó **directo al raíz** antes que el relevo (desde ese lugar lo alcanzaba). Repetir con la hoja más lejos |
 
 ## Medir el aire
 
