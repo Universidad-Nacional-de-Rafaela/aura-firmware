@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tablero AURA</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --card: #ffffff; --text: #1d2330; --muted: #6b7385; --line: #e3e6ec;
+    --accent: #2f6fde; --temp: #e0662f; --hum: #2f8fde; --ok: #1f9d55; --bad: #c9372c; --led: #3b82f6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --card: #1b2029; --text: #e6e9ef; --muted: #8d95a7; --line: #2a303c;
+      --accent: #6c9cff; --temp: #ff8a55; --hum: #5fb0ff; --ok: #3ccf7c; --bad: #ff6b5e; --led: #60a5fa;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.4 system-ui, "Segoe UI", Roboto, sans-serif; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+           padding: 14px 20px; border-bottom: 1px solid var(--line); background: var(--card); }
+  header h1 { font-size: 17px; margin: 0; }
+  header .ruta { color: var(--muted); font-size: 13px; }
+  .estado { margin-left: auto; font-size: 13px; color: var(--muted); }
+  .punto { display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+           background: var(--bad); margin-right: 6px; vertical-align: middle; }
+  .punto.ok { background: var(--ok); }
+  main { padding: 16px 20px; display: grid; gap: 14px;
+         grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); max-width: 1300px; margin: 0 auto; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .card h2 { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
+             color: var(--muted); margin: 0 0 10px; display: flex; justify-content: space-between; }
+  .card h2 small { text-transform: none; letter-spacing: 0; font-weight: 400; }
+  .ancho { grid-column: 1 / -1; }
+  .valores { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .valor b { display: block; font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .valor span { color: var(--muted); font-size: 12px; }
+  .meta { margin-top: 10px; color: var(--muted); font-size: 12px; display: flex; gap: 14px; flex-wrap: wrap; }
+  .led-fila { display: flex; align-items: center; gap: 16px; }
+  .led { width: 54px; height: 54px; border-radius: 50%; background: var(--line);
+         border: 2px solid var(--line); transition: background .15s, box-shadow .15s; flex: none; }
+  .led.on { background: var(--led); box-shadow: 0 0 22px var(--led); border-color: var(--led); }
+  .botones { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  button { font: inherit; padding: 6px 12px; border-radius: 7px; border: 1px solid var(--line);
+           background: var(--bg); color: var(--text); cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.activo { background: var(--accent); border-color: var(--accent); color: #fff; }
+  svg.graf { width: 100%; height: 120px; display: block; }
+  .graf-tit { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-top: 6px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  td, th { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; }
+  td.t { white-space: nowrap; color: var(--muted); font-variant-numeric: tabular-nums; }
+  td.p { font-family: ui-monospace, Consolas, monospace; word-break: break-all; }
+  .log { max-height: 320px; overflow: auto; }
+  @media (max-width: 500px) { main { padding: 12px 16px; } .valor b { font-size: 21px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>AURA · aula1</h1>
+  <span class="ruta">Hoja C3 → Concentrador S3 → Gateway S3 → MQTT</span>
+  <span class="estado"><span id="punto" class="punto"></span><span id="conexion">conectando…</span></span>
+</header>
+
+<main>
+  <section class="card">
+    <h2>Hoja · sensores <small id="hoja-visto">sin datos</small></h2>
+    <div class="valores">
+      <div class="valor"><b id="temp">–</b><span>Temperatura °C</span></div>
+      <div class="valor"><b id="hum">–</b><span>Humedad %</span></div>
+      <div class="valor"><b id="pres">–</b><span>Presencia</span></div>
+    </div>
+    <div class="meta"><span>Modo: <b id="hoja-modo">–</b></span><span>vía: <b id="hoja-via">–</b></span>
+      <span>medido: <b id="hoja-ts">–</b></span><span>señal del padre: <b id="hoja-rssi">–</b></span></div>
+    <div class="meta"><span>id: <b id="hoja-id">–</b></span><span>MAC: <b id="mac">–</b></span>
+      <span>n: <b id="n">–</b></span><span>capa: <b id="capa">–</b></span>
+      <span>perdidos: <b id="perdidos">0</b></span></div>
+  </section>
+
+  <section class="card">
+    <h2>Hoja · LED (GPIO8) <small id="led-visto">sin respuesta</small></h2>
+    <div class="led-fila">
+      <div id="led" class="led"></div>
+      <div>
+        <div>Estado informado: <b id="led-estado">–</b> <span id="led-origen" style="color:var(--muted)"></span></div>
+        <div>Ida y vuelta: <b id="rtt">–</b> <span id="rtt-prom" style="color:var(--muted)"></span></div>
+        <div>Órdenes AURA / respuestas: <b id="cmds">0</b> / <b id="resps">0</b></div>
+        <div>Toques del botón local: <b id="locales">0</b></div>
+      </div>
+    </div>
+    <div class="botones">
+      <button data-led="1">Prender</button>
+      <button data-led="0">Apagar</button>
+      <button data-led="toggle">Invertir</button>
+      <button data-led="blink" id="btn-blink">Parpadear 1 s</button>
+      <button data-led="stop">Detener</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Concentrador · estado <small id="int-visto">sin datos</small></h2>
+    <div class="valores">
+      <div class="valor"><b id="int-capa">–</b><span>Capa</span></div>
+      <div class="valor"><b id="int-hijos">–</b><span>Hijos</span></div>
+      <div class="valor"><b id="int-nodos">–</b><span>Nodos en malla</span></div>
+    </div>
+    <div class="meta"><span>id: <b id="int-id">–</b></span><span>MAC: <b id="int-mac">–</b></span>
+      <span>n: <b id="int-n">–</b></span><span>LED que muestra: <b id="int-led">–</b></span></div>
+  </section>
+
+  <section class="card ancho">
+    <h2>Últimos 2 minutos</h2>
+    <svg id="g-temp" class="graf" preserveAspectRatio="none"></svg>
+    <div class="graf-tit"><span style="color:var(--temp)">● Temperatura</span><span id="g-temp-r"></span></div>
+    <svg id="g-hum" class="graf" preserveAspectRatio="none"></svg>
+    <div class="graf-tit"><span style="color:var(--hum)">● Humedad</span><span id="g-hum-r"></span></div>
+  </section>
+
+  <section class="card ancho">
+    <h2>Mensajes MQTT <small id="total">0</small></h2>
+    <div class="log"><table>
+      <thead><tr><th>Hora</th><th>Origen</th><th>Tópico</th><th>Payload</th></tr></thead>
+      <tbody id="log"></tbody>
+    </table></div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const serie = { temp: [], hum: [] };
+const VENTANA = 120;               // segundos en el gráfico
+let ultHoja = 0, ultLed = 0, ultInt = 0, ultN = null, perdidos = 0;
+let cmds = 0, resps = 0, locales = 0, total = 0;
+const pendientes = {};             // estado pedido -> hora del comando
+const rtts = [];
+
+function hora(t) { return new Date(t * 1000).toLocaleTimeString(); }
+function hace(t) {
+  if (!t) return null;
+  const s = Math.round(Date.now() / 1000 - t);
+  return s < 2 ? "ahora" : `hace ${s} s`;
+}
+
+function dibujar(id, datos, color, unidad) {
+  const svg = $(id), W = svg.clientWidth || 600, H = 120, ahora = Date.now() / 1000;
+  const pts = datos.filter(p => p[0] > ahora - VENTANA);
+  if (pts.length < 2) { svg.innerHTML = ""; $(id + "-r").textContent = ""; return; }
+  let min = Math.min(...pts.map(p => p[1])), max = Math.max(...pts.map(p => p[1]));
+  if (max - min < 1) { min -= .5; max += .5; }
+  const x = t => (t - (ahora - VENTANA)) / VENTANA * W;
+  const y = v => H - 8 - (v - min) / (max - min) * (H - 16);
+  const d = pts.map((p, i) => (i ? "L" : "M") + x(p[0]).toFixed(1) + " " + y(p[1]).toFixed(1)).join(" ");
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.innerHTML =
+    `<line x1="0" x2="${W}" y1="${y(min)}" y2="${y(min)}" stroke="var(--line)"/>` +
+    `<line x1="0" x2="${W}" y1="${y(max)}" y2="${y(max)}" stroke="var(--line)"/>` +
+    `<path d="${d}" fill="none" stroke="${color}" stroke-width="2" vector-effect="non-scaling-stroke"/>`;
+  $(id + "-r").textContent = `${min.toFixed(1)} – ${max.toFixed(1)} ${unidad}`;
+}
+
+function agregarLog(ev) {
+  const tr = document.createElement("tr");
+  tr.innerHTML = `<td class="t"></td><td></td><td></td><td class="p"></td>`;
+  tr.children[0].textContent = hora(ev.t);
+  tr.children[1].textContent = ev.cliente.split("@")[0];
+  tr.children[2].textContent = ev.topico;
+  tr.children[3].textContent = ev.payload;
+  const tb = $("log");
+  tb.insertBefore(tr, tb.firstChild);
+  while (tb.children.length > 100) tb.removeChild(tb.lastChild);
+  $("total").textContent = ++total + " mensajes";
+}
+
+function procesar(ev, viejo) {
+  agregarLog(ev);
+  let j = null;
+  try { j = JSON.parse(ev.payload); } catch (e) { return; }
+
+  if (ev.topico.startsWith("aura/cmd/")) {
+    cmds++; pendientes[String(j.led)] = performance.now();
+    $("cmds").textContent = cmds;
+  } else if (ev.topico === "aura/aula1/sensores") {
+    ultHoja = ev.t;
+    $("temp").textContent = j.temp?.toFixed(1) ?? "–";
+    $("hum").textContent = j.hum?.toFixed(1) ?? "–";
+    $("pres").textContent = j.pres ? "Sí" : "No";
+    $("n").textContent = j.n; $("capa").textContent = j.capa; $("mac").textContent = j.mac ?? "–";
+    $("hoja-id").textContent = j.id ?? "–";
+    $("hoja-modo").textContent = j.modo === "aula" ? "aula (por su concentrador)"
+                               : j.modo === "directo" ? "PLAN B (directo a la raíz)" : "–";
+    $("hoja-modo").style.color = j.modo === "directo" ? "var(--bad)" : "";
+    $("hoja-via").textContent = j.via ?? "–";
+    if (typeof j.rssi === "number") {          // señal del padre: > -67 buena, -67 a -80 justa, < -80 al límite
+      const r = j.rssi;
+      $("hoja-rssi").textContent = `${r} dBm (${r > -67 ? "buena" : r > -80 ? "justa" : "al límite"})`;
+      $("hoja-rssi").style.color = r > -67 ? "var(--ok)" : r > -80 ? "" : "var(--bad)";
+    }
+    $("hoja-ts").textContent = j.ts ? new Date(j.ts).toLocaleTimeString() +
+      (j.ts_gw ? " (hora del gateway: la hoja todavía no tiene hora)" : " (reloj de la hoja)") : "sin hora";
+    if (j.led === 0 || j.led === 1) {          // estado periódico: resincroniza sin contar respuestas
+      $("led").classList.toggle("on", j.led === 1);
+      $("led-estado").textContent = j.led === 1 ? "encendido" : "apagado";
+    }
+    if (ultN !== null && j.n > ultN + 1) perdidos += j.n - ultN - 1;
+    ultN = j.n; $("perdidos").textContent = perdidos;
+    serie.temp.push([ev.t, j.temp]); serie.hum.push([ev.t, j.hum]);
+    for (const k in serie) while (serie[k].length > 400) serie[k].shift();
+  } else if (ev.topico === "aura/aula1/led") {
+    ultLed = ev.t;
+    const local = j.origen === "local";
+    if (!viejo) {
+      if (local) $("locales").textContent = ++locales;
+      else $("resps").textContent = ++resps;
+    }
+    $("led").classList.toggle("on", j.led === 1);
+    $("led-estado").textContent = j.led === 1 ? "encendido" : "apagado";
+    $("led-origen").textContent = local ? "(botón del concentrador)" : "(orden de AURA)";
+    const t0 = local ? null : pendientes[String(j.led)] ?? pendientes["toggle"];
+    if (t0) {
+      const ms = performance.now() - t0;
+      delete pendientes[String(j.led)]; delete pendientes["toggle"];
+      rtts.push(ms); if (rtts.length > 30) rtts.shift();
+      $("rtt").textContent = ms.toFixed(0) + " ms";
+      $("rtt-prom").textContent = `(prom. ${(rtts.reduce((a, b) => a + b, 0) / rtts.length).toFixed(0)} ms)`;
+    }
+  } else if (ev.topico === "aura/aula1/concentrador/estado") {
+    ultInt = ev.t;
+    $("int-capa").textContent = j.capa;
+    $("int-hijos").textContent = j.hijos + (j.hojas_aula !== undefined ? ` (${j.hojas_aula} del aula)` : "");
+    $("int-nodos").textContent = j.nodos; $("int-mac").textContent = j.mac ?? "–"; $("int-n").textContent = j.n;
+    $("int-id").textContent = j.id ?? "–";
+    $("int-led").textContent = j.led_hoja === 1 ? "encendido" : j.led_hoja === 0 ? "apagado" : "sin dato";
+  }
+}
+
+// El historial que llega al abrir la página no cuenta para comandos/respuestas ni para el RTT
+const es = new EventSource("/eventos");
+es.onopen = () => { $("punto").classList.add("ok"); $("conexion").textContent = "conectado al broker"; };
+es.onerror = () => { $("punto").classList.remove("ok"); $("conexion").textContent = "sin conexión (¿broker.py corriendo?)"; };
+es.onmessage = m => {
+  const ev = JSON.parse(m.data);
+  const viejo = Date.now() / 1000 - ev.t > 3;
+  if (viejo && ev.topico.startsWith("aura/cmd/")) { agregarLog(ev); return; }
+  procesar(ev, viejo);
+};
+
+document.querySelectorAll("button[data-led]").forEach(b => b.onclick = () => {
+  const accion = b.dataset.led;
+  fetch(`/cmd?led=${accion}`, { method: "POST" });
+  $("btn-blink").classList.toggle("activo", accion === "blink");
+});
+
+setInterval(() => {
+  $("hoja-visto").textContent = hace(ultHoja) ?? "sin datos";
+  $("led-visto").textContent = hace(ultLed) ?? "sin respuesta";
+  $("int-visto").textContent = hace(ultInt) ?? "sin datos";
+  dibujar("g-temp", serie.temp, "var(--temp)", "°C");
+  dibujar("g-hum", serie.hum, "var(--hum)", "%");
+}, 1000);
+</script>
+</body>
+</html>
