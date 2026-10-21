@@ -89,7 +89,28 @@ mano (no por señal) para que un sensor del aula 2 no termine en el concentrador
 - Así AURA termina con el **estado real** después de cualquier corte: por ejemplo, si el LED cambia con el broker caído,
   la medición con el `led` nuevo sale en cuanto vuelve, con la hora del cambio.
 
-### 1.4 Hora
+### 1.4 El aula funciona sin red arriba
+
+La cola guarda el **historial** para AURA; el concentrador necesita el **último valor** y en el acto:
+
+- Cuando una medición no va a pasar enseguida por el concentrador (hay cola atrás porque AURA, el broker o el gateway
+  no contestan), la hoja le manda además un **`ESTADO`** con el último valor. El concentrador lo muestra y **no lo
+  reenvía** (AURA lo recibe por la cola). Con la cola al día no se manda: la medición normal pasa en el acto.
+- Al colgarse de su concentrador (al arrancar, viniendo de plan B o tras un reinicio del concentrador), la hoja le manda
+  su `ESTADO`: el concentrador queda sincronizado aunque se haya conectado más tarde.
+- El concentrador muestra **solo lo último**: lo que llega más viejo que lo que ya muestra (el historial que se vacía
+  cuando vuelve AURA) se reenvía pero no se muestra.
+- El **botón** del concentrador manda el comando directo a la hoja, sin gateway ni MQTT: el aula tiene mando aunque no
+  haya red arriba, y la pantalla se entera por el `ESTADO`.
+- **Modo isla:** sin raíz, ESP-WIFI-MESH no acepta conexiones nuevas (una hoja que se reinicia quedaría afuera). Por eso,
+  si el concentrador pasa **60 s sin raíz**, se reinicia como **raíz de la isla de su aula**, en el último canal. Las
+  hojas de su aula se cuelgan de él como siempre; el botón y la pantalla funcionan, y las mediciones quedan en la cola de
+  cada hoja. Cada 30 s (y cada 5 min en todos los canales) busca al gateway; cuando lo ve, se reinicia en modo normal y
+  las hojas lo siguen.
+- Si la hoja reinicia un actuador al arrancar (el LED del ejemplo arranca apagado), el `ESTADO` lo informa. Si un
+  actuador real tiene que recuperar su posición tras un corte, el firmware del dispositivo lo guarda en NVS.
+
+### 1.5 Hora
 
 La raíz toma la hora de internet (SNTP). La hoja la pide al conectarse (`HORA`; si el concentrador la tiene, contesta
 él) y la ajusta con cada confirmación. Cada medición sale con su `ts`. Una medición tomada **antes** de tener hora se
@@ -168,7 +189,7 @@ void app_main(void)
 |---|---|---|
 | `hw/<hw_id>/data` | Cada medición (los reintentos traen el mismo `ingest_id`) | `{"values":{"temp_c":24.5,"led":0},"ingest_id":"9f75…","ts":"2026-10-20T04:18:21Z","adaptador":"mac-90e5b1d64a94"}` |
 | `hw/<hw_id>/status` (retenido) | Al conectarse, tras un `set_config` y al volver | `{"status":"online","details":{"config":{"aula":"aula1","intervalo_s":10},"pendientes":0,"descartadas":0,"alimentacion":"red","modo":"aula","rssi":-19,"capa":3,"evento":"reporte","transporte":"mesh"}}` |
-| `hw/<hw_id>/status` (retenido) | 3 intervalos sin datos | `{"status":"offline","details":{"motivo":"sin_tramas"}}` |
+| `hw/<hw_id>/status` (retenido) | Salió de la malla hace más de 20 s, o 3 intervalos sin datos | `{"status":"offline","details":{"motivo":"fuera_de_la_malla"}}` o `"sin_tramas"` |
 | `hw/<hw_id>/response` | Cada comando: `transmitido`, `recibido`, `aplicado`/`rechazado` | `{"status":"aplicado","details":{"command_id":"c-1","config":{…}}}` |
 | `hw/<hw_id>/alerts/<tipo>` | Alertas de la hoja | `{"severity":"high","message":"Sonda temp_c con falla","details":{"campo":"temp_c","motivo":"sin_respuesta"}}` |
 
@@ -240,7 +261,7 @@ Después de cambiar un parámetro hay que **recompilar y grabar todos los firmwa
 | `MESH_MAX_CAPAS` | `6` | G, C, NM | Profundidad máxima del árbol. |
 | `ROUTER_FICTICIO` | `aura-sin-router` | C, NM | La API exige un SSID de router, pero estos nodos **nunca** se conectan al router. Fijo: **no se cambia al mudar la red**. |
 | Vendor IE (`AURA_OUI_0..2`, `AURA_IE_CONCENTRADOR`) | `02:A5:52`, tipo `1` | AM (`aura_util.h`) | Es como la hoja reconoce a los concentradores. |
-| Trama (`AURA_PROTO_VERSION`, tipos, `AURA_PAYLOAD_MAX`) | v3, 180 B | AM (`aura_trama.h`) | Igual a `comun/protocolo_aura.h` más los tipos internos HORA (9), LOTE (10), EVENTO_OK (11) y REPORTAR (12). Los tipos **no se renumeran**, solo se agregan. Una trama de otra versión se descarta y se cuenta (`version_distinta`). |
+| Trama (`AURA_PROTO_VERSION`, tipos, `AURA_PAYLOAD_MAX`) | v3, 180 B | AM (`aura_trama.h`) | Igual a `comun/protocolo_aura.h` más los tipos internos HORA (9), LOTE (10), EVENTO_OK (11), REPORTAR (12) y ESTADO (13). Los tipos **no se renumeran**, solo se agregan. Una trama de otra versión se descarta y se cuenta (`version_distinta`). |
 | País | `AR` (canales 1–13) | G, C, NM | Sin esto, con el router en el canal 12 o 13 la malla no arranca. |
 
 ### 4.2 Solo en el gateway
@@ -255,6 +276,8 @@ Después de cambiar un parámetro hay que **recompilar y grabar todos los firmwa
 | `MQTT_USUARIO`, `MQTT_CLAVE` | vacíos (anónimo) | Gc | El broker de aura-app no acepta anónimos: usuario `raiz` y la clave de su `.env`. |
 | `PUERTO_DESCUBRIMIENTO` | `18830` (UDP) | G **y** PC | Tiene que coincidir con `broker.py`. |
 | `ESPERA_RESULTADO_MS` | `30000` | G | Comando sin resultado del nodo → `rechazado` `sin_resultado_del_nodo`. |
+| `FUERA_DE_MALLA_MS`, `GRACIA_ARRANQUE_MS` | `20000`, `60000` | G | Un nodo fuera de la tabla de ruteo tanto tiempo → `offline` `fuera_de_la_malla`; al arrancar, margen para que la malla se arme. Los nodos conocidos se guardan en NVS (`gw_nodos`): tras reiniciarse, el gateway también marca offline a los que no vuelven. |
+| keepalive MQTT | `30` s | G | El broker da por caído al gateway a los ~45 s sin noticias y publica su LWT. |
 | `INTERVALO_STATUS_MS` | `60000` | G | Cada cuánto publica su propio status. |
 | `NODOS_CAP` | `64` | G | Nodos que sigue para offline y repetidos. |
 | `CANAL_SIN_ROUTER` | `6` | G | Canal si no ve ninguna red (la malla anda, sin MQTT). |
@@ -268,6 +291,8 @@ Después de cambiar un parámetro hay que **recompilar y grabar todos los firmwa
 | `ESPERA_LOTE_MS` | `50` | C | Cuánto junta datos de sus hojas antes de mandarlos en un LOTE. Más alto = menos paquetes, más demora. |
 | `INTERVALO_REPORTE_S` | `60` | C | Su propio status (offline a los 3 intervalos). |
 | `filtrar()` | deja pasar todo | C | Lógica local del aula. Ojo: una telemetría que no sigue nunca se confirma y la hoja la reintenta. |
+| `HOJA_AUSENTE_MS`, `GRACIA_ARRANQUE_MS` | `20000`, `60000` | C | Hoja desconectada tanto → **ausente** (LED rojo); al arrancar, margen antes de marcar ausentes. También es ausente si pasa 3 intervalos sin datos. Las hojas del aula se recuerdan en NVS. |
+| `ISLA_TRAS_S`, `ISLA_REVISAR_S`, `ISLA_REVISAR_TODO_S` | `60`, `30`, `300` | C | Sin raíz tanto tiempo → modo isla; en isla, cada cuánto busca al gateway en su canal y en todos. |
 | `MESH_MAX_HIJOS` | `6` | C | Hojas directas del aula (máximo 10). |
 | `PIN_LED_RGB`, `BRILLO_LED`, `PIN_BOTON` | `38`, `150`, `0` | C | Waveshare ESP32-S3-DEV-KIT: WS2812 en GPIO38, orden **R-G-B**. |
 

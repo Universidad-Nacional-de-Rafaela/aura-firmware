@@ -7,7 +7,7 @@
 > (`docs/superpowers/…`) son de `aura-app`.
 
 **Estado**: normativo en `aura-app`. Ante una discrepancia con cualquier otro documento, manda el contrato; ante una discrepancia entre esta copia y la de `aura-app`, manda la de `aura-app`.
-**Versión del contrato**: 4.1 (propuesta) · **Última actualización**: 2026-10-20
+**Versión del contrato**: 4.2 (propuesta) · **Última actualización**: 2026-10-21
 **Alcance**: mensajería entre los dispositivos IoT y la plataforma (backend FastAPI). Hay **dos
 transportes**, cada uno con su adaptador
 ([ADR-003](adr/ADR-003-dos-transportes-mesh-interior-lorawan-exterior.md)):
@@ -372,6 +372,13 @@ Agrega a `details` `transporte`, `ultimo_uplink` e `intervalo_s`. **El *uplink i
 profile tiene que ser el real** (ChirpStack trae 3600 s por defecto: con eso, un nodo que manda
 cada 5 min recién sale `offline` a las 3 h). Sin `CS_API_TOKEN`, el bridge no lo infiere. En la mesh sale de la configuración vigente que reportó la hoja
 (`config.intervalo_s`); sin reporte no se infiere nada. El siguiente mensaje la vuelve a `online`.
+
+**`offline` por salida de la mesh (v4.2).** El raíz además publica
+`{"status":"offline","details":{"motivo":"fuera_de_la_malla"}}` (retain) cuando una placa falta de
+la tabla de ruteo de la mesh más de 20 s, sin esperar los 3 intervalos. El raíz recuerda las placas
+que vio (en su memoria no volátil), así que tras reiniciarse también publica `offline` de las que no
+vuelven. El backend tiene que aceptar los dos motivos (`sin_tramas` y `fuera_de_la_malla`); para
+AURA significan lo mismo: la placa no está.
 
 `retain: true` es deliberado: un backend que arranca después recibe el último estado conocido
 de cada placa de inmediato, sin esperar el próximo uplink, que en LoRaWAN pueden ser minutos.
@@ -779,6 +786,7 @@ MAC del medidor. Mientras no se decida, sus mensajes se descartan:
 
 | Versión | Fecha | Cambio |
 |---|---|---|
+| 4.2 | 2026-10-21 | **Propuesta.** Nuevo motivo de `offline` en la mesh: `fuera_de_la_malla` (§3.2), además de `sin_tramas`. Compatible si el backend no valida el motivo. Sin otros cambios de formato: el modo isla del concentrador, la trama interna `ESTADO` y las hojas ausentes en la pantalla del aula son internos de la mesh (`aura-firmware/Mesh_Red_Completa/`). |
 | 4.1 | 2026-10-20 | **Mesh en ESP-IDF con concentrador por aula** ([ADR-007](adr/ADR-007-mesh-en-esp-idf-con-concentrador-por-aula.md), `aura-firmware` #21). Compatible: el árbol de tópicos y los payloads no cambian. Nuevos: el **concentrador del aula** (§1, §2.3, transparente para AURA), el parámetro reservado **`aula`** de `set_config` con los motivos `aula_invalida` y `sin_parametros` (§3.3), y en el `status` de la hoja `modo`, `en_flash`, `eventos_perdidos`, `rssi`, `capa` y `config.aula` (§3.2). La cola de la hoja pasa a **híbrida**: RAM, y flash solo para lo que pasa 5 min sin confirmar (§5). En las hojas ya no hace falta el SSID del WiFi del edificio: solo el raíz se conecta al router. Pendiente 20. |
 | 4.0 | 2026-10-14 | El raíz de la mesh conecta con sesión persistente (pendiente 7); §1 y el pendiente 11 decían que no mandaba usuario y clave, y lo hace desde `aura-firmware` #9. |
 | 4.0 | 2026-10-14 | §10: pendientes 18 (LoRaWAN pierde la muestra si falla la base) y 19 (codecs con diagnóstico en `values`), encontrados al documentar el recorrido de los datos. |
