@@ -1,0 +1,40 @@
+# Manifiesto del conector. Ver CONTRIBUTING.md, "Tu conector".
+nombre  = "E1-PB-LECA-LUZ01"            # igual a la carpeta
+version = "0.1.0"
+sdk     = ">=1,<2"                      # versiones de aura_sdk con las que funciona
+autores = ["sebapalavecino2003"]       # TODO: los usuarios de GitHub del grupo
+clase   = "conector:ConectorLuz01"      # archivo:Clase
+
+# Cada campo que acepta, con su unidad y su rango físico. Un valor fuera de rango, o un campo
+# que no está acá, no se guarda. Tiene que coincidir con lo que manda el firmware.
+# El firmware manda solo campos válidos: si un sensor falla, su campo no llega
+# (sin centinelas) y va la alerta "sensor" del nodo.
+[campos.presencia]
+unidad = "0/1"
+min = 0
+max = 1
+
+[campos.luz_ventana_lx]
+unidad = "lx"
+min = 0
+max = 65535
+
+[campos.luz_aula_lx]
+unidad = "lx"
+min = 0
+max = 65535
+
+[campos.temp_c]
+unidad = "°C"
+min = -40
+max = 85
+
+[campos.humedad_pct]
+unidad = "%"
+min = 0
+max = 100
+
+[campos.rele_canal1]
+unidad = "0/1"
+min = 0
+max = 1
