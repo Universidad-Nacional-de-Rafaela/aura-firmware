@@ -1,4 +1,4 @@
-# Prueba AURA: malla de 3 nodos + MQTT (contrato v4.0)
+# Prueba AURA: malla de 3 nodos + MQTT (contrato v4.3)
 
 ```
 Hoja C3 (COM9) ──malla──> Concentrador S3 (COM11) ──malla──> Gateway S3 (COM12) ──WiFi──> Router ──> broker.py (PC)
@@ -11,7 +11,8 @@ Hoja C3 (COM9) ──malla──> Concentrador S3 (COM11) ──malla──> Gat
 | Concentrador | `Mesh3_Intermedio` | `mac-dcb4d92a5878` | Waveshare ESP32-S3-DEV-KIT-NxRx, módulo ESP32-S3-WROOM-1 N16R8 (flash quad 16 MB) | COM11 (CH343) |
 | Hoja | `Mesh3_Hoja` | `mac-907069add964` | ESP32-C3 SuperMini (4 MB) | COM9 |
 
-COM13 y COM10 son el USB nativo de cada S3: sirven para flashear, pero la consola sale por el CH343.
+COM13 y COM10 son el USB nativo de cada S3. El 2026-10-22 se trabajó solo con esos (flasheo y consola por el USB nativo,
+gateway en COM13 y concentrador en COM10): el número de puerto depende del conector y del cable que se use.
 Los tres comparten `componentes/` (trama común `aura_mesh` y biblioteca de la hoja `nodo_mesh`).
 
 **Placas Waveshare ESP32-S3-DEV-KIT-NxRx** (gateway y concentrador tienen la misma placa con distinto módulo):
@@ -37,10 +38,11 @@ El botón BOOT es GPIO0. Pinout: [circuitstate.com](https://www.circuitstate.com
 |---|---|---|
 | Hoja → AURA | `hw/<hw_id>/data` | `{"values":{"temp_c":24.5,"hum_pct":50.5,"presencia":false,"led":0},"ingest_id":"9f75…","ts":"2026-10-20T04:18:21Z","adaptador":"mac-90e5b1d64a94"}` |
 | AURA → hoja | `hw/<hw_id>/ack` | `{"ingest_id":"9f75…","resultado":"persistido"}` |
-| Nodo → AURA (retenido) | `hw/<hw_id>/status` | `{"status":"online","details":{"config":{"aula":"aula1","intervalo_s":10},"pendientes":0,"descartadas":0,"alimentacion":"red","modo":"aula","rssi":-19,"capa":3,"evento":"reporte","transporte":"mesh"}}` |
+| Nodo → AURA (retenido) | `hw/<hw_id>/status` | `{"status":"online","details":{"config":{"aula":"aula1","intervalo_s":10},"pendientes":0,"descartadas":0,"alimentacion":"red","modo":"aula","rssi":-19,"capa":3,"firmware":{"tipo":"aura-hoja-ejemplo","version":"1.0.0"},"evento":"reporte","transporte":"mesh"}}` |
 | AURA → nodo | `hw/<hw_id>/command` | `{"command":"led","params":{"encendido":true},"command_id":"c-1"}` |
+| AURA → gateway | `hw/<hw_id>/command` | `{"command":"ota","params":{"url":"http://…/aura-hoja-ejemplo-1.0.1.bin","sha256":"…"},"command_id":"ota-1"}` (actualización por la malla; vale también para el `hw_id` del gateway) |
 | Nodo → AURA | `hw/<hw_id>/response` | `transmitido` → `recibido` → `aplicado` / `rechazado` (con `motivo`) |
-| Gateway (retenido, LWT) | `hw/mac-90e5b1d64a94/status` | red, canal, nodos, contadores (`publicadas`, `confirmadas`, `lotes`…), `hora_valida`, `uptime_s` |
+| Gateway (retenido, LWT) | `hw/mac-90e5b1d64a94/status` | red, canal, nodos, contadores (`publicadas`, `confirmadas`, `lotes`…), `hora_valida`, `uptime_s`, `firmware` y, mientras actualiza, `ota` (en cola, progreso) |
 
 Dentro de la malla viaja la **trama binaria v3** (`componentes/aura_mesh/include/aura_trama.h`, igual a `comun/protocolo_aura.h`),
 más dos tipos internos: **LOTE** (el concentrador junta las tramas de sus hojas, cada una con la MAC de la hoja) y **HORA**.
@@ -93,6 +95,31 @@ PLAN B / SIN AULA     Hoja ──────────────> Raíz (u 
   **pendiente** si no tiene aula), aula, valores y botones: LED, **asignar aula** e intervalo. Si el gateway está
   offline, sus nodos se ven en gris ("sin gateway: último estado conocido"). Abajo, todos los mensajes.
 - `python led_blink.py <hw_id>`: prende y apaga el LED cada 1 s y mide el tiempo hasta `aplicado`.
+- El tablero muestra el **firmware** de cada placa y, en el gateway, el avance de una actualización.
+
+## Actualización por la malla (`ota.py`)
+
+`ota.py` hace en el banco lo que mañana hará AURA ([ADR-008](../../docs/adr/ADR-008-actualizacion-por-la-malla-y-tipo-de-firmware.md),
+contrato §3.3):
+
+```bash
+python ota.py ../Mesh3_Hoja/build/aura-hoja-ejemplo.bin --hw mac-907069add964          # una placa (o varias: --hw otra vez)
+python ota.py ../Mesh3_Hoja/build/aura-hoja-ejemplo.bin --todas                         # todas las de ese tipo
+python ota.py ../Mesh3_Hoja/build/aura-hoja-ejemplo.bin --todas --aula aula11           # todas las de ese tipo en esa aula
+python ota.py ../Mesh3_Gateway/build/aura-gateway.bin --hw mac-90e5b1d64a94             # el gateway (queda último)
+```
+
+1. Lee el tipo y la versión de la imagen (`project()` y `PROJECT_VER`) y calcula su SHA-256.
+2. La sirve por HTTP en el puerto 8070 (`--puerto-http`), en la IP de la PC que ve el gateway (`--ip` si hace falta).
+3. Lee el `status` retenido de cada placa: con `--todas` elige las **online** cuyo `details.firmware.tipo` es el de la
+   imagen (y su aula, con `--aula`).
+4. Manda `ota` a cada una y muestra el avance (`transmitido`, el % del gateway, `recibido`, `aplicado`/`rechazado`).
+5. Si el gateway se reinicia o se corta el broker, **vuelve a pedir** lo que no terminó (una placa que ya tiene la
+   versión contesta `aplicado` con `sin_cambios`).
+
+Tiempos en el banco: descarga al gateway ~7 s, 1 MB por la malla ~10 s, reinicio y vuelta de la placa ~3 a 5 s, y
+`aplicado` cuando la versión nueva lleva 60 s andando. **La primera vez se graba por USB** (cambia la tabla de
+particiones); las placas con un firmware anterior contestan `rechazado` `nodo_no_responde`.
 
 ## Cómo probar
 
@@ -125,9 +152,22 @@ al volver; lo más reciente se pierde si se la desenchufa.
 - **Latencia en el aula:** la hoja atiende un comando apenas llega, y el concentrador manda enseguida resultados, reportes y
   alertas; solo la telemetría se junta 50 ms en un LOTE.
 - **Vigilante de envío:** tras 3 envíos fallidos el nodo fuerza la reconexión (evita el `[WND-RX] timeout` de ~6 min).
+- **Reconexión tras un reinicio del gateway:** el concentrador elige padre de nuevo (escaneo) en lugar de reintentar el
+  mismo; reintentándolo, el saludo WPA fallaba (`handshake timeout` cada ~10 s) hasta que el concentrador se reiniciaba,
+  y el aula quedaba más de 60 s afuera. El AP de la malla va **sin PMF** (802.11w): con PMF el hijo tardaba ~17 s en
+  notar que el padre se había reiniciado (SA query).
+- **Canal del último padre:** la hoja lo guarda en NVS y lo escanea primero al arrancar y al perder el padre: vuelve en
+  ~4 s (antes, 10 a 27 s escaneando los 13 canales).
+- **`seq` al azar al arrancar** en los tres: con `seq` desde 0, el primer evento tras un reinicio podía llevar la misma
+  `seq` que el último de antes y la raíz lo tomaba por repetido (se perdía el reporte de la hoja al volver).
 - **La hoja no puede ser `MESH_LEAF` en IDF 6.1:** `esp_mesh_set_parent(..., MESH_LEAF, ...)` devuelve `ESP_FAIL` al instante
   (probado de nuevo con la radio sana), y pasar a `MESH_LEAF` ya conectada desconecta en bucle. Se une como `MESH_NODE`, sube el
   beacon de su AP de 300 a 60 000 TU (~200 veces menos beacons) y rechaza a cualquier hijo.
+
+## Resultado del 22/10/2026: actualización por la malla y cortes
+
+Todo el detalle (cada prueba, qué falló, por qué y la corrección) está en
+[`../PRUEBAS_OTA_Y_CORTES.md`](../PRUEBAS_OTA_Y_CORTES.md).
 
 ## Resultado con el contrato v4.0 (20/10/2026)
 
