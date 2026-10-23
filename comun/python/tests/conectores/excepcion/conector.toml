@@ -1,0 +1,16 @@
+# Conector de prueba de aura_sdk.subproceso (tests/test_subproceso.py). No es de ningún grupo.
+nombre  = "excepcion"
+version = "0.1.0"
+sdk     = ">=1,<2"
+autores = ["catedra"]
+clase   = "conector:ConectorPrueba"
+
+[campos.temp_c]
+unidad = "°C"
+min = -40
+max = 125
+
+[campos.hum_pct]
+unidad = "%"
+min = 0
+max = 100

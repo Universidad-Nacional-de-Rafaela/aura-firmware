@@ -1,5 +1,7 @@
 """Tests de herramientas/correr_conector.py con el conector de ejemplo (sin broker)."""
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -66,6 +68,27 @@ class CorridaDeEjemplo(unittest.TestCase):
         self.c.resumen()
         self.assertIn("descartado: 1", self.lineas[-1])
         self.assertIn("persistido: 1", self.lineas[-1])
+
+
+class Subproceso(unittest.TestCase):
+    def test_con_subproceso_da_lo_mismo(self):
+        mensajes = "\n".join([
+            '{"values": {"temp_chip_c": 35.2}, "ingest_id": "a", "ts": "2026-10-07T12:00:00Z"}',
+            '{"values": {"temp_chip_c": 900}, "ingest_id": "b"}',
+            '{"values": {"temp_chip_c": 70}, "ingest_id": "c"}',
+            '{"values": {"temp_chip_c": 70}, "ingest_id": "c"}',
+        ])
+        with tempfile.NamedTemporaryFile("w", suffix=".jsonl") as f:
+            f.write(mensajes)
+            f.flush()
+            base = [sys.executable, str(RAIZ / "herramientas" / "correr_conector.py"),
+                    str(RAIZ / "ejemplos" / "conector_ejemplo"), "--archivo", f.name]
+            sin = subprocess.run(base, capture_output=True, text=True, timeout=60)
+            con = subprocess.run(base + ["--subproceso"], capture_output=True, text=True, timeout=60)
+        self.assertEqual(sin.returncode, 0, sin.stderr)
+        self.assertEqual(con.returncode, 0, con.stderr)
+        self.assertIn("persistido: 2", sin.stdout.splitlines()[-1])
+        self.assertEqual(con.stdout, sin.stdout)
 
 
 if __name__ == "__main__":

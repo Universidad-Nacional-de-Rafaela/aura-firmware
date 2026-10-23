@@ -22,6 +22,16 @@ class FalloDelConector(Exception):
         self.detalle = detalle
 
 
+class ErrorDelAnfitrion(Exception):
+    """Falló AURA, no el conector: un método del Contexto lanzó algo que no es un error de uso
+    (por ejemplo, la base no contesta durante serie()). procesar() deshace y relanza `original`:
+    es un error transitorio de la ingesta (sin ack, el nodo reintenta), no una falla del conector."""
+
+    def __init__(self, original: BaseException):
+        super().__init__(repr(original))
+        self.original = original
+
+
 @dataclass
 class ResultadoMensaje:
     resultado: Optional[str]           # el ack que publicaría AURA: persistido, descartado o duplicado
@@ -36,6 +46,7 @@ def procesar(conector, ctx, msg) -> ResultadoMensaje:
     - ingest_id ya guardado          -> "duplicado", sin llamar al conector
     - el conector guardó             -> "persistido"
     - descartó, o no hizo nada       -> "descartado" (motivo, o "sin_accion")
+    - falló AURA (ErrorDelAnfitrion) -> deshace y relanza el error original: no es culpa del conector
     - falló (excepción, timeout...)  -> D5: no queda nada de lo que hizo el conector; se guarda la
                                         muestra cruda (solo los campos dentro de rango) con una alerta
                                         "conector_fallo": "persistido", o "descartado" si no hay ningún
@@ -46,6 +57,9 @@ def procesar(conector, ctx, msg) -> ResultadoMensaje:
     ctx._empezar(msg)
     try:
         conector.al_recibir_datos(msg, ctx)
+    except ErrorDelAnfitrion as e:
+        ctx._deshacer()
+        raise e.original
     except Exception as e:
         ctx._deshacer()
         if isinstance(e, FalloDelConector):
