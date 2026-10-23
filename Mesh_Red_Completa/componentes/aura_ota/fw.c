@@ -1,4 +1,6 @@
 #include <stdio.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_system.h"
@@ -12,15 +14,29 @@ static volatile bool sin_confirmar = false;
 static volatile bool hablo = false;             /* ya habló con la raíz (o el gateway con el broker) */
 static esp_timer_handle_t vencimiento = NULL, revision = NULL;
 static void (*antes_de_volver)(void) = NULL;
+static TaskHandle_t tarea_volver = NULL;
 
-static void no_se_confirmo(void *arg)
+/* La vuelta atrás corre en una tarea propia: antes_de_volver() espera eventos y escribe en flash,
+   y la tarea de esp_timer tiene poca pila y frena a los demás timers mientras tanto (revisión #24) */
+static void volver(void *arg)
 {
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     ESP_LOGE(TAG, "La versión nueva no se confirmó en %d s: vuelvo a la anterior", AURA_FW_VERIFICAR_S);
     if (antes_de_volver) {
         antes_de_volver();
     }
     esp_ota_mark_app_invalid_rollback_and_reboot();
     esp_restart();                                     /* por si no había anterior: el bootloader decide */
+}
+
+static void no_se_confirmo(void *arg)
+{
+    if (tarea_volver) {
+        xTaskNotifyGive(tarea_volver);
+    } else {
+        esp_ota_mark_app_invalid_rollback_and_reboot();
+        esp_restart();
+    }
 }
 
 static void marcar_buena(void)
@@ -59,6 +75,7 @@ void aura_fw_iniciar(void)
                  AURA_FW_VERIFICAR_S / 60);
         const esp_timer_create_args_t a = {.callback = no_se_confirmo, .name = "fw_verificar"};
         const esp_timer_create_args_t b = {.callback = revisar, .name = "fw_revisar"};
+        xTaskCreate(volver, "fw_volver", 4096, NULL, 5, &tarea_volver);
         if (esp_timer_create(&a, &vencimiento) == ESP_OK && esp_timer_create(&b, &revision) == ESP_OK) {
             esp_timer_start_once(vencimiento, (uint64_t)AURA_FW_VERIFICAR_S * 1000000);
             esp_timer_start_periodic(revision, 5000000);

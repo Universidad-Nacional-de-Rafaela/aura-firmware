@@ -107,8 +107,9 @@ Espressif (ESP-MDF `mupgrade`): no está en ESP-IDF 6 y el proyecto ESP-MDF est�
 
 - **Imágenes firmadas.** El SHA-256 del comando asegura que llega la imagen que AURA eligió, pero no
   quién la eligió: cualquiera con permiso de publicar en `hw/+/command` puede mandar una
-  actualización. Hasta firmar las imágenes (Secure Boot v2), la protección es la del broker (usuario
-  y clave, ACL) — contrato, pendientes 8 y 15.
+  actualización. Hasta firmar las imágenes (Secure Boot v2), la protección es la del broker: usuario,
+  clave y ACL de `hw/+/command` (contrato, pendiente 11, falta TLS) y la custodia de esas credenciales
+  (pendiente 15). Las imágenes firmadas son el pendiente 23.
 - **Volver a una versión más vieja** está permitido (útil para deshacer una entrega). Si hiciera
   falta impedirlo: anti-rollback por eFuse.
 - La actualización de los dispositivos **LoRaWAN** (FUOTA) es otro mecanismo.

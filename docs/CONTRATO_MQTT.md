@@ -509,7 +509,7 @@ el final**. Motivos de `rechazado` propios de `ota`:
 | `chip_distinto` | la imagen es para otro chip (por ejemplo, de ESP32-S3 para una ESP32-C3) |
 | `nodo_no_alcanzable`, `nodo_no_responde` | la placa no está en la mesh, o no contesta (por ejemplo, un firmware anterior a la v4.3, que no sabe actualizarse) |
 | `transferencia_cortada` | la placa dejó de pedir bloques: se reintenta desde cero dos veces antes de rechazar |
-| `version_actual_sin_confirmar` | la placa todavía está probando una versión recién instalada (60 s) |
+| `version_actual_sin_confirmar` | la placa todavía está probando una versión recién instalada: queda confirmada cuando habla con el raíz y anda 60 s, y si no lo logra vuelve a la anterior a los 10 min |
 | `volvio_a_la_version_anterior` | la versión nueva se instaló pero no anduvo, y la placa volvió sola a la anterior (`details.firmware` dice cuál quedó) |
 | `no_volvio` | la placa no volvió a la mesh en 15 min después de reiniciarse |
 | `actualizacion_en_curso`, `reemplazado_por_otro_pedido`, `cola_ota_llena` | ya se la está actualizando; un pedido nuevo para la misma placa reemplaza al que esperaba; más de 32 en espera |
@@ -941,9 +941,9 @@ citan.
     todas las de un tipo (y aula), siga las `response` y vuelva a pedir lo que no terminó si el raíz
     se reinicia (su `status` vuelve con `uptime_s` menor) o si se cortó el broker.
 23. **Imágenes firmadas** ([ADR-008](adr/ADR-008-actualizacion-por-la-malla-y-tipo-de-firmware.md)).
-    El SHA-256 asegura que llega la imagen pedida, no quién la pidió: hoy la protección es la ACL de
-    `hw/+/command` en el broker (pendiente 11). Firmarlas es Secure Boot v2 (una vez por placa, por
-    USB).
+    El SHA-256 asegura que llega la imagen pedida, no quién la pidió: hasta firmarlas, la protección es
+    el usuario, la clave y la ACL de `hw/+/command` en el broker (pendiente 11, falta TLS) y la custodia
+    de esas credenciales (pendiente 15). Firmarlas es Secure Boot v2 (una vez por placa, por USB).
 
 De la v1.x quedan resueltos el destino de los diagnósticos del gateway (van a `status.details`) y
 `pend`/`desc` (pasan a `pendientes`/`descartadas` en `status`). `lux_sim` sigue sin objeto.
