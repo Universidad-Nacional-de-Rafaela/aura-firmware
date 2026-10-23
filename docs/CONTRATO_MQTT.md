@@ -918,14 +918,18 @@ citan.
     `hw/eui-+/ack` (la ACL lo tendría que permitir), guarde en disco los `data` publicados sin
     `ack` y los republique con el mismo `ingest_id` (el backend contesta `duplicado` si ya
     estaban). Medir antes: contar uplinks contra acks durante un mes.
-19. **Codecs que meten diagnóstico en `values`** (tema de estudio). El codec `aura-clase-a` del
-    ChirpStack del banco devuelve en `object` el `contador` de tramas, `null` para la sonda sin eco
-    y textos de estado (`tanque2_estado: "sin_eco"`). El bridge pasa `object` tal cual (§3.1), así
-    que las tres cosas entran a la serie como mediciones, contra lo que pide §3.1, y nadie falla.
-    **Aceptado por ahora**: el bridge no valida `values`, porque su forma la define cada codec.
-    **Para arrancar**: corregir ese codec (omitir la sonda que falla, sacar el contador, y mandar la
-    falla como `alerts/sensor` desde un uplink en otro puerto), y que el conector de cada
-    dispositivo rechace en el banco los campos que no declara en su `conector.toml`.
+19. **Codecs que meten diagnóstico en `values`** (tema de estudio). Un codec del ChirpStack del
+    banco devolvía en `object` el `contador` de tramas, `null` para la sonda sin eco y textos de
+    estado (`tanque2_estado: "sin_eco"`). El bridge pasa `object` tal cual (§3.1), así que las tres
+    cosas entraban a la serie como mediciones, contra lo que pide §3.1, y nadie fallaba.
+    ✅ **Ese codec está corregido** (2026-10-23): es el del profile `aura-tanque-3x-ultrasonico`
+    (antes `aura-clase-a`), que omite el tanque sin lectura válida, no manda contador y, si ningún
+    tanque da lectura, no publica `data`. La falla queda en los `warnings` del evento de
+    ChirpStack, que AURA no ve.
+    **Sigue aceptado**: el bridge no valida `values`, porque su forma la define cada codec.
+    **Falta**: mandar la falla de la sonda como `alerts/sensor` desde un uplink en otro puerto, y
+    que el conector de cada dispositivo rechace en el banco los campos que no declara en su
+    `conector.toml`.
 
 20. **Asignar el aula desde AURA** (v4.1, §2.3 y §3.3). Hoy se hace mandando a mano
     `set_config {"aula": …}` por la API de comandos. Falta que AURA lo haga sola al asignar una
