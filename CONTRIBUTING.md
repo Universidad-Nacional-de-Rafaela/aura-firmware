@@ -110,8 +110,8 @@ código que tu dispositivo (ver [`conectores/README.md`](conectores/README.md)).
 Lo que puede usar un conector es solo el `Contexto`: `guardar_medicion`, `descartar`, `serie`,
 `guardar_prediccion`, `alertar`, `config_vigente` y `log`. No tiene acceso a la base, a la red ni
 a archivos, y AURA puede recrearlo en cualquier momento: lo que tenga que recordar lo lee con
-`ctx.serie()`. Si lanza una excepción, no se guarda nada y el dispositivo reenvía la muestra más
-tarde. Python 3.11 o posterior, sin bibliotecas externas por ahora.
+`ctx.serie()`. Si lanza una excepción, se guarda la muestra cruda (los campos dentro de rango) con una alerta
+`conector_fallo`, y el dispositivo no reenvía. Python 3.11 o posterior, sin bibliotecas externas por ahora.
 
 ## 4. Lo que no se negocia
 

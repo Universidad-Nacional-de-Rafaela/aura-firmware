@@ -6,8 +6,9 @@ Reglas (contrato de AURA, docs/CONTRATO_MQTT.md):
   - Solo se guardan mediciones válidas: lo que no esté en el manifiesto o esté fuera de rango
     lo quita AURA. No reemplaces un valor que falta por otro ni por un valor fijo.
   - Si una muestra no sirve y no hay que pedir que se reenvíe, ctx.descartar("motivo").
-  - Si lanzás una excepción, no se guarda nada y el dispositivo la reenvía más tarde: úsenlo
-    solo para errores de verdad, no para "este dato no me gusta".
+  - Si lanzás una excepción, se guarda la muestra cruda (los campos dentro de rango) con una
+    alerta conector_fallo, y el dispositivo no reenvía: úsenlo solo para errores de verdad,
+    no para "este dato no me gusta".
   - No guardes estado en atributos de la instancia: AURA la puede recrear. Para mirar el
     pasado, ctx.serie(campo, desde, hasta).
 """

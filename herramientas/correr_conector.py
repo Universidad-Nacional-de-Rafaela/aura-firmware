@@ -2,7 +2,7 @@
 """Corre un conector en el banco, sin AURA, como lo va a correr AURA.
 
 Lee los mensajes de una placa y los pasa por el conector con ContextoDePrueba (todo en
-memoria). Muestra qué contestaría AURA a cada uno (persistido, descartado, sin ack), qué
+memoria). Muestra qué contestaría AURA a cada uno (persistido, descartado), qué
 campos se quitaron, las alertas y las predicciones. No publica nada: el ack lo da AURA, o en el
 banco herramientas/ack_falso.py.
 
@@ -52,16 +52,14 @@ class Corrida:
             return None
         alertas_antes = len(self.ctx.alertas)
         r = procesar(self.conector, self.ctx, msg)
-        if r.resultado is None:
-            self.salida(f"{msg.values} -> SIN ACK: el conector lanzó una excepción (el nodo reenviaría)")
+        extra = f" ({r.motivo})" if r.motivo else ""
+        quitados = f", quitados {r.quitados}" if r.quitados else ""
+        self.salida(f"{msg.values} -> {r.resultado}{extra}{quitados}")
+        if r.error:
             self.salida("   " + r.error.strip().splitlines()[-1])
-        else:
-            extra = f" ({r.motivo})" if r.motivo else ""
-            quitados = f", quitados {r.quitados}" if r.quitados else ""
-            self.salida(f"{msg.values} -> {r.resultado}{extra}{quitados}")
         for a in self.ctx.alertas[alertas_antes:]:
             self.salida(f"   alerta {a.tipo} [{a.severidad}] {a.mensaje}")
-        self._contar(r.resultado or "sin_ack")
+        self._contar(r.resultado)
         self.quizas_predecir()
         return r
 

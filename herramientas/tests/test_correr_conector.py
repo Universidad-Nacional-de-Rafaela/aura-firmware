@@ -47,6 +47,15 @@ class CorridaDeEjemplo(unittest.TestCase):
         self.c.data({"values": {"temp_chip_c": 31}, "ingest_id": "b"})
         self.assertTrue(any("predecir() no guardó" in l for l in self.lineas))   # pocos puntos
 
+    def test_falla_del_conector_muestra_conector_fallo(self):
+        def lanza(msg, ctx):
+            raise ValueError("bug del grupo")
+        self.c.conector.al_recibir_datos = lanza
+        self.c.data({"values": {"temp_chip_c": 35.2}, "ingest_id": "a"})
+        self.assertTrue(any("-> persistido (conector_fallo)" in l for l in self.lineas))
+        self.assertTrue(any("ValueError: bug del grupo" in l for l in self.lineas))
+        self.assertTrue(any("alerta conector_fallo" in l for l in self.lineas))
+
     def test_status_actualiza_la_config(self):
         self.c.status({"status": "online", "details": {"config": {"intervalo_s": 30}}})
         self.assertEqual(self.c.ctx.config_vigente(), {"intervalo_s": 30})
