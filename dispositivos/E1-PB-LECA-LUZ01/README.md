@@ -94,16 +94,13 @@ en la PC: `python3 -m unittest discover -s conectores/E1-PB-LECA-LUZ01/tests`.
 
 ## Compilar y probar
 
-```bash
-# tests de la lógica (se corren en la PC)
-make -C tests test
-```
+Firmware (ESP-IDF 6.1, instalado con EIM; ver `Mesh_Red_Completa/GUIA_NODOS_HOJA.md`):
 
-En Arduino IDE: placa **ESP32C3 Dev Module**, *USB CDC On Boot: Enabled*, bibliotecas de
-`bibliotecas.txt`, y copiar `config_local.h.example` → `config_local.h` (pines por defecto
-los de arriba; los datos de la mesh los da la cátedra). Sin `config_local.h` compila igual,
-pero no envía (guarda en la cola). El sketch usa ~97% de la partición por defecto (1.3 MB):
-si la IDE no deja compilar algo más, subir *Partition Scheme* a **No OTA (2 MB APP)**.
+1. Copiar `main/config_local.ejemplo.h` como `main/config_local.h` y completar el ID y la clave
+   de la mesh, que los da la cátedra. Sin ese archivo no compila (a propósito).
+2. Desde esta carpeta: `idf.py set-target esp32c3` y `idf.py -p <puerto> build flash monitor`.
+3. Si cambiás `sdkconfig.defaults` o `partitions.csv`, borrá `sdkconfig` y `build/` antes de
+   compilar.
 
 Para darlo de alta en AURA hay que agregar la fila a la tabla *Dispositivos* de
 [`../../dispositivos/README.md`](../../dispositivos/README.md) y cargar la placa con

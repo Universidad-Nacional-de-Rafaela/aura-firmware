@@ -149,8 +149,16 @@ static bool sistema_activo = false;
 static uint32_t ultima_lectura = 0;
 static uint32_t ultima_muestra = 0;
 static bool primera_muestra = true;
+static bool primera_lectura = true;   /* nada se publica antes de leer los sensores */
 static bool publicar_ya = true;
 static bool presencia_publicada = false;
+
+/* Guia, regla 8: con float, cJSON escribe 24.100000381 y la medicion completa
+   pasa de los 160 bytes de values (la biblioteca la descarta). Un decimal alcanza. */
+static double redondear1(float v)
+{
+    return round((double)v * 10.0) / 10.0;
+}
 
 // ===== Rele y LED =====
 static void escribir_rele(bool encender)
@@ -231,6 +239,23 @@ static void set_motivo(char *motivo, size_t cap, const char *texto)
     snprintf(motivo, cap, "%s", texto);
 }
 
+/* Valida que p sea un entero entre min y max ANTES de convertirlo: un negativo
+   o un 30.7 no se pueden castear a uint32_t sin perder o inventar el valor. */
+static bool leer_entero(const cJSON *p, const char *nombre, uint32_t min, uint32_t max,
+                        uint32_t *destino, char *motivo, size_t cap)
+{
+    if (!cJSON_IsNumber(p) || p->valuedouble != floor(p->valuedouble)) {
+        snprintf(motivo, cap, "%s_no_es_entero", nombre);
+        return false;
+    }
+    if (p->valuedouble < (double)min || p->valuedouble > (double)max) {
+        snprintf(motivo, cap, "%s_fuera_de_rango", nombre);
+        return false;
+    }
+    *destino = (uint32_t)p->valuedouble;
+    return true;
+}
+
 static bool aplicar_config(const cJSON *params, char *motivo, size_t cap)
 {
     /* Primero se valida TODO; solo despues se aplica (contrato 3.3). "aula" la
@@ -247,29 +272,13 @@ static bool aplicar_config(const cJSON *params, char *motivo, size_t cap)
         if (k == NULL) { set_motivo(motivo, cap, "parametro_sin_nombre"); return false; }
         if (strcmp(k, "aula") == 0) continue;   /* lo guarda la biblioteca */
         if (strcmp(k, "intervalo_s") == 0) {
-            if (p->type != cJSON_Number) { set_motivo(motivo, cap, "intervalo_s_no_es_entero"); return false; }
-            nuevo_intervalo = (uint32_t)p->valuedouble;
-            if (nuevo_intervalo < INTERVALO_MIN_S || nuevo_intervalo > INTERVALO_MAX_S) {
-                set_motivo(motivo, cap, "intervalo_s_fuera_de_rango"); return false;
-            }
+            if (!leer_entero(p, "intervalo_s", INTERVALO_MIN_S, INTERVALO_MAX_S, &nuevo_intervalo, motivo, cap)) return false;
         } else if (strcmp(k, "umbral_bajo_lx") == 0) {
-            if (p->type != cJSON_Number) { set_motivo(motivo, cap, "umbral_bajo_lx_no_es_entero"); return false; }
-            nuevo_bajo = (uint32_t)p->valuedouble;
-            if (nuevo_bajo < UMBRAL_MIN_LX || nuevo_bajo > UMBRAL_MAX_LX) {
-                set_motivo(motivo, cap, "umbral_bajo_lx_fuera_de_rango"); return false;
-            }
+            if (!leer_entero(p, "umbral_bajo_lx", UMBRAL_MIN_LX, UMBRAL_MAX_LX, &nuevo_bajo, motivo, cap)) return false;
         } else if (strcmp(k, "umbral_alto_lx") == 0) {
-            if (p->type != cJSON_Number) { set_motivo(motivo, cap, "umbral_alto_lx_no_es_entero"); return false; }
-            nuevo_alto = (uint32_t)p->valuedouble;
-            if (nuevo_alto < UMBRAL_MIN_LX || nuevo_alto > UMBRAL_MAX_LX) {
-                set_motivo(motivo, cap, "umbral_alto_lx_fuera_de_rango"); return false;
-            }
+            if (!leer_entero(p, "umbral_alto_lx", UMBRAL_MIN_LX, UMBRAL_MAX_LX, &nuevo_alto, motivo, cap)) return false;
         } else if (strcmp(k, "delay_off_s") == 0) {
-            if (p->type != cJSON_Number) { set_motivo(motivo, cap, "delay_off_s_no_es_entero"); return false; }
-            nuevo_delay = (uint32_t)p->valuedouble;
-            if (nuevo_delay > DELAY_OFF_MAX_S) {
-                set_motivo(motivo, cap, "delay_off_s_fuera_de_rango"); return false;
-            }
+            if (!leer_entero(p, "delay_off_s", 0, DELAY_OFF_MAX_S, &nuevo_delay, motivo, cap)) return false;
         } else {
             snprintf(motivo, cap, "parametro_desconocido:%s", k);
             return false;
@@ -434,8 +443,9 @@ void app_main(void)
         ld2420_update(&radar);
         diagnosticar_radar();
 
-        bool vencio_lectura = aura_millis() - ultima_lectura >= 1000;
+        bool vencio_lectura = primera_lectura || aura_millis() - ultima_lectura >= 1000;
         if (vencio_lectura) {
+            primera_lectura = false;
             ultima_lectura = aura_millis();
             lux_ventana = leer_bh(&bh_ventana, &bh_ventana_ok, 0x23);
             lux_aula = leer_bh(&bh_aula, &bh_aula_ok, 0x5C);
@@ -509,11 +519,11 @@ void app_main(void)
         if (vencio || publicar_ya) {
             cJSON *values = cJSON_CreateObject();
             if (!stale) cJSON_AddNumberToObject(values, CAMPO_PRESENCIA, presencia ? 1 : 0);
-            if (bh_ventana_ok) cJSON_AddNumberToObject(values, "luz_ventana_lx", lux_ventana);
-            if (bh_aula_ok) cJSON_AddNumberToObject(values, "luz_aula_lx", lux_aula);
+            if (bh_ventana_ok) cJSON_AddNumberToObject(values, "luz_ventana_lx", redondear1(lux_ventana));
+            if (bh_aula_ok) cJSON_AddNumberToObject(values, "luz_aula_lx", redondear1(lux_aula));
             if (sht_ok) {
-                cJSON_AddNumberToObject(values, "temp_c", (double)temp_c);
-                cJSON_AddNumberToObject(values, "humedad_pct", (double)humedad_pct);
+                cJSON_AddNumberToObject(values, "temp_c", redondear1(temp_c));
+                cJSON_AddNumberToObject(values, "humedad_pct", redondear1(humedad_pct));
             }
             if (RELE_PIN >= 0) cJSON_AddNumberToObject(values, "rele_canal1", luz_encendida ? 1 : 0);
             if (!nodo_mesh_medicion(values)) ESP_LOGW(TAG, "medicion no encolada (JSON vacio o muy grande)");
