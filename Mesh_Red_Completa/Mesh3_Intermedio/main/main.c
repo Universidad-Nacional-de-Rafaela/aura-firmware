@@ -23,6 +23,9 @@
  *   la pantalla y el botón funcionan, y las mediciones quedan en la cola de cada hoja. Cada
  *   ISLA_REVISAR_S busca al gateway; cuando lo ve, se reinicia en modo normal. (Sin raíz,
  *   ESP-WIFI-MESH no acepta conexiones nuevas: una hoja que se desconecta quedaría afuera.)
+ *   "Ver al gateway" = una raíz que anuncia AURA_IE_GATEWAY en su beacon: otro concentrador en isla
+ *   también es raíz de capa 1 con el mismo MESH_ID, y sin esa marca dos aulas en isla se verían una
+ *   a la otra y se reiniciarían sin fin (revisión del #23).
  * - Cada INTERVALO_REPORTE_S manda su propio reporte (y cuando la raíz lo pide al volver el
  *   broker): la raíz lo publica en hw/mac-<concentrador>/status. El resultado de un comando
  *   propio se reintenta hasta que la raíz confirma que lo publicó.
@@ -86,6 +89,9 @@ static const uint8_t MESH_ID[6] = {MESH_ID_BYTES};
 #define ROUTER_ISLA             "aura-isla"
 
 #define PIN_BOTON               GPIO_NUM_0     /* botón BOOT */
+/* Consola: 1 = una línea por cada trama que llega (TRAMA <hw_id> <tipo> ...), de cualquier aula.
+   Sirve en el banco para ver las hojas de los grupos y lo que mandan. */
+#define VER_TRAMAS              1
 #define PIN_LED_RGB             38             /* WS2812 de la Waveshare ESP32-S3-DEV-KIT */
 #define BRILLO_LED              150
 
@@ -122,6 +128,17 @@ typedef struct {
 } hoja_t;
 static hoja_t hojas[MAX_HOJAS];
 static int cant_hojas = 0;
+/* hojas[] la tocan la recepción, la tarea de estado, el botón y los eventos de la malla.
+   Recursivo: las funciones que lo toman se llaman entre sí. */
+static SemaphoreHandle_t lock_hojas = NULL;
+#define HOJAS_TOMAR()   xSemaphoreTakeRecursive(lock_hojas, portMAX_DELAY)
+#define HOJAS_SOLTAR()  xSemaphoreGiveRecursive(lock_hojas)
+
+/* Raíces que anuncian AURA_IE_GATEWAY en el último escaneo (el callback de vendor IE las anota) */
+#define MAX_GATEWAYS_VISTOS 4
+static uint8_t gateways_vistos[MAX_GATEWAYS_VISTOS][6];
+static int cant_gateways_vistos = 0;
+static portMUX_TYPE lock_gateways = portMUX_INITIALIZER_UNLOCKED;
 static int hoja_led = -1;                        /* -1 = todavía no informó */
 
 /* LOTE que se arma con lo que mandan las hojas */
@@ -309,6 +326,7 @@ static void tarea_lote(void *arg)
 /* ================================================================== */
 static hoja_t *hoja_vista(const uint8_t mac[6])
 {
+    HOJAS_TOMAR();
     int i;
     for (i = 0; i < cant_hojas && memcmp(hojas[i].mac, mac, 6) != 0; i++) {
     }
@@ -338,17 +356,19 @@ static hoja_t *hoja_vista(const uint8_t mac[6])
         printf("PANTALLA %s | %s VOLVIÓ\n", aula, hw);
         pantalla_led();
     }
+    HOJAS_SOLTAR();
     return &hojas[i];
 }
 
 static bool hay_ausente(void)
 {
-    for (int i = 0; i < cant_hojas; i++) {
-        if (hojas[i].ausente && (hojas[i].aula[0] == 0 || strcmp(hojas[i].aula, aula) == 0)) {
-            return true;
-        }
+    bool hay = false;
+    HOJAS_TOMAR();
+    for (int i = 0; i < cant_hojas && !hay; i++) {
+        hay = hojas[i].ausente && (hojas[i].aula[0] == 0 || strcmp(hojas[i].aula, aula) == 0);
     }
-    return false;
+    HOJAS_SOLTAR();
+    return hay;
 }
 
 /* ===== Hojas del aula en NVS (se escribe solo cuando cambia la lista) ===== */
@@ -356,11 +376,13 @@ static void hojas_guardar(void)
 {
     uint8_t macs[MAX_HOJAS][6];
     int n = 0;
+    HOJAS_TOMAR();
     for (int i = 0; i < cant_hojas; i++) {
         if (strcmp(hojas[i].aula, aula) == 0) {
             memcpy(macs[n++], hojas[i].mac, 6);
         }
     }
+    HOJAS_SOLTAR();
     nvs_handle_t h;
     if (nvs_open("concentrador", NVS_READWRITE, &h) == ESP_OK) {
         nvs_set_blob(h, "hojas", macs, n * 6);
@@ -399,6 +421,7 @@ static void revisar_ausentes(void)
         return;
     }
     bool cambio = false;
+    HOJAS_TOMAR();
     for (int i = 0; i < cant_hojas; i++) {
         hoja_t *x = &hojas[i];
         if (x->ausente || (x->aula[0] && strcmp(x->aula, aula) != 0)) {
@@ -419,6 +442,7 @@ static void revisar_ausentes(void)
             printf("PANTALLA %s | %s AUSENTE (%s)\n", aula, hw, motivo);
         }
     }
+    HOJAS_SOLTAR();
     if (cambio) {
         pantalla_led();
     }
@@ -428,6 +452,7 @@ static void revisar_ausentes(void)
 static bool hoja_ultima(mesh_addr_t *mac)
 {
     int mejor = -1;
+    HOJAS_TOMAR();
     for (int i = 0; i < cant_hojas; i++) {
         if (hojas[i].aula[0] && strcmp(hojas[i].aula, aula) != 0) {
             continue;                                  /* el botón solo manda a hojas de esta aula */
@@ -439,6 +464,7 @@ static bool hoja_ultima(mesh_addr_t *mac)
     if (mejor >= 0) {
         memcpy(mac->addr, hojas[mejor].mac, 6);
     }
+    HOJAS_SOLTAR();
     return mejor >= 0;
 }
 
@@ -548,6 +574,12 @@ static void tarea_recepcion(void *arg)
         }
         aura_trama_t t;
         memcpy(&t, buf, d.size);
+#if VER_TRAMAS
+        char hw_rx[AURA_HW_ID_BYTES], txt_rx[AURA_PAYLOAD_MAX + 1];
+        aura_hw_id_de_mac(de.addr, hw_rx);
+        aura_trama_describir(&t, txt_rx, sizeof(txt_rx));
+        printf("TRAMA %s %s seq=%u %s\n", hw_rx, aura_tipo_nombre(t.tipo), t.seq, txt_rx);
+#endif
 
         /* Para este concentrador (de la raíz) */
         if (t.tipo == AURA_TIPO_COMANDO) {
@@ -573,6 +605,7 @@ static void tarea_recepcion(void *arg)
             continue;
         }
         /* De una hoja del aula */
+        HOJAS_TOMAR();
         hoja_t *h = hoja_vista(de.addr);
         aprender_aula(h, &t);
         if (t.tipo == AURA_TIPO_HORA) {                /* pedido de hora: si la tengo, contesto yo */
@@ -583,10 +616,12 @@ static void tarea_recepcion(void *arg)
                 aura_hora_armar(&r, seq++, ms);
                 xSemaphoreGive(lock_envio);
                 enviar_bytes(&de, (const uint8_t *)&r, aura_trama_bytes(&r));
+                HOJAS_SOLTAR();
                 continue;
             }
         }
         mostrar(h, de.addr, &t);
+        HOJAS_SOLTAR();
         if (t.tipo == AURA_TIPO_ESTADO || isla) {
             continue;                                  /* ESTADO es solo para el aula; en isla no hay arriba */
         }
@@ -696,7 +731,9 @@ static void atender_comando(const comando_t *c)
                        vuelva a elegir padre (las de esta aula vuelven, las otras van a plan B). */
                     ESP_LOGW(TAG, "Cambió el aula: suelto a las %d hojas conectadas", hijos);
                     esp_wifi_deauth_sta(0);
+                    HOJAS_TOMAR();
                     cant_hojas = 0;
+                    HOJAS_SOLTAR();
                     hoja_led = -1;
                     hojas_guardar();                   /* lista vacía: las de la nueva aula se aprenden */
                     led_mostrar(0);
@@ -764,8 +801,40 @@ static void salir_de_isla(void)
 }
 
 /* En isla: ¿hay otra raíz de esta malla (el gateway) al alcance? */
+/* Por cada beacon/probe response con vendor IE (tarea WiFi: breve). Solo hace falta en isla. */
+static void vendor_ie_cb(void *ctx, wifi_vendor_ie_type_t tipo, const uint8_t sa[6],
+                         const vendor_ie_data_t *ie, int rssi)
+{
+    if (!isla || ie->vendor_oui[0] != AURA_OUI_0 || ie->vendor_oui[1] != AURA_OUI_1 ||
+        ie->vendor_oui[2] != AURA_OUI_2 || ie->vendor_oui_type != AURA_IE_GATEWAY) {
+        return;
+    }
+    taskENTER_CRITICAL(&lock_gateways);
+    int i;
+    for (i = 0; i < cant_gateways_vistos && memcmp(gateways_vistos[i], sa, 6) != 0; i++) {
+    }
+    if (i == cant_gateways_vistos && i < MAX_GATEWAYS_VISTOS) {
+        memcpy(gateways_vistos[cant_gateways_vistos++], sa, 6);
+    }
+    taskEXIT_CRITICAL(&lock_gateways);
+}
+
+static bool es_gateway(const uint8_t bssid[6])
+{
+    bool es = false;
+    taskENTER_CRITICAL(&lock_gateways);
+    for (int i = 0; i < cant_gateways_vistos && !es; i++) {
+        es = memcmp(gateways_vistos[i], bssid, 6) == 0;
+    }
+    taskEXIT_CRITICAL(&lock_gateways);
+    return es;
+}
+
 static void isla_buscar_gateway(bool todos_los_canales)
 {
+    taskENTER_CRITICAL(&lock_gateways);
+    cant_gateways_vistos = 0;
+    taskEXIT_CRITICAL(&lock_gateways);
     wifi_scan_config_t sc = {
         .show_hidden = true,
         .scan_type = WIFI_SCAN_TYPE_PASSIVE,
@@ -787,9 +856,16 @@ static void isla_revisar_escaneo(int num)
     for (int i = 0; i < num; i++) {
         esp_mesh_scan_get_ap_ie_len(&ie_len);
         esp_mesh_scan_get_ap_record(&rec, &assoc);
-        if (ie_len == sizeof(assoc) && assoc.layer == 1 && memcmp(assoc.mesh_id, MESH_ID, 6) == 0) {
-            ESP_LOGI(TAG, "Isla: veo una raíz de la malla en " MACSTR " (canal %d)", MAC2STR(rec.bssid), rec.primary);
+        if (ie_len != sizeof(assoc) || assoc.layer != 1 || memcmp(assoc.mesh_id, MESH_ID, 6) != 0) {
+            continue;
+        }
+        /* Una raíz de esta malla: el gateway solo si anuncia que lo es. Si no, es otro concentrador
+           en isla (o se perdió el beacon con la marca: se ve en la próxima revisión) */
+        if (es_gateway(rec.bssid)) {
+            ESP_LOGI(TAG, "Isla: veo al gateway en " MACSTR " (canal %d)", MAC2STR(rec.bssid), rec.primary);
             gateway = true;
+        } else {
+            ESP_LOGI(TAG, "Isla: la raíz " MACSTR " no es el gateway (otra aula en isla)", MAC2STR(rec.bssid));
         }
     }
     esp_mesh_flush_scan_result();
@@ -926,11 +1002,13 @@ static void manejador_mesh(void *arg, esp_event_base_t base, int32_t id, void *d
     case MESH_EVENT_CHILD_CONNECTED: {
         mesh_event_child_connected_t *c = (mesh_event_child_connected_t *)data;
         hijos++;
+        HOJAS_TOMAR();
         for (int i = 0; i < cant_hojas; i++) {
             if (memcmp(hojas[i].mac, c->mac, 6) == 0) {
                 hojas[i].desconectada_desde = 0;
             }
         }
+        HOJAS_SOLTAR();
         ESP_LOGI(TAG, "Hijo conectado: " MACSTR " (aid %d)", MAC2STR(c->mac), c->aid);
         break;
     }
@@ -939,11 +1017,13 @@ static void manejador_mesh(void *arg, esp_event_base_t base, int32_t id, void *d
         if (hijos > 0) {
             hijos--;
         }
+        HOJAS_TOMAR();
         for (int i = 0; i < cant_hojas; i++) {
             if (memcmp(hojas[i].mac, c->mac, 6) == 0 && hojas[i].desconectada_desde == 0) {
                 hojas[i].desconectada_desde = xTaskGetTickCount() | 1;
             }
         }
+        HOJAS_SOLTAR();
         ESP_LOGW(TAG, "Hijo desconectado: " MACSTR, MAC2STR(c->mac));
         break;
     }
@@ -999,6 +1079,7 @@ void app_main(void)
        (pasaba con el reporte tras reiniciarse: la raíz lo confirmaba sin publicarlo) */
     seq = (uint16_t)esp_random();
     lock_envio = xSemaphoreCreateMutex();
+    lock_hojas = xSemaphoreCreateRecursiveMutex();
     lock_lote = xSemaphoreCreateMutex();
     cola_comandos = xQueueCreate(4, sizeof(comando_t));
     aura_lote_vaciar(&lote);
@@ -1015,6 +1096,7 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_wifi_init(&wcfg));
     ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
     ESP_ERROR_CHECK(esp_wifi_set_country_code("AR", false));   /* canales 1 a 13 */
+    ESP_ERROR_CHECK(esp_wifi_set_vendor_ie_cb(vendor_ie_cb, NULL));
     ESP_ERROR_CHECK(esp_wifi_start());
 
     ESP_ERROR_CHECK(esp_mesh_init());
