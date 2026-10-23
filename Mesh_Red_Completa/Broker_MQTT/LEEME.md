@@ -101,6 +101,20 @@ PLAN B / SIN AULA     Hoja ──────────────> Raíz (u 
 3. Encender las 3 placas (el orden no importa) **separadas entre sí**.
 4. En el tablero, asignar el aula al concentrador y a la hoja (`aula1`). La hoja pasa de `sin_aula` a `aula` sola.
 
+### Ver por consola lo que llega (hojas de los grupos)
+
+El gateway y el concentrador imprimen una línea por cada trama que reciben de la malla (`VER_TRAMAS 1`), por ejemplo:
+
+```
+NODO NUEVO mac-a0b1c2d3e4f5
+TRAMA mac-a0b1c2d3e4f5 REPORTE seq=31245 {"config":{"aula":null,"intervalo_s":10},"pendientes":0,...}
+TRAMA mac-a0b1c2d3e4f5 TELEMETRIA seq=31246 {"temp_c":24.5,"hum_pct":51.2}
+```
+
+El gateway ve **todas** las placas (las de un LOTE salen con el `hw_id` de cada hoja); el concentrador, las que le
+mandan a él (de cualquier aula). Con `idf.py -p COMx monitor` o cualquier terminal serie a 115200, y para filtrar:
+`idf.py -p COMx monitor | findstr "TRAMA NODO"` (Windows).
+
 ### Desconectar y volver a armar todo
 
 Los firmwares y las aulas quedan en flash: **no hay que volver a flashear ni a asignar nada**. Alimentar las placas,

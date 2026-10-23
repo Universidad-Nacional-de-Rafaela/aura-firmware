@@ -106,7 +106,10 @@ La cola guarda el **historial** para AURA; el concentrador necesita el **último
   si el concentrador pasa **60 s sin raíz**, se reinicia como **raíz de la isla de su aula**, en el último canal. Las
   hojas de su aula se cuelgan de él como siempre; el botón y la pantalla funcionan, y las mediciones quedan en la cola de
   cada hoja. Cada 30 s (y cada 5 min en todos los canales) busca al gateway; cuando lo ve, se reinicia en modo normal y
-  las hojas lo siguen.
+  las hojas lo siguen. "Ver al gateway" es ver una raíz que anuncia en su beacon **la marca de gateway**
+  (`AURA_IE_GATEWAY`): otro concentrador en isla también es raíz, y sin la marca dos aulas en isla se verían una a la
+  otra y se reiniciarían sin fin. No depende de cómo se conecte el gateway (WiFi o Ethernet), y un gateway reemplazado
+  por otro con el mismo firmware se reconoce igual.
 - Si la hoja reinicia un actuador al arrancar (el LED del ejemplo arranca apagado), el `ESTADO` lo informa. Si un
   actuador real tiene que recuperar su posición tras un corte, el firmware del dispositivo lo guarda en NVS.
 
@@ -279,7 +282,8 @@ Después de cambiar un parámetro hay que **recompilar y grabar todos los firmwa
 | `FUERA_DE_MALLA_MS`, `GRACIA_ARRANQUE_MS` | `20000`, `60000` | G | Un nodo fuera de la tabla de ruteo tanto tiempo → `offline` `fuera_de_la_malla`; al arrancar, margen para que la malla se arme. Los nodos conocidos se guardan en NVS (`gw_nodos`): tras reiniciarse, el gateway también marca offline a los que no vuelven. |
 | keepalive MQTT | `30` s | G | El broker da por caído al gateway a los ~45 s sin noticias y publica su LWT. |
 | `INTERVALO_STATUS_MS` | `60000` | G | Cada cuánto publica su propio status. |
-| `NODOS_CAP` | `64` | G | Nodos que sigue para offline y repetidos. |
+| `NODOS_CAP` | `64` | G | Nodos que sigue para offline y repetidos. **Pendiente:** la lista en NVS (`gw_nodos`) no se achica: una placa dada de baja ocupa su lugar para siempre. |
+| `VER_TRAMAS` | `1` | G, C | Consola: una línea `TRAMA <hw_id> <tipo> seq=<n> <contenido>` por cada trama que llega de la malla, y `NODO NUEVO <hw_id>` en el gateway. Sirve para ver las hojas de los grupos y lo que mandan; `0` la apaga. |
 | `CANAL_SIN_ROUTER` | `6` | G | Canal si no ve ninguna red (la malla anda, sin MQTT). |
 | `SERVIDOR_NTP`, `ZONA_HORARIA` | `pool.ntp.org`, UTC-3 | G | La zona solo afecta los logs: `ts` siempre en UTC. |
 

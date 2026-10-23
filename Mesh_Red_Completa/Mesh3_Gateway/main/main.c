@@ -97,6 +97,9 @@ static const uint8_t MESH_ID[6] = {MESH_ID_BYTES};
 #define FUERA_DE_MALLA_MS   20000                /* fuera de la tabla de ruteo tanto -> offline */
 #define GRACIA_ARRANQUE_MS  60000                /* al arrancar, la malla tarda en armarse */
 #define NVS_NODOS           "gw_nodos"
+/* Consola: 1 = una línea por cada trama que llega de la malla (TRAMA <hw_id> <tipo> ...) y aviso de
+   cada nodo nuevo. Sirve en el banco para ver las hojas de los grupos y lo que mandan. */
+#define VER_TRAMAS          1
 
 typedef struct {
     const char *ssid;
@@ -350,6 +353,11 @@ static nodo_t *nodo(const uint8_t mac[6])
     memcpy(libre->mac, mac, 6);
     libre->ultimo_ms = ahora_ms32();
     nodos_cambiaron = true;
+#if VER_TRAMAS
+    char hw[AURA_HW_ID_BYTES];
+    aura_hw_id_de_mac(mac, hw);
+    printf("NODO NUEVO %s\n", hw);
+#endif
     return libre;
 }
 
@@ -603,14 +611,26 @@ static void procesar(const uint8_t mac[6], const uint8_t *datos, size_t largo)
     aura_validacion_t v = aura_trama_validar(datos, largo);
     if (v == AURA_TRAMA_VERSION) {
         version_distinta++;
+#if VER_TRAMAS
+        printf("TRAMA " MACSTR " de otra versión de la trama (%u bytes): se descarta\n", MAC2STR(mac), (unsigned)largo);
+#endif
         return;
     }
     if (v != AURA_TRAMA_OK) {
         invalidas++;
+#if VER_TRAMAS
+        printf("TRAMA " MACSTR " inválida (%u bytes): se descarta\n", MAC2STR(mac), (unsigned)largo);
+#endif
         return;
     }
     aura_trama_t t;
     memcpy(&t, datos, largo);
+#if VER_TRAMAS
+    char hw[AURA_HW_ID_BYTES], txt[AURA_PAYLOAD_MAX + 1];
+    aura_hw_id_de_mac(mac, hw);
+    aura_trama_describir(&t, txt, sizeof(txt));
+    printf("TRAMA %s %s seq=%u %s\n", hw, aura_tipo_nombre(t.tipo), t.seq, txt);
+#endif
     if (t.tipo == AURA_TIPO_HORA) {                    /* pedido de hora */
         dar_hora(mac);
         return;
@@ -1071,9 +1091,21 @@ static void tarea_broker(void *arg)
 static void manejador_eventos_mesh(void *arg, esp_event_base_t base, int32_t id, void *event_data)
 {
     switch (id) {
-    case MESH_EVENT_STARTED:
+    case MESH_EVENT_STARTED: {
         ESP_LOGI(TAG, "Malla iniciada. Raíz: %s, capa %d", esp_mesh_is_root() ? "sí" : "no", esp_mesh_get_layer());
+        /* "Soy el gateway" en el beacon: así un concentrador en isla no confunde con el gateway a otro
+           concentrador en isla (también raíz de capa 1 con el mismo MESH_ID). No depende de cómo se
+           conecta el gateway a la red (WiFi o Ethernet): va en el beacon de la malla. */
+        static vendor_ie_data_t ie = {
+            .element_id = WIFI_VENDOR_IE_ELEMENT_ID,
+            .length = 4,
+            .vendor_oui = {AURA_OUI_0, AURA_OUI_1, AURA_OUI_2},
+            .vendor_oui_type = AURA_IE_GATEWAY,
+        };
+        esp_wifi_set_vendor_ie(true, WIFI_VND_IE_TYPE_BEACON, WIFI_VND_IE_ID_1, &ie);
+        esp_wifi_set_vendor_ie(true, WIFI_VND_IE_TYPE_PROBE_RESP, WIFI_VND_IE_ID_1, &ie);
         break;
+    }
     case MESH_EVENT_PARENT_CONNECTED: {
         /* En la raíz, el "padre" es el router: se pide IP por DHCP */
         mesh_event_connected_t *c = (mesh_event_connected_t *)event_data;
