@@ -16,6 +16,9 @@
 #define AURA_OUI_1              0xA5
 #define AURA_OUI_2              0x52
 #define AURA_IE_CONCENTRADOR    0x01
+/* Tipo 2 = "gateway" (sin payload): la raíz real de la malla. Un concentrador en isla también es
+   raíz de capa 1 con el mismo MESH_ID: esta marca es lo que los distingue (ver el modo isla). */
+#define AURA_IE_GATEWAY         0x02
 
 /* ===== Aula ===== */
 /* Nombre corto en minúsculas: a-z, 0-9, "-" y "_", de 1 a 15 caracteres. */
@@ -226,4 +229,32 @@ static inline uint32_t aura_espera_confirmacion_ms(uint32_t intentos)
 static inline uint32_t aura_con_azar(uint32_t ms, uint32_t azar)
 {
     return ms / 2 + (uint32_t)(((uint64_t)ms * (azar % 1001)) / 1000);
+}
+
+/* ===== Consola: una trama en una línea, para ver lo que llega (gateway y concentrador) ===== */
+static inline const char *aura_tipo_nombre(uint8_t tipo)
+{
+    static const char *const nombres[] = {"?", "TELEMETRIA", "COMANDO", "ACK", "CONFIRMACION", "RESULTADO",
+                                          "REPORTE", "ALERTA", "PING", "HORA", "LOTE", "EVENTO_OK",
+                                          "REPORTAR", "ESTADO", "OTA"};
+    return tipo < sizeof(nombres) / sizeof(nombres[0]) ? nombres[tipo] : "?";
+}
+
+/* Lo legible del payload: values (TELEMETRIA, ESTADO) o el JSON (eventos, comandos) */
+static inline void aura_trama_describir(const aura_trama_t *t, char *salida, size_t cap)
+{
+    size_t cab = t->tipo == AURA_TIPO_TELEMETRIA ? AURA_TELEMETRIA_CABECERA :
+                 t->tipo == AURA_TIPO_ESTADO ? 4 : 0;
+    bool texto = t->tipo == AURA_TIPO_TELEMETRIA || t->tipo == AURA_TIPO_ESTADO || t->tipo == AURA_TIPO_COMANDO ||
+                 t->tipo == AURA_TIPO_RESULTADO || t->tipo == AURA_TIPO_REPORTE || t->tipo == AURA_TIPO_ALERTA;
+    if (cap == 0) {
+        return;
+    }
+    if (!texto || t->largo < cab) {
+        snprintf(salida, cap, "(%u bytes)", t->largo);
+        return;
+    }
+    size_t n = t->largo - cab < cap - 1 ? t->largo - cab : cap - 1;
+    memcpy(salida, t->payload + cab, n);
+    salida[n] = '\0';
 }

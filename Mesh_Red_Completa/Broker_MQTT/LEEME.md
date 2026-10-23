@@ -62,6 +62,13 @@ PLAN B / SIN AULA     Hoja ──────────────> Raíz (u 
   anunciando su aula. Una hoja de otra aula pasa a plan B en ~5 s (cambiando de padre sin desconectarse: si se desconecta,
   la pila la vuelve a colgar del mismo padre en 0,2 s).
 - El concentrador **solo muestra** las hojas que informan su misma aula, pero reenvía todo (para que AURA no pierda datos).
+- **El aula funciona sin red arriba:** si una medición no va a pasar enseguida (cola atrás), la hoja le manda al
+  concentrador un `ESTADO` con el último valor, que se muestra y no sube. Al colgarse de su concentrador, la hoja también
+  le manda su `ESTADO`. El concentrador muestra solo lo último: el historial que se vacía cuando vuelve AURA no lo hace
+  parpadear.
+- **Modo isla:** con 60 s sin raíz (gateway apagado), el concentrador se reinicia como raíz de la isla de su aula, en el
+  último canal. Sin esto, una hoja que se desconecta no puede volver: ESP-WIFI-MESH sin raíz no acepta conexiones nuevas.
+  En isla busca al gateway cada 30 s y, cuando lo ve, vuelve al modo normal.
 
 ## Entrega garantizada y hora
 
@@ -78,11 +85,13 @@ PLAN B / SIN AULA     Hoja ──────────────> Raíz (u 
 
 ## Broker de banco (`broker.py`) y tablero
 
-- Broker MQTT mínimo con **mensajes retenidos** y **Last Will**.
+- Broker MQTT mínimo con **mensajes retenidos**, **Last Will** y control de **keepalive** (un cliente que pasa 1,5 x su
+  keepalive sin hablar se da por caído y se publica su Last Will).
 - **AURA falsa:** contesta cada `data` con su `ack` (`persistido`, o `duplicado` si ya lo vio). El modo se cambia en el tablero:
   `ok`, `sin_ack` (base caída), `cuarentena`, `rechazado`, `apagada` (con el backend real, o arrancar con `--sin-aura`).
-- **Tablero** (http://localhost:8080): una tarjeta por placa (`hw_id`) con su rol, estado (online, offline, **pendiente**
-  si no tiene aula), aula, valores y botones: LED, **asignar aula** e intervalo. Abajo, todos los mensajes.
+- **Tablero** (http://localhost:8080): una tarjeta por placa (`hw_id`) con su rol, estado (online, offline con motivo,
+  **pendiente** si no tiene aula), aula, valores y botones: LED, **asignar aula** e intervalo. Si el gateway está
+  offline, sus nodos se ven en gris ("sin gateway: último estado conocido"). Abajo, todos los mensajes.
 - `python led_blink.py <hw_id>`: prende y apaga el LED cada 1 s y mide el tiempo hasta `aplicado`.
 
 ## Cómo probar
@@ -91,6 +100,20 @@ PLAN B / SIN AULA     Hoja ──────────────> Raíz (u 
 2. `python broker.py` en esta carpeta → abrir **http://localhost:8080**.
 3. Encender las 3 placas (el orden no importa) **separadas entre sí**.
 4. En el tablero, asignar el aula al concentrador y a la hoja (`aula1`). La hoja pasa de `sin_aula` a `aula` sola.
+
+### Ver por consola lo que llega (hojas de los grupos)
+
+El gateway y el concentrador imprimen una línea por cada trama que reciben de la malla (`VER_TRAMAS 1`), por ejemplo:
+
+```
+NODO NUEVO mac-a0b1c2d3e4f5
+TRAMA mac-a0b1c2d3e4f5 REPORTE seq=31245 {"config":{"aula":null,"intervalo_s":10},"pendientes":0,...}
+TRAMA mac-a0b1c2d3e4f5 TELEMETRIA seq=31246 {"temp_c":24.5,"hum_pct":51.2}
+```
+
+El gateway ve **todas** las placas (las de un LOTE salen con el `hw_id` de cada hoja); el concentrador, las que le
+mandan a él (de cualquier aula). Con `idf.py -p COMx monitor` o cualquier terminal serie a 115200, y para filtrar:
+`idf.py -p COMx monitor | findstr "TRAMA NODO"` (Windows).
 
 ### Desconectar y volver a armar todo
 
@@ -145,6 +168,25 @@ al volver; lo más reciente se pierde si se la desenchufa.
   medición sin confirmar se respaldó en flash (15 en total); al reiniciar la hoja se recuperaron las 15, y al volver AURA
   llegaron primero, en orden y con su hora original (~70 min después). Lo medido en los últimos 5 min antes del reinicio
   estaba solo en RAM y se perdió, como está previsto.
+- ✅ AURA caída con comandos al LED (2026-10-21): la hoja cambió el LED en el acto y el concentrador se enteró en ~0,2 s
+  por el `ESTADO`. Al volver AURA, la hoja vació 12 mediciones de historial y el concentrador no repitió ninguna: mostró
+  solo el último valor.
+- ✅ Gateway apagado ~6 min: la hoja siguió colgada del concentrador y la pantalla se actualizó cada 10 s. Aunque el
+  concentrador sale a buscar la raíz por todos los canales, hubo como mucho 2 envíos fallidos seguidos de la hoja, sin
+  llegar a desconectarla.
+- ✅ Concentrador que llega tarde: con el concentrador apagado la hoja pasó a plan B y cambió el LED 3 veces; 32 s después
+  de prender el concentrador la hoja volvió y el concentrador arrancó mostrando el estado real del LED.
+- ✅ Modo isla (2026-10-21): con el gateway apagado, el concentrador pasó a isla a los 60 s y la hoja se le colgó (también
+  después de reiniciarla: en ~10 s). **Botón con el gateway apagado: 20 toques, 20 cambios** en la hoja y en la pantalla
+  (~0,2 s). Al volver el gateway, el concentrador salió de la isla en 13 s y la hoja lo siguió; los 20 cambios llegaron a
+  AURA en orden, con la hora de cada toque.
+- ✅ Concentrador reiniciado: arrancó sin memoria y, al colgarse la hoja, mostró enseguida el estado real del LED.
+- ✅ Hoja que se va (2026-10-21): el concentrador la marcó **AUSENTE con el LED en rojo** a los ~22 s y el gateway publicó
+  su `offline`; al volver, "VOLVIÓ" en el concentrador y `online` en AURA.
+- ✅ Reinicio de gateway y concentrador con la hoja ausente: los dos la recordaban (NVS) y la marcaron ausente/offline.
+  Antes, su `online` retenido quedaba para siempre.
+- ✅ Gateway colgado sin cerrar la conexión: el broker lo detectó por keepalive en 40 s y publicó su LWT; el tablero
+  mostró sus nodos en gris ("sin gateway: último estado conocido").
 - ⏳ Falta: una prueba larga (horas).
 
 ## Resultados anteriores (formato JSON propio, 19–20/10/2026)

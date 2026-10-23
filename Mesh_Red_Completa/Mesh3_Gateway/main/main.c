@@ -21,7 +21,10 @@
  *
  * Un LOTE (lo arma el concentrador del aula) trae tramas de varias hojas, cada una con la
  * MAC de la hoja: se publica cada una con el hw_id de su hoja.
- * Infiere offline (3 x intervalo sin tramas) y publica su propio status cada 60 s, con LWT.
+ * Offline de cada nodo: si sale de la tabla de ruteo de la malla más de FUERA_DE_MALLA_MS
+ * ("fuera_de_la_malla"), o si sigue en la malla pero pasa 3 x su intervalo sin hablar
+ * ("sin_tramas"). Recuerda los nodos en NVS: tras reiniciarse, también marca offline a los que
+ * no vuelven. Publica su propio status cada 60 s, con LWT.
  *
  * Red y broker:
  * - Conoce una LISTA de redes (REDES_WIFI en credenciales.h): al arrancar usa la primera
@@ -91,6 +94,12 @@ static const uint8_t MESH_ID[6] = {MESH_ID_BYTES};
 #define NODOS_CAP           64
 #define EN_CURSO_CAP        8
 #define DETAILS_MAX         320
+#define FUERA_DE_MALLA_MS   20000                /* fuera de la tabla de ruteo tanto -> offline */
+#define GRACIA_ARRANQUE_MS  60000                /* al arrancar, la malla tarda en armarse */
+#define NVS_NODOS           "gw_nodos"
+/* Consola: 1 = una línea por cada trama que llega de la malla (TRAMA <hw_id> <tipo> ...) y aviso de
+   cada nodo nuevo. Sirve en el banco para ver las hojas de los grupos y lo que mandan. */
+#define VER_TRAMAS          1
 
 typedef struct {
     const char *ssid;
@@ -131,6 +140,7 @@ typedef struct {
     bool tiene_seq;
     uint16_t ultima_seq;               /* último evento publicado: un repetido se confirma sin publicar */
     uint32_t hora_dada_ms;             /* última vez que se le mandó la hora */
+    uint32_t fuera_desde_ms;           /* 0 = está en la tabla de ruteo */
     char details[DETAILS_MAX];         /* del último reporte: para volver a online con ellos */
 } nodo_t;
 static nodo_t nodos[NODOS_CAP];
@@ -154,6 +164,7 @@ typedef struct {
 static QueueHandle_t cola_mqtt = NULL;
 
 static uint16_t seq = 0;
+static volatile bool nodos_cambiaron = false;    /* hay que guardar la lista en NVS */
 static uint32_t publicadas, confirmadas, acks_ignorados, ajenos, values_invalidos, repetidas,
     sin_lugar, version_distinta, invalidas, lotes;
 
@@ -340,7 +351,65 @@ static nodo_t *nodo(const uint8_t mac[6])
     memset(libre, 0, sizeof(*libre));
     libre->usado = true;
     memcpy(libre->mac, mac, 6);
+    libre->ultimo_ms = ahora_ms32();
+    nodos_cambiaron = true;
+#if VER_TRAMAS
+    char hw[AURA_HW_ID_BYTES];
+    aura_hw_id_de_mac(mac, hw);
+    printf("NODO NUEVO %s\n", hw);
+#endif
     return libre;
+}
+
+/* ===== Lista de nodos en NVS: se escribe solo si aparece uno nuevo o cambia un intervalo ===== */
+typedef struct __attribute__((packed)) {
+    uint8_t mac[6];
+    uint32_t intervalo_s;
+} nodo_nvs_t;
+
+static void nodos_guardar(void)
+{
+    nodo_nvs_t lista[NODOS_CAP];
+    int n = 0;
+    xSemaphoreTake(lock, portMAX_DELAY);
+    nodos_cambiaron = false;
+    for (int i = 0; i < NODOS_CAP; i++) {
+        if (nodos[i].usado) {
+            memcpy(lista[n].mac, nodos[i].mac, 6);
+            lista[n].intervalo_s = nodos[i].intervalo_s;
+            n++;
+        }
+    }
+    xSemaphoreGive(lock);
+    nvs_handle_t h;
+    if (nvs_open(NVS_NODOS, NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_blob(h, "lista", lista, n * sizeof(nodo_nvs_t));
+        nvs_commit(h);
+        nvs_close(h);
+        ESP_LOGI(TAG, "Lista de nodos guardada (%d)", n);
+    }
+}
+
+/* Al arrancar: los nodos que existían. Si no vuelven, se los marca offline. */
+static void nodos_cargar(void)
+{
+    nodo_nvs_t lista[NODOS_CAP];
+    size_t tam = sizeof(lista);
+    nvs_handle_t h;
+    if (nvs_open(NVS_NODOS, NVS_READONLY, &h) != ESP_OK) {
+        return;
+    }
+    if (nvs_get_blob(h, "lista", lista, &tam) == ESP_OK) {
+        int n = tam / sizeof(nodo_nvs_t);
+        for (int i = 0; i < n && i < NODOS_CAP; i++) {
+            nodos[i].usado = true;
+            memcpy(nodos[i].mac, lista[i].mac, 6);
+            nodos[i].intervalo_s = lista[i].intervalo_s;
+            nodos[i].ultimo_ms = ahora_ms32();
+        }
+        ESP_LOGI(TAG, "Nodos conocidos de antes: %d", n);
+    }
+    nvs_close(h);
 }
 
 /* Volvió un nodo marcado offline: online con los últimos details conocidos */
@@ -351,6 +420,7 @@ static void marcar_visto(const uint8_t mac[6])
     nodo_t *n = nodo(mac);
     if (n) {
         n->ultimo_ms = ahora_ms32();
+        n->fuera_desde_ms = 0;
         if (n->offline) {
             n->offline = false;
             snprintf(cuerpo, sizeof(cuerpo), "{\"status\":\"online\",\"details\":%s}", n->details[0] ? n->details : "{}");
@@ -458,7 +528,11 @@ static bool publicar_reporte(const uint8_t mac[6], cJSON *r)
     xSemaphoreTake(lock, portMAX_DELAY);
     nodo_t *n = nodo(mac);
     if (n) {
-        n->intervalo_s = cJSON_IsNumber(iv) ? (uint32_t)iv->valuedouble : 0;
+        uint32_t iv_nuevo = cJSON_IsNumber(iv) ? (uint32_t)iv->valuedouble : 0;
+        if (iv_nuevo != n->intervalo_s) {
+            n->intervalo_s = iv_nuevo;
+            nodos_cambiaron = true;
+        }
         n->offline = false;
         if (txt && strlen(txt) < sizeof(n->details)) {
             strcpy(n->details, txt);
@@ -537,14 +611,26 @@ static void procesar(const uint8_t mac[6], const uint8_t *datos, size_t largo)
     aura_validacion_t v = aura_trama_validar(datos, largo);
     if (v == AURA_TRAMA_VERSION) {
         version_distinta++;
+#if VER_TRAMAS
+        printf("TRAMA " MACSTR " de otra versión de la trama (%u bytes): se descarta\n", MAC2STR(mac), (unsigned)largo);
+#endif
         return;
     }
     if (v != AURA_TRAMA_OK) {
         invalidas++;
+#if VER_TRAMAS
+        printf("TRAMA " MACSTR " inválida (%u bytes): se descarta\n", MAC2STR(mac), (unsigned)largo);
+#endif
         return;
     }
     aura_trama_t t;
     memcpy(&t, datos, largo);
+#if VER_TRAMAS
+    char hw[AURA_HW_ID_BYTES], txt[AURA_PAYLOAD_MAX + 1];
+    aura_hw_id_de_mac(mac, hw);
+    aura_trama_describir(&t, txt, sizeof(txt));
+    printf("TRAMA %s %s seq=%u %s\n", hw, aura_tipo_nombre(t.tipo), t.seq, txt);
+#endif
     if (t.tipo == AURA_TIPO_HORA) {                    /* pedido de hora */
         dar_hora(mac);
         return;
@@ -746,7 +832,13 @@ static void tarea_vigilancia(void *arg)
         en_curso_t vencidos[EN_CURSO_CAP];
         int nv = 0;
         uint8_t offline[NODOS_CAP][6];
+        const char *motivo[NODOS_CAP];
         int no = 0;
+        /* Tabla de ruteo de la malla: quién está colgado de este gateway ahora */
+        static mesh_addr_t ruteo[NODOS_CAP + 8];
+        int en_tabla = 0;
+        esp_mesh_get_routing_table(ruteo, sizeof(ruteo), &en_tabla);
+        bool revisar_ruteo = ahora >= GRACIA_ARRANQUE_MS;
         xSemaphoreTake(lock, portMAX_DELAY);
         for (int i = 0; i < EN_CURSO_CAP; i++) {
             if (en_curso[i].activo && ahora - en_curso[i].desde_ms >= ESPERA_RESULTADO_MS) {
@@ -756,8 +848,23 @@ static void tarea_vigilancia(void *arg)
         }
         for (int i = 0; i < NODOS_CAP; i++) {
             nodo_t *n = &nodos[i];
-            if (n->usado && aura_debe_marcar_offline(ahora, n->ultimo_ms, n->intervalo_s, n->offline)) {
-                n->offline = true;
+            if (!n->usado || n->offline) {
+                continue;
+            }
+            bool esta = false;
+            for (int k = 0; k < en_tabla && !esta; k++) {
+                esta = memcmp(ruteo[k].addr, n->mac, 6) == 0;
+            }
+            if (esta) {
+                n->fuera_desde_ms = 0;
+            } else if (n->fuera_desde_ms == 0) {
+                n->fuera_desde_ms = ahora | 1;
+            }
+            if (revisar_ruteo && !esta && ahora - n->fuera_desde_ms >= FUERA_DE_MALLA_MS) {
+                motivo[no] = "fuera_de_la_malla";
+                memcpy(offline[no++], n->mac, 6);
+            } else if (aura_debe_marcar_offline(ahora, n->ultimo_ms, n->intervalo_s, false)) {
+                motivo[no] = "sin_tramas";
                 memcpy(offline[no++], n->mac, 6);
             }
         }
@@ -766,9 +873,20 @@ static void tarea_vigilancia(void *arg)
             publicar_respuesta(vencidos[i].mac, "rechazado", vencidos[i].command_id, "sin_resultado_del_nodo", NULL);
         }
         for (int i = 0; i < no; i++) {
-            char topico[AURA_TOPICO_MAX];
+            char topico[AURA_TOPICO_MAX], cuerpo[96];
             aura_topico(topico, sizeof(topico), offline[i], "status");
-            publicar(topico, "{\"status\":\"offline\",\"details\":{\"motivo\":\"sin_tramas\"}}", true);
+            snprintf(cuerpo, sizeof(cuerpo), "{\"status\":\"offline\",\"details\":{\"motivo\":\"%s\"}}", motivo[i]);
+            if (publicar(topico, cuerpo, true)) {        /* sin broker se vuelve a intentar */
+                xSemaphoreTake(lock, portMAX_DELAY);
+                nodo_t *n = nodo(offline[i]);
+                if (n) {
+                    n->offline = true;
+                }
+                xSemaphoreGive(lock);
+            }
+        }
+        if (nodos_cambiaron) {
+            nodos_guardar();
         }
         if (mqtt_conectado && (ultimo_status == 0 || ahora - ultimo_status >= INTERVALO_STATUS_MS)) {
             ultimo_status = ahora | 1;
@@ -949,6 +1067,7 @@ static void tarea_broker(void *arg)
                 .credentials.username = MQTT_USUARIO[0] ? MQTT_USUARIO : NULL,
                 .credentials.authentication.password = MQTT_CLAVE[0] ? MQTT_CLAVE : NULL,
                 .session.disable_clean_session = true,
+                .session.keepalive = 30,           /* el broker nota la caída en ~45 s y publica el LWT */
                 .session.last_will.topic = topico_lwt,
                 .session.last_will.msg = "{\"status\":\"offline\"}",
                 .session.last_will.qos = 1,
@@ -972,9 +1091,21 @@ static void tarea_broker(void *arg)
 static void manejador_eventos_mesh(void *arg, esp_event_base_t base, int32_t id, void *event_data)
 {
     switch (id) {
-    case MESH_EVENT_STARTED:
+    case MESH_EVENT_STARTED: {
         ESP_LOGI(TAG, "Malla iniciada. Raíz: %s, capa %d", esp_mesh_is_root() ? "sí" : "no", esp_mesh_get_layer());
+        /* "Soy el gateway" en el beacon: así un concentrador en isla no confunde con el gateway a otro
+           concentrador en isla (también raíz de capa 1 con el mismo MESH_ID). No depende de cómo se
+           conecta el gateway a la red (WiFi o Ethernet): va en el beacon de la malla. */
+        static vendor_ie_data_t ie = {
+            .element_id = WIFI_VENDOR_IE_ELEMENT_ID,
+            .length = 4,
+            .vendor_oui = {AURA_OUI_0, AURA_OUI_1, AURA_OUI_2},
+            .vendor_oui_type = AURA_IE_GATEWAY,
+        };
+        esp_wifi_set_vendor_ie(true, WIFI_VND_IE_TYPE_BEACON, WIFI_VND_IE_ID_1, &ie);
+        esp_wifi_set_vendor_ie(true, WIFI_VND_IE_TYPE_PROBE_RESP, WIFI_VND_IE_ID_1, &ie);
         break;
+    }
     case MESH_EVENT_PARENT_CONNECTED: {
         /* En la raíz, el "padre" es el router: se pide IP por DHCP */
         mesh_event_connected_t *c = (mesh_event_connected_t *)event_data;
@@ -1107,6 +1238,7 @@ void app_main(void)
     aura_hw_id_de_mac(mi_mac, mi_hw);
     aura_topico(topico_lwt, sizeof(topico_lwt), mi_mac, "status");
     lock = xSemaphoreCreateMutex();
+    nodos_cargar();
     cola_mqtt = xQueueCreate(8, sizeof(mensaje_mqtt_t));
 
     ESP_ERROR_CHECK(esp_netif_init());

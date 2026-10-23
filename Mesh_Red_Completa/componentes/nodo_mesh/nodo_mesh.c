@@ -111,6 +111,14 @@ static bool hay_ultimo_cmd = false;
 static uint8_t ultimo_cmd_de[6];
 static uint16_t ultimo_cmd_seq = 0;
 
+/* ---------- Último estado, para el concentrador (pantalla y mando local) ---------- */
+/* La cola guarda el historial para AURA; el concentrador solo necesita lo último y en el acto. */
+static portMUX_TYPE lock_estado = portMUX_INITIALIZER_UNLOCKED;
+static char ultimo_values[AURA_VALUES_MAX];
+static uint8_t ultimo_largo = 0;
+static uint32_t ultimo_ts = 0, ultimo_uptime = 0;
+static volatile bool estado_pendiente = false;   /* mandar el ESTADO al concentrador */
+
 /* ---------- Sondas: una alerta por cambio ---------- */
 #define SONDAS_MAX 8
 static struct { char campo[24]; bool falla; } sondas[SONDAS_MAX];
@@ -250,6 +258,34 @@ static void evento_encolar(uint8_t tipo, const cJSON *doc)
 }
 
 /* De a uno: el más viejo, hasta que llegue su EVENTO_OK (espera creciente, con azar) */
+/* El último valor medido, directo al concentrador (no pasa por la cola ni sube a la raíz) */
+static void enviar_estado(void)
+{
+    if (!estado_pendiente || modo != MODO_AULA) {
+        estado_pendiente = false;              /* sin concentrador no hay pantalla que actualizar */
+        return;
+    }
+    uint8_t p[AURA_PAYLOAD_MAX];
+    taskENTER_CRITICAL(&lock_estado);
+    uint8_t n = ultimo_largo;
+    uint32_t ts = ultimo_ts, up = ultimo_uptime;
+    memcpy(p + 4, ultimo_values, n);
+    taskEXIT_CRITICAL(&lock_estado);
+    if (n == 0) {
+        return;                                /* todavía no midió: sale con la primera medición */
+    }
+    uint32_t hoy = ahora_epoca();
+    if (ts == 0 && hoy != 0) {
+        ts = hoy - (uptime_s() - up);
+    }
+    aura_u32_escribir(p, ts);
+    aura_trama_t t;
+    aura_trama_init(&t, AURA_TIPO_ESTADO, siguiente_seq(), p, 4 + n);
+    if (enviar(&t)) {
+        estado_pendiente = false;
+    }
+}
+
 static void enviar_evento(void)
 {
     aura_trama_t t;
@@ -417,6 +453,17 @@ bool nodo_mesh_medicion(const cJSON *values)
     m.largo = (uint8_t)n;
     memcpy(m.values, txt, n);
     bool ok = cola_guardar(&m);
+    taskENTER_CRITICAL(&lock_estado);
+    memcpy(ultimo_values, txt, n);
+    ultimo_largo = (uint8_t)n;
+    ultimo_ts = m.ts;
+    ultimo_uptime = m.uptime_s;
+    taskEXIT_CRITICAL(&lock_estado);
+    /* Si hay cola atrás (AURA o la red de arriba caída), esta medición no va a pasar por el
+       concentrador enseguida: se le manda el estado aparte. Con la cola al día no hace falta. */
+    if (cola_cantidad() > 1) {
+        estado_pendiente = true;
+    }
     if (ok) {
         ESP_LOGI(TAG, "Medición guardada %s, en cola %lu", txt, (unsigned long)cola_cantidad());
     } else {
@@ -690,6 +737,7 @@ static void tarea_nodo(void *arg)
             aura_hora_armar(&t, siguiente_seq(), 0);   /* pedido: sin payload */
             enviar(&t);
         }
+        enviar_estado();                               /* primero: la pantalla del aula al día */
         enviar_evento();
         procesar_recibidas(0);                         /* un comando no espera a la próxima vuelta */
         enviar_muestra();
@@ -969,6 +1017,7 @@ static void manejador_mesh(void *arg, esp_event_base_t base, int32_t id, void *d
         }
         modo = modo_pedido;
         memcpy(bssid_padre, c->connected.bssid, 6);
+        estado_pendiente = true;                       /* el concentrador queda sincronizado ya */
         silenciar_ap();
         conectado = true;
         reconecto = true;

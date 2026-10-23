@@ -38,6 +38,8 @@
   .chip.online { color: var(--ok); border-color: var(--ok); }
   .chip.offline { color: var(--bad); border-color: var(--bad); }
   .chip.pendiente { color: var(--warn); border-color: var(--warn); }
+  .card.sin-gateway { opacity: .5; }
+  .chip.sin-gateway { color: var(--muted); border-style: dashed; }
   .ancho { grid-column: 1 / -1; }
   .meta { color: var(--muted); font-size: 12px; display: flex; gap: 12px; flex-wrap: wrap; margin: 4px 0 10px; }
   .meta b { color: var(--text); font-weight: 500; }
@@ -110,6 +112,11 @@ function comando(hw, command, params) {
   fetch(`/cmd?hw=${hw}&command=${command}&params=${encodeURIComponent(JSON.stringify(params))}`, { method: "POST" });
 }
 
+/* ¿El gateway (rol raiz) está offline? Entonces el estado de sus nodos es el último conocido. */
+function gatewayCaido() {
+  return Object.values(placas).some((p) => (p.details || {}).rol === "raiz" && p.status === "offline");
+}
+
 function dibujar(hw) {
   const p = placas[hw];
   const d = p.details || {};
@@ -117,8 +124,12 @@ function dibujar(hw) {
   const rol = d.rol || (p.values ? "hoja" : "nodo");
   const aula = cfg.aula === undefined ? "–" : (cfg.aula || "sin asignar");
   const estado = p.status === "offline" ? "offline" : (rol !== "raiz" && cfg.aula === null ? "pendiente" : p.status);
+  const gris = rol !== "raiz" && gatewayCaido();
   let html = `<h2><span class="hw">${hw}</span><span class="chip">${rol}</span>
-              <span class="chip ${estado}">${estado}</span></h2>`;
+              <span class="chip ${estado}">${estado}</span>${gris ? '<span class="chip sin-gateway">sin gateway: último estado conocido</span>' : ""}</h2>`;
+  if ((d.motivo || p.motivo) && p.status === "offline") {
+    html += `<div class="meta"><span>motivo <b>${p.motivo || d.motivo}</b></span></div>`;
+  }
   html += `<div class="meta">`;
   if (rol === "raiz") {
     html += `<span>red <b>${d.red ?? "–"}</b></span><span>canal <b>${d.canal ?? "–"}</b></span>
@@ -156,6 +167,7 @@ function dibujar(hw) {
     html += `</div><div class="resp">${p.resp}</div>`;
   }
   const el = $("p-" + hw);
+  el.classList.toggle("sin-gateway", gris);
   if (!el.contains(document.activeElement) || document.activeElement.tagName !== "INPUT") el.innerHTML = html;
 }
 
@@ -179,7 +191,11 @@ function procesar(ev) {
     if (p.status === "?" || p.status === "offline") p.status = "online";
   } else if (tipo === "status") {
     p.status = datos.status;
+    p.motivo = (datos.details || {}).motivo || null;
     if (datos.details && Object.keys(datos.details).length && !datos.details.motivo) p.details = datos.details;
+    if ((p.details || {}).rol === "raiz") {          /* cambió el gateway: redibujar todas */
+      Object.keys(placas).forEach((h) => h !== hw && dibujar(h));
+    }
   } else if (tipo === "response") {
     const det = datos.details || {};
     p.resp = `${det.command_id || ""}: <b>${datos.status}</b>${det.motivo ? " (" + det.motivo + ")" : ""}`;

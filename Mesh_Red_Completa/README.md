@@ -91,12 +91,14 @@ autenticarse (ver la guía, sección 5).
 | Sin duplicados | Cada dato viaja **una sola vez**: hoja → concentrador (lo ve y lo puede filtrar) → raíz, en LOTE. |
 | Identidad | `hw_id = mac-<MAC de la placa>`. Sin MACs, ids ni aulas en los firmwares: todas las hojas de un tipo llevan el mismo binario. |
 | Alta y recambio | Placa nueva → entra sin aula (directo a la raíz) → AURA la ve **pendiente** (cuarentena) → al aceptarla le asigna el dispositivo y `set_config {"aula":…}` → la hoja lo guarda en NVS y se pasa a su concentrador. |
+| Aula sin red arriba | La hoja le manda al concentrador su último valor (`ESTADO`, no sube a la raíz) cuando hay cola atrás y al colgarse de él; el concentrador muestra solo lo último y su botón comanda la hoja sin gateway ni MQTT. Con 60 s sin gateway, el concentrador pasa a **modo isla** (raíz de su aula) para que las hojas puedan volver a colgarse, y vuelve solo. |
 | Elección del padre | **A mano, por aula** (vendor IE del concentrador), con plan B a la raíz u otro concentrador. Si al concentrador le cambian el aula, sus hojas de otra aula se van en ~5 s. |
 | Hoja y `MESH_LEAF` | IDF 6.1 rechaza `MESH_LEAF` en `esp_mesh_set_parent` (probado). La hoja intenta `MESH_LEAF` y, si no, usa `MESH_NODE` con el beacon de su AP a 60 000 TU (~200 veces menos) y rechazando hijos. |
 | Entrega garantizada | **Cola híbrida**: RAM (400 mediciones, sin escribir la flash en marcha normal) y respaldo en flash de lo que pasa 5 min sin confirmar, que sobrevive a un reinicio de la hoja; `ingest_id` generado en la hoja, sale solo con la CONFIRMACIÓN que sigue al `ack` de AURA (§3.6, §5). Reintentos con espera creciente y azar. |
 | Eventos | Resultado, reporte y alerta se reintentan hasta que la raíz confirma que los **publicó** (`EVENTO_OK`). Al volver el broker, la raíz pide reporte a todos (`REPORTAR`) y la hoja manda lo pendiente enseguida. |
 | Hora | SNTP en la raíz; la hoja la pide y la ajusta con cada confirmación. Lo medido sin hora se fecha con el uptime si es del mismo arranque. |
 | País | `AR` (canales 1 a 13) en los tres. |
+| Offline y ausencias | La raíz publica `offline` si un nodo sale de la tabla de ruteo (`fuera_de_la_malla`, 20 s) o pasa 3 intervalos sin datos (`sin_tramas`), y recuerda los nodos en NVS para hacerlo también tras reiniciarse. El concentrador marca **ausente** (LED rojo) a la hoja de su aula que falta y la recuerda aunque se reinicie. |
 | Raíz | Árbol `hw/`, `ack`, LWT, sesión persistente, usuario y clave, `status` con details, offline inferido, estados `transmitido`/`recibido`/`aplicado`/`rechazado`, 30 s → `sin_resultado_del_nodo`. MQTT sin bloquear la malla. |
 
 ## Qué se probó en placas (2026-10-20)
