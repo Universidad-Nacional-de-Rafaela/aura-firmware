@@ -5,6 +5,7 @@
  *  - mesh_rx:  recibe con esp_mesh_recv, valida y encola. Nunca envía.
  *  - nodo:     atiende lo recibido y envía (eventos, muestras, pedido de hora).
  *  - vigia:    busca padre cuando no hay, y en plan B revisa si volvió el concentrador.
+ *  - ota:      (aura_ota) recibe una versión nueva del firmware por la malla.
  */
 #include <stdio.h>
 #include <string.h>
@@ -25,6 +26,9 @@
 #include "nvs.h"
 #include "aura_trama.h"
 #include "aura_util.h"
+#include "aura_ota.h"
+#include "aura_fw.h"
+#include "aura_ota_receptor.h"
 #include "cola.h"
 #include "nodo_mesh.h"
 
@@ -41,11 +45,13 @@
 #define FALLOS_PARA_RECONECTAR  3       /* envíos fallidos seguidos -> reconexión forzada */
 #define BEACON_HOJA_TU          60000   /* intervalo de beacon del AP de la hoja: el máximo */
 #define PEDIR_HORA_MS           10000   /* sin hora: cada cuánto pedirla */
+#define ESCUCHA_CANAL_MS        1500    /* escaneo del canal del último padre: más largo que uno común */
 #define REINTENTO_SALTO_MS      2000    /* la mesh no aceptó la muestra: reintento corto */
 #define EVENTOS_CAP             8       /* resultados, reportes y alertas esperando confirmación */
 #define EVENTO_ESPERA_MIN_MS    2000    /* sin EVENTO_OK: 2 s, 4 s, 8 s... hasta 30 s (con azar) */
 #define EVENTO_ESPERA_MAX_MS    30000
 #define NVS_ESPACIO             "nodo_mesh"
+#define ESPERA_EVENTOS_MS       10000   /* antes de reiniciarse por una actualización */
 
 typedef enum { MODO_AULA, MODO_DIRECTO } modo_t;
 
@@ -63,6 +69,12 @@ static volatile bool reintentando = false;
 static volatile modo_t modo = MODO_DIRECTO;
 static volatile modo_t modo_pedido = MODO_DIRECTO;
 static int busquedas_fallidas = 0;
+/* Canal del último padre (NVS, se escribe solo si cambia). Al arrancar y al perder el padre se
+   escanea primero ese canal: la hoja vuelve en ~4 s en lugar de escanear los 13 canales (8 s cada
+   pasada, y a veces el concentrador no aparecía en la primera: 10 a 27 s tras un reinicio). */
+static uint8_t canal_conocido = 0;
+static volatile bool probar_canal = true;
+static volatile bool escaneo_de_canal = false;
 static volatile int fallos_envio = 0;
 static volatile int revisiones_rapidas = 0;      /* tras cambiar el aula: buscar al concentrador ya */
 static mesh_addr_t concentrador, concentrador_pedido;
@@ -111,6 +123,14 @@ static bool hay_ultimo_cmd = false;
 static uint8_t ultimo_cmd_de[6];
 static uint16_t ultimo_cmd_seq = 0;
 
+/* ---------- Último estado, para el concentrador (pantalla y mando local) ---------- */
+/* La cola guarda el historial para AURA; el concentrador solo necesita lo último y en el acto. */
+static portMUX_TYPE lock_estado = portMUX_INITIALIZER_UNLOCKED;
+static char ultimo_values[AURA_VALUES_MAX];
+static uint8_t ultimo_largo = 0;
+static uint32_t ultimo_ts = 0, ultimo_uptime = 0;
+static volatile bool estado_pendiente = false;   /* mandar el ESTADO al concentrador */
+
 /* ---------- Sondas: una alerta por cambio ---------- */
 #define SONDAS_MAX 8
 static struct { char campo[24]; bool falla; } sondas[SONDAS_MAX];
@@ -157,7 +177,24 @@ static void nvs_cargar(void)
     if (nvs_get_str(h, "aula", aula, &n) != ESP_OK || !aura_aula_valida(aula)) {
         aula[0] = '\0';
     }
+    if (nvs_get_u8(h, "canal", &canal_conocido) != ESP_OK || canal_conocido > 13) {
+        canal_conocido = 0;
+    }
     nvs_close(h);
+}
+
+static void canal_guardar(uint8_t canal)
+{
+    if (canal == 0 || canal == canal_conocido) {
+        return;
+    }
+    canal_conocido = canal;
+    nvs_handle_t h;
+    if (nvs_open(NVS_ESPACIO, NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_u8(h, "canal", canal);
+        nvs_commit(h);
+        nvs_close(h);
+    }
 }
 
 static uint16_t siguiente_seq(void)
@@ -250,6 +287,34 @@ static void evento_encolar(uint8_t tipo, const cJSON *doc)
 }
 
 /* De a uno: el más viejo, hasta que llegue su EVENTO_OK (espera creciente, con azar) */
+/* El último valor medido, directo al concentrador (no pasa por la cola ni sube a la raíz) */
+static void enviar_estado(void)
+{
+    if (!estado_pendiente || modo != MODO_AULA) {
+        estado_pendiente = false;              /* sin concentrador no hay pantalla que actualizar */
+        return;
+    }
+    uint8_t p[AURA_PAYLOAD_MAX];
+    taskENTER_CRITICAL(&lock_estado);
+    uint8_t n = ultimo_largo;
+    uint32_t ts = ultimo_ts, up = ultimo_uptime;
+    memcpy(p + 4, ultimo_values, n);
+    taskEXIT_CRITICAL(&lock_estado);
+    if (n == 0) {
+        return;                                /* todavía no midió: sale con la primera medición */
+    }
+    uint32_t hoy = ahora_epoca();
+    if (ts == 0 && hoy != 0) {
+        ts = hoy - (uptime_s() - up);
+    }
+    aura_u32_escribir(p, ts);
+    aura_trama_t t;
+    aura_trama_init(&t, AURA_TIPO_ESTADO, siguiente_seq(), p, 4 + n);
+    if (enviar(&t)) {
+        estado_pendiente = false;
+    }
+}
+
 static void enviar_evento(void)
 {
     aura_trama_t t;
@@ -308,6 +373,9 @@ static void describir(cJSON *config)
 void nodo_mesh_reportar(void)
 {
     cJSON *d = cJSON_CreateObject();
+    char fw[2 * AURA_OTA_TEXTO];
+    aura_fw_texto(fw, sizeof(fw));
+    cJSON_AddStringToObject(d, "fw", fw);              /* tipo@versión: la raíz lo publica como firmware */
     describir(cJSON_AddObjectToObject(d, "config"));
     cJSON_AddNumberToObject(d, "pendientes", cola_cantidad());
     cJSON_AddNumberToObject(d, "descartadas", cola_descartadas());
@@ -324,6 +392,17 @@ void nodo_mesh_reportar(void)
     if (conectado && esp_wifi_sta_get_ap_info(&padre) == ESP_OK) {
         cJSON_AddNumberToObject(d, "rssi", padre.rssi);
         cJSON_AddNumberToObject(d, "capa", esp_mesh_get_layer());
+    }
+    /* La trama tiene 180 B: si no entra, se sacan primero los datos accesorios (nunca fw ni config) */
+    static const char *const accesorios[] = {"descartadas", "rssi", "capa", "alimentacion", "modo", "pendientes"};
+    for (int i = 0; i < (int)(sizeof(accesorios) / sizeof(accesorios[0])); i++) {
+        char *txt = cJSON_PrintUnformatted(d);
+        size_t n = txt ? strlen(txt) : 0;
+        cJSON_free(txt);
+        if (n <= AURA_PAYLOAD_MAX) {
+            break;
+        }
+        cJSON_DeleteItemFromObject(d, accesorios[i]);
     }
     evento_encolar(AURA_TIPO_REPORTE, d);
     cJSON_Delete(d);
@@ -417,6 +496,17 @@ bool nodo_mesh_medicion(const cJSON *values)
     m.largo = (uint8_t)n;
     memcpy(m.values, txt, n);
     bool ok = cola_guardar(&m);
+    taskENTER_CRITICAL(&lock_estado);
+    memcpy(ultimo_values, txt, n);
+    ultimo_largo = (uint8_t)n;
+    ultimo_ts = m.ts;
+    ultimo_uptime = m.uptime_s;
+    taskEXIT_CRITICAL(&lock_estado);
+    /* Si hay cola atrás (AURA o la red de arriba caída), esta medición no va a pasar por el
+       concentrador enseguida: se le manda el estado aparte. Con la cola al día no hace falta. */
+    if (cola_cantidad() > 1) {
+        estado_pendiente = true;
+    }
     if (ok) {
         ESP_LOGI(TAG, "Medición guardada %s, en cola %lu", txt, (unsigned long)cola_cantidad());
     } else {
@@ -619,6 +709,7 @@ static void procesar_recibidas(TickType_t espera)
             if (t.largo == 2) {
                 evento_confirmado((uint16_t)(t.payload[0] | t.payload[1] << 8));
             }
+            aura_fw_confirmar();                       /* habla con la raíz: la versión anda */
             break;
         case AURA_TIPO_REPORTAR: {
             /* Volvió el broker: reporte del estado actual y lo pendiente ya, cada hoja en un
@@ -651,6 +742,10 @@ static void tarea_rx(void *arg)
             vTaskDelay(pdMS_TO_TICKS(100));
             continue;
         }
+        if (aura_es_ota(buf, d.size)) {                /* actualización: tiene su propia tarea */
+            aura_ota_recibir(buf, d.size);
+            continue;
+        }
         if (aura_trama_validar(buf, d.size) != AURA_TRAMA_OK) {
             descartadas_rx++;
             continue;
@@ -674,7 +769,7 @@ static void tarea_nodo(void *arg)
            lleva COLA_A_FLASH_S sin confirmar */
         if (xTaskGetTickCount() - ultimo_respaldo >= pdMS_TO_TICKS(5000)) {
             ultimo_respaldo = xTaskGetTickCount();
-            cola_respaldar(uptime_s(), ahora_epoca());
+            cola_respaldar(uptime_s(), ahora_epoca(), false);
         }
         if (!conectado) {
             continue;
@@ -690,6 +785,7 @@ static void tarea_nodo(void *arg)
             aura_hora_armar(&t, siguiente_seq(), 0);   /* pedido: sin payload */
             enviar(&t);
         }
+        enviar_estado();                               /* primero: la pantalla del aula al día */
         enviar_evento();
         procesar_recibidas(0);                         /* un comando no espera a la próxima vuelta */
         enviar_muestra();
@@ -750,9 +846,15 @@ static void iniciar_escaneo(bool solo_canal_actual)
         .scan_type = WIFI_SCAN_TYPE_PASSIVE,
         .scan_time.passive = 600,                      /* el beacon de la malla sale cada 300 ms */
     };
+    escaneo_de_canal = false;
     if (solo_canal_actual) {
         wifi_second_chan_t sec;
         esp_wifi_get_channel(&sc.channel, &sec);
+    } else if (probar_canal && canal_conocido) {
+        probar_canal = false;
+        escaneo_de_canal = true;
+        sc.channel = canal_conocido;
+        sc.scan_time.passive = ESCUCHA_CANAL_MS;
     }
     taskENTER_CRITICAL(&lock_candidatos);
     cant_candidatos = 0;
@@ -760,7 +862,9 @@ static void iniciar_escaneo(bool solo_canal_actual)
     esp_wifi_scan_stop();
     if (esp_wifi_scan_start(&sc, false) == ESP_OK) {
         escaneando = true;
-        if (!solo_canal_actual) {
+        if (escaneo_de_canal) {
+            ESP_LOGI(TAG, "Busco a mi padre en el canal %u (el de la última vez)", canal_conocido);
+        } else if (!solo_canal_actual) {
             if (aula[0]) {
                 ESP_LOGI(TAG, "Buscando al concentrador de %s...", aula);
             } else {
@@ -890,6 +994,10 @@ static void procesar_escaneo(int num)
         conectar(&mio_rec, &mio_assoc, mio_mac, MODO_AULA);
         return;
     }
+    if (escaneo_de_canal && aula[0]) {
+        ESP_LOGI(TAG, "No está en el canal %u: busco en todos", canal_conocido);
+        return;                                        /* no cuenta para el plan B */
+    }
     busquedas_fallidas++;
     if (aula[0] && busquedas_fallidas < BUSQUEDAS_PLAN_B) {
         ESP_LOGW(TAG, "El concentrador de %s no está visible (%d/%d), se reintenta",
@@ -969,6 +1077,8 @@ static void manejador_mesh(void *arg, esp_event_base_t base, int32_t id, void *d
         }
         modo = modo_pedido;
         memcpy(bssid_padre, c->connected.bssid, 6);
+        canal_guardar(c->connected.channel);
+        estado_pendiente = true;                       /* el concentrador queda sincronizado ya */
         silenciar_ap();
         conectado = true;
         reconecto = true;
@@ -984,6 +1094,7 @@ static void manejador_mesh(void *arg, esp_event_base_t base, int32_t id, void *d
             ESP_LOGW(TAG, "Desconectada del padre");
             desconectada_desde = xTaskGetTickCount();
             reintentando = true;
+            probar_canal = true;                       /* lo más probable: vuelve en el mismo canal */
             if (modo == MODO_AULA) {
                 revisiones_rapidas = 2;                /* si la pila la reconecta sola, ver si el padre sigue siendo de mi aula */
             }
@@ -1004,9 +1115,52 @@ static void manejador_mesh(void *arg, esp_event_base_t base, int32_t id, void *d
 /* ================================================================== */
 /*  Inicio                                                             */
 /* ================================================================== */
+/* Antes de reiniciarse con una versión nueva: que lo pendiente no se pierda. Los eventos (que
+   viven en RAM) salen primero; las mediciones sin confirmar pasan a la flash y se recuperan al
+   arrancar. */
+static void antes_de_reiniciar(void)
+{
+    /* Los reportes pendientes se descartan: dirían la versión vieja, y la raíz tomaría eso como
+       una vuelta atrás. Al arrancar se manda uno nuevo. */
+    xSemaphoreTake(lock_eventos, portMAX_DELAY);
+    int quedan = 0;
+    for (int i = 0; i < eventos_cant; i++) {
+        aura_trama_t *e = &eventos[(eventos_cabeza + i) % EVENTOS_CAP];
+        if (e->tipo == AURA_TIPO_REPORTE) {
+            if (i == 0) {
+                evento_en_vuelo = false;
+            }
+            continue;
+        }
+        eventos[(eventos_cabeza + quedan) % EVENTOS_CAP] = *e;
+        quedan++;
+    }
+    eventos_cant = quedan;
+    xSemaphoreGive(lock_eventos);
+    TickType_t desde = xTaskGetTickCount();
+    while (xTaskGetTickCount() - desde < pdMS_TO_TICKS(ESPERA_EVENTOS_MS)) {
+        xSemaphoreTake(lock_eventos, portMAX_DELAY);
+        int pendientes = eventos_cant;
+        xSemaphoreGive(lock_eventos);
+        if (pendientes == 0) {
+            break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+    if (eventos_cant) {
+        ESP_LOGW(TAG, "Me reinicio con %d eventos sin confirmar", eventos_cant);
+    }
+    cola_respaldar(uptime_s(), ahora_epoca(), true);
+}
+
 esp_err_t nodo_mesh_iniciar(const nodo_mesh_config_t *c)
 {
     cfg = *c;
+    aura_fw_iniciar();
+    /* seq arranca al azar: si arrancara siempre en 0, el primer evento tras un reinicio podría
+       llevar la misma seq que el último de antes y el que lo recibe lo tomaría por repetido
+       (pasaba con el reporte tras reiniciarse: la raíz lo confirmaba sin publicarlo) */
+    seq = (uint16_t)esp_random();
     esp_read_mac(mi_mac, ESP_MAC_WIFI_STA);
     nvs_cargar();
     char hw[AURA_HW_ID_BYTES];
@@ -1059,5 +1213,8 @@ esp_err_t nodo_mesh_iniciar(const nodo_mesh_config_t *c)
     xTaskCreate(tarea_rx, "mesh_rx", 4096, NULL, 5, NULL);
     xTaskCreate(tarea_nodo, "nodo", 6144, NULL, 5, NULL);
     xTaskCreate(tarea_vigia, "vigia", 3072, NULL, 4, NULL);
+    aura_ota_receptor_cfg_t ota = {.antes_de_reiniciar = antes_de_reiniciar};
+    aura_ota_receptor_iniciar(&ota);
+    aura_fw_antes_de_volver(antes_de_reiniciar);   /* lo medido con la versión nueva no se pierde */
     return ESP_OK;
 }
