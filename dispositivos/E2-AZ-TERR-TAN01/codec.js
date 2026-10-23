@@ -1,84 +1,124 @@
 // Codec de ChirpStack v4 para E2-AZ-TERR-TAN01: nivel de tres tanques de agua (clase A).
 // Es el par de E2-AZ-TERR-TAN01.ino: si cambia el formato de los bytes de uno, cambia el otro.
-// Sigue el mismo esquema que el codec de E1-AZ-TERR-TAN01 (puertos, ref y reporte de comandos).
+// Sigue el esquema del codec de E1-AZ-TERR-TAN01 (puertos, ref y reporte de comandos).
 // Lo que devuelve decodeUplink es el "object" del uplink: el lorawan-bridge lo publica como
 // "values" en hw/eui-<DevEUI>/data, o como "response" si es un reporte de comando
 // (contrato v4.0, §3.1, §3.3 y §3.4).
 //
 // SUBIDA
-// fPort 1, 6 bytes, medicion (big endian):
-//   0-1 distancia del sensor al agua, tanque 1, en cm x 10 (= mm) (uint16)
-//   2-3 lo mismo para el tanque 2
-//   4-5 lo mismo para el tanque 3
-//   values la trae en cm con un decimal: distancia_tanqueN_cm (2462 -> 246.2).
+// fPort 1, medicion: [0] mascara de tanques (bit0 = tanque 1 ... bit2 = tanque 3) y, por cada
+//   tanque de la mascara, en orden: distancia en mm = cm x 10 (uint16) + nivel en decimas de %
+//   (uint16, 0..1000; 0xFFFF = tanque sin calibrar). Big endian.
+//   Cada turno manda un tanque (5 bytes); medir_ahora manda los tres (13 bytes).
+//   values: distancia_tanqueN_cm (cm, un decimal) y, si el tanque esta calibrado,
+//   nivel_tanqueN_pct (%, un decimal).
 //   0xFFFE = el agua esta dentro de la zona ciega del sensor (tanque lleno). No es una falla:
 //   se informa 25 cm, el nivel maximo que el sensor puede medir (saturacion del rango, como
 //   un transmisor 4-20 mA en su tope). Quiere decir "25 cm o menos".
-//   0xFFFF sin eco, 0xFFFD demasiado lejos, o cualquier otro valor fuera de 25..600 cm: es una
-//   falla y el campo del tanque no aparece en values (§3.1).
-//   Los nombres de los campos son los de conector.toml.
-// fPort 2, 4 bytes, reporte de un comando:
-//   0   ref del comando (el que llego en el downlink)
-//   1   resultado: 0 aplicado, 1 fuera de rango, 2 comando desconocido
-//   2-3 intervalo de envio vigente, en segundos (uint16)
+//   0xFFFF sin eco, 0xFFFD demasiado lejos o cualquier otro valor fuera de 25..600 cm: falla,
+//   el tanque no aparece en values (§3.1). El firmware ya no los manda; el codec igual los filtra.
+// fPort 2, 16 bytes, reporte de un comando: [0] ref  [1] resultado (0 aplicado, 1 fuera de
+//   rango, 2 comando desconocido, 3 calibracion invalida)  [2..3] intervalo_s
+//   [4..9] cero de los tanques 1..3 en mm  [10..15] lleno de los tanques 1..3 en mm
+//   (0xFFFF = sin calibrar). Es la config vigente del nodo: va en "config".
 //
 // BAJADA (fPort 10). El lorawan-bridge pasa {command, params, ref}:
-//   medir_ahora                            -> 01 ref
-//   set_config {"intervalo_s": 60..43200}  -> 02 ref intervalo_hi intervalo_lo
-// El nodo contesta cada comando con un reporte en el fPort 2. Despues de medir_ahora mide los
-// tres tanques y manda ademas la medicion en el fPort 1. intervalo_s es cada cuanto mide los
-// tres tanques y envia: el nodo reparte los turnos cada intervalo_s / 3.
+//   medir_ahora -> 01 ref
+//   set_config  -> 02 ref y una entrada (id hi lo) por parametro:
+//     intervalo_s        (60..43200 s, entero)      id 0x01, en s
+//     cero_tanqueN_cm    (25..600 cm, un decimal)   id 0x10 + N, en mm
+//     lleno_tanqueN_cm   (25..600 cm, un decimal)   id 0x20 + N, en mm
+//   cero = distancia del sensor al agua con el tanque vacio (0 %); lleno = con el tanque
+//   lleno (100 %). El cero tiene que quedar al menos 10 cm mas lejos que el lleno.
+//   intervalo_s es cada cuanto se miden los tres tanques: cada turno (intervalo_s / 3) mide un
+//   tanque y lo manda.
 
 var N_TANQUES = 3;
-var DIST_MIN_MM = 250;            // en los bytes (mm = cm x 10); iguales al sketch
-var DIST_MAX_MM = 6000;           // en values: 25 a 600 cm, como conector.toml
+var DIST_MIN_MM = 250;            // iguales al sketch; en values: 25 a 600 cm (conector.toml)
+var DIST_MAX_MM = 6000;
+var ZONA_CIEGA = 0xFFFE;
+var SIN_CALIBRAR = 0xFFFF;
+var SPAN_MIN_MM = 100;
 var INTERVALO_MIN_S = 60;
 var INTERVALO_MAX_S = 43200;      // 12 h; el uplink interval del device profile tiene que ser este maximo
-var MOTIVOS = { 1: "fuera_de_rango", 2: "comando_desconocido" };
-var ZONA_CIEGA = 0xFFFE;          // el firmware lo manda cuando el agua esta mas cerca que 250 mm
+var MOTIVOS = { 1: "fuera_de_rango", 2: "comando_desconocido", 3: "calibracion_invalida" };
 var FALLAS = { 0xFFFF: "sin eco", 0xFFFD: "demasiado lejos" };
 
 function u16(bytes, i) {
   return (bytes[i] << 8) | bytes[i + 1];
 }
 
-function cm(mm) {
-  return mm / 10;                 // 2462 -> 246.2: un decimal exacto, sin redondeo
+function decimas(v) {
+  return v / 10;                  // 2462 -> 246.2: un decimal exacto
 }
 
 function decodeUplink(input) {
   var b = input.bytes;
-  if (input.fPort === 2) {
-    if (b.length !== 4) return { errors: ["reporte: " + b.length + " bytes, se esperaban 4"] };
-    var rep = { ref: b[0], aplicado: b[1] === 0, config: { intervalo_s: u16(b, 2) } };
-    if (b[1] !== 0) rep.motivo = MOTIVOS[b[1]] || "rechazado_por_el_nodo";
-    return { data: rep };
-  }
+  if (input.fPort === 2) return decodificarReporte(b);
   if (input.fPort !== 1) {
     return { errors: ["fPort " + input.fPort + " desconocido (1 medicion, 2 reporte)"] };
   }
-  if (b.length !== 2 * N_TANQUES) {
-    return { errors: ["medicion: " + b.length + " bytes, se esperaban " + 2 * N_TANQUES] };
+  if (b.length < 1) return { errors: ["medicion vacia"] };
+
+  var mascara = b[0];
+  var cantidad = 0;
+  for (var t = 0; t < N_TANQUES; t++) if (mascara & (1 << t)) cantidad++;
+  if (cantidad === 0 || (mascara >> N_TANQUES) !== 0) {
+    return { errors: ["medicion: mascara de tanques invalida 0x" + mascara.toString(16)] };
+  }
+  if (b.length !== 1 + 4 * cantidad) {
+    return { errors: ["medicion: " + b.length + " bytes, se esperaban " + (1 + 4 * cantidad)] };
   }
 
   var values = {};
   var warnings = [];
+  var i = 1;
   for (var n = 1; n <= N_TANQUES; n++) {
-    var dist = u16(b, 2 * (n - 1));
-    if (dist >= DIST_MIN_MM && dist <= DIST_MAX_MM) {
-      values["distancia_tanque" + n + "_cm"] = cm(dist);
-    } else if (dist === ZONA_CIEGA) {
-      values["distancia_tanque" + n + "_cm"] = cm(DIST_MIN_MM);
-      warnings.push("tanque " + n + ": agua en la zona ciega (lleno), se informa " + cm(DIST_MIN_MM) + " cm");
+    if (!(mascara & (1 << (n - 1)))) continue;
+    var dist = u16(b, i);
+    var nivel = u16(b, i + 2);
+    i += 4;
+    if (dist === ZONA_CIEGA) {
+      values["distancia_tanque" + n + "_cm"] = decimas(DIST_MIN_MM);
+      warnings.push("tanque " + n + ": agua en la zona ciega (lleno), se informa " + decimas(DIST_MIN_MM) + " cm");
+    } else if (dist >= DIST_MIN_MM && dist <= DIST_MAX_MM) {
+      values["distancia_tanque" + n + "_cm"] = decimas(dist);
     } else {
-      warnings.push("tanque " + n + ": " + (FALLAS[dist] || "fuera de rango (" + cm(dist) + " cm)"));
+      warnings.push("tanque " + n + ": " + (FALLAS[dist] || "fuera de rango (" + decimas(dist) + " cm)"));
+      continue;   // sin distancia valida tampoco hay nivel
     }
+    if (nivel <= 1000) values["nivel_tanque" + n + "_pct"] = decimas(nivel);
   }
   // Si ningun tanque dio una medicion valida, no se publica data (§3.1).
   if (Object.keys(values).length === 0) {
-    return { errors: ["sin lecturas validas en ningun tanque: " + warnings.join(", ")] };
+    return { errors: ["sin lecturas validas: " + warnings.join(", ")] };
   }
   return { data: values, warnings: warnings };
+}
+
+function decodificarReporte(b) {
+  if (b.length !== 4 + 4 * N_TANQUES) {
+    return { errors: ["reporte: " + b.length + " bytes, se esperaban " + (4 + 4 * N_TANQUES)] };
+  }
+  var config = { intervalo_s: u16(b, 2) };
+  for (var t = 0; t < N_TANQUES; t++) {
+    var cero = u16(b, 4 + 2 * t);
+    var lleno = u16(b, 4 + 2 * N_TANQUES + 2 * t);
+    if (cero !== SIN_CALIBRAR) config["cero_tanque" + (t + 1) + "_cm"] = decimas(cero);
+    if (lleno !== SIN_CALIBRAR) config["lleno_tanque" + (t + 1) + "_cm"] = decimas(lleno);
+  }
+  var rep = { ref: b[0], aplicado: b[1] === 0, config: config };
+  if (b[1] !== 0) rep.motivo = MOTIVOS[b[1]] || "rechazado_por_el_nodo";
+  return { data: rep };
+}
+
+// Un valor en cm con a lo sumo un decimal, dentro de 25..600: devuelve los mm, o -1.
+function cmAMm(v) {
+  if (typeof v !== "number" || !isFinite(v)) return -1;
+  var mm = Math.round(v * 10);
+  if (Math.abs(mm - v * 10) > 1e-6) return -1;
+  if (mm < DIST_MIN_MM || mm > DIST_MAX_MM) return -1;
+  return mm;
 }
 
 function encodeDownlink(input) {
@@ -90,21 +130,43 @@ function encodeDownlink(input) {
   if (d.command === "medir_ahora") {
     return { bytes: [0x01, ref] };
   }
-  if (d.command === "set_config") {
-    var p = d.params || {};
-    var claves = Object.keys(p);
-    for (var i = 0; i < claves.length; i++) {
-      if (claves[i] !== "intervalo_s") {
-        return { errors: ["set_config: parametro desconocido '" + claves[i] + "' (solo intervalo_s)"] };
-      }
-    }
-    var s = p.intervalo_s;
-    if (typeof s !== "number" || s % 1 !== 0 || s < INTERVALO_MIN_S || s > INTERVALO_MAX_S) {
-      return { errors: ["set_config: intervalo_s tiene que ser un entero entre " + INTERVALO_MIN_S + " y " + INTERVALO_MAX_S] };
-    }
-    return { bytes: [0x02, ref, (s >> 8) & 0xff, s & 0xff] };
+  if (d.command !== "set_config") {
+    return { errors: ["comando desconocido: " + d.command] };
   }
-  return { errors: ["comando desconocido: " + d.command] };
+
+  var p = d.params || {};
+  var claves = Object.keys(p);
+  if (claves.length === 0) return { errors: ["set_config sin parametros"] };
+
+  var bytes = [0x02, ref];
+  var cero = {}, lleno = {};
+  for (var i = 0; i < claves.length; i++) {
+    var k = claves[i];
+    var v = p[k];
+    var m = /^(cero|lleno)_tanque([1-3])_cm$/.exec(k);
+    if (k === "intervalo_s") {
+      if (typeof v !== "number" || v % 1 !== 0 || v < INTERVALO_MIN_S || v > INTERVALO_MAX_S) {
+        return { errors: ["set_config: intervalo_s tiene que ser un entero entre " + INTERVALO_MIN_S + " y " + INTERVALO_MAX_S] };
+      }
+      bytes.push(0x01, (v >> 8) & 0xff, v & 0xff);
+    } else if (m) {
+      var mm = cmAMm(v);
+      if (mm < 0) return { errors: ["set_config: " + k + " tiene que ser un numero de 25 a 600 cm, con a lo sumo un decimal"] };
+      var tanque = Number(m[2]);
+      if (m[1] === "cero") cero[tanque] = mm; else lleno[tanque] = mm;
+      bytes.push((m[1] === "cero" ? 0x10 : 0x20) + tanque, (mm >> 8) & 0xff, mm & 0xff);
+    } else {
+      return { errors: ["set_config: parametro desconocido '" + k + "' (intervalo_s, cero_tanqueN_cm, lleno_tanqueN_cm)"] };
+    }
+  }
+  // Si vienen los dos de un tanque, se controla aca; si viene uno solo, lo controla el nodo
+  // contra el que tiene guardado.
+  for (var t = 1; t <= N_TANQUES; t++) {
+    if (cero[t] !== undefined && lleno[t] !== undefined && cero[t] < lleno[t] + SPAN_MIN_MM) {
+      return { errors: ["set_config: en el tanque " + t + " el cero tiene que estar al menos 10 cm mas lejos que el lleno"] };
+    }
+  }
+  return { bytes: bytes };
 }
 
 // ChirpStack no define "module": solo existe cuando se prueba el codec con Node (tests/).

@@ -2,48 +2,55 @@
  * E2-AZ-TERR-TAN01 - nivel de 3 tanques de agua, terraza del Edificio 2 (LoRaWAN, clase A)
  *
  * Tres sensores ultrasonicos AJ-SR04M miden la distancia al agua de 3 tanques.
- * Implementa el contrato MQTT v4.0 por LoRaWAN (hw_id = eui-<DevEUI>). El formato de los
- * bytes es el mismo esquema que usa el codec de E1-AZ-TERR-TAN01 (lo mantiene la catedra):
- * medicion en el fPort 1, reporte de comandos en el fPort 2 y comandos con "ref" en el fPort 10.
- * El par de este sketch es codec.js, en esta carpeta: si cambia el formato de uno, cambia el otro.
+ * Implementa el contrato MQTT v4.0 por LoRaWAN (hw_id = eui-<DevEUI>): medicion en el fPort 1,
+ * reporte de comandos en el fPort 2 y comandos con "ref" en el fPort 10, como el codec de
+ * E1-AZ-TERR-TAN01. El par de este sketch es codec.js, en esta carpeta: si cambia el formato
+ * de los bytes de uno, cambia el otro.
  *
- * --- CICLO DE MEDICION (intervalo_s, configurable con set_config) ---
- * Cada intervalo_s se miden los 3 tanques, repartidos en turnos iguales de intervalo_s / 3:
- * con 60 s (por defecto), el tanque 1 en el segundo 0, el 2 en el 20 y el 3 en el 40; con
- * 300 s, cada 100 s. Despues del tanque 3 sale la medicion por LoRaWAN. Si set_config cambia
- * intervalo_s, los turnos se recalculan solos y el ciclo arranca de nuevo por el tanque 1.
- * La red (join, uplinks, reintentos) y medir_ahora solo usan los huecos entre turnos.
+ * --- CICLO: MIDE Y MANDA ---
+ * Cada intervalo_s se miden los 3 tanques, en turnos iguales de intervalo_s / 3 (con 60 s, por
+ * defecto: tanque 1 en el segundo 0, tanque 2 en el 20, tanque 3 en el 40). Cada turno mide su
+ * tanque y lo manda enseguida, en su propio uplink. Si set_config cambia intervalo_s, los turnos
+ * se recalculan solos y el ciclo arranca de nuevo por el tanque 1.
+ * Un sensor que no da una medicion valida (sin eco, demasiado lejos) no se manda: el conector
+ * nota que ese tanque dejo de llegar. El agua dentro de la zona ciega (tanque lleno) si se manda.
+ *
+ * --- CALIBRACION (cero y lleno, desde AURA con set_config) ---
+ * Por tanque: cero = distancia del sensor al agua con el tanque vacio (0 %), lleno = distancia
+ * con el tanque lleno (100 %), en mm (cm x 10). Con los dos, el nodo calcula el nivel en % y lo
+ * manda junto con la distancia. Sin calibrar, manda solo la distancia.
+ *
+ * --- RED: SE RECUPERA SOLA ---
+ * El join no bloquea: si falla, reintenta con espera creciente (30 s ... 5 min, con algo de azar)
+ * y sigue midiendo. Si la red deja de confirmar varios uplinks seguidos (la catedra reseteo la
+ * sesion o los nonces, borro y volvio a crear el device, cambio el device profile), el nodo
+ * descarta su sesion y hace un join nuevo, sin perder los DevNonce guardados.
  *
  * --- MEMORIA ---
- * Las mediciones viven solo en RAM: cada tanque guarda su ultima medicion hasta que la proxima
- * la reemplaza. En flash (NVS) solo van dos cosas, y solo cuando cambian:
- *   - el buffer de nonces del join (una vez por join; evita repetir DevNonce)
- *   - intervalo_s (solo cuando un set_config lo cambia)
+ * Las mediciones viven solo en RAM. En flash (NVS) solo van, y solo cuando cambian: el buffer
+ * de nonces del join (evita repetir DevNonce), intervalo_s y la calibracion de cada tanque.
  * La sesion LoRaWAN NO se guarda: tras un reinicio el nodo hace un join nuevo.
  *
  * --- SUBIDA (uplinks confirmados) ---
- * fPort 1, medicion, 6 bytes, big-endian:
- *   [0..1] distancia tanque 1 en mm (= cm x 10)   [2..3] tanque 2   [4..5] tanque 3
- *   El codec la pasa a cm con un decimal (2462 -> 246.2 cm).
- *   Sin medicion valida: 0xFFFF sin eco, 0xFFFD demasiado lejos (el codec no los pone en
- *   values, contrato 3.1). 0xFFFE = demasiado cerca: el agua esta dentro de la zona ciega del
- *   sensor, o sea el tanque esta lleno. No es una falla: el codec lo informa como 25 cm, el
- *   nivel maximo que el sensor puede medir (saturacion del rango).
- *   Sale al terminar cada ciclo (despues del tanque 3), con la ultima medicion de cada
- *   tanque; y ademas despues de un medir_ahora, con una medicion nueva de los tres.
- * fPort 2, reporte de un comando (contrato 3.4), 4 bytes:
- *   [0] ref del comando   [1] resultado: 0 aplicado, 1 fuera de rango, 2 comando desconocido
- *   [2..3] intervalo_s vigente
+ * fPort 1, medicion: [0] mascara de tanques (bit0 = tanque 1 ... bit2 = tanque 3), y por cada
+ *   tanque de la mascara, en orden: distancia en mm (uint16) + nivel en decimas de % (uint16,
+ *   0..1000; 0xFFFF = sin calibrar). Big endian. Un turno: 5 bytes; medir_ahora: hasta 13.
+ *   Distancia 0xFFFE = agua en la zona ciega (tanque lleno): el codec la informa como 25 cm.
+ * fPort 2, reporte de un comando (contrato 3.4), 16 bytes:
+ *   [0] ref   [1] resultado: 0 aplicado, 1 fuera de rango, 2 comando desconocido,
+ *   3 calibracion invalida   [2..3] intervalo_s   [4..9] cero de los tanques 1..3 en mm
+ *   [10..15] lleno de los tanques 1..3 en mm (0xFFFF = sin calibrar). Es la config vigente.
  *
  * --- BAJADA (fPort 10; el lorawan-bridge pone el ref) ---
- *   01 ref         medir_ahora: mide los 3 tanques en el proximo hueco entre turnos, sin
- *                  mover el ciclo, y manda la medicion por el fPort 1.
- *   02 ref hi lo   set_config intervalo_s (60 a 43200): cada cuanto se miden los 3 tanques
- *                  y se envia. Los turnos pasan a intervalo_s / 3 y el ciclo arranca de nuevo.
- *   Cada comando se contesta con un reporte en el fPort 2. Un comando desconocido o mal
- *   armado se contesta con resultado 2 y no cambia nada.
- *   Clase A: el nodo recibe el comando en la ventana que sigue a su proximo uplink (hasta
- *   intervalo_s despues de encolarlo) y lo atiende en el hueco siguiente.
+ *   01 ref                  medir_ahora: mide los 3 tanques en el proximo hueco entre turnos,
+ *                           sin mover el ciclo, y los manda juntos en un uplink.
+ *   02 ref (id hi lo)...    set_config: una entrada por parametro. id 0x01 intervalo_s (s,
+ *                           60..43200); 0x11..0x13 cero del tanque 1..3 (mm, 250..6000);
+ *                           0x21..0x23 lleno del tanque 1..3 (mm, 250..6000). Se valida todo
+ *                           y, si algo no valida, no se aplica nada (contrato 3.3). El cero
+ *                           tiene que quedar al menos 100 mm mas lejos que el lleno.
+ *   Cada comando se contesta con un reporte en el fPort 2. Clase A: el comando llega en la
+ *   ventana que sigue al proximo uplink del nodo.
  */
 
 #include <RadioLib.h>
@@ -65,6 +72,8 @@ Preferences almacen;
 const char* NVS_ESPACIO   = "lorawan";
 const char* NVS_NONCES    = "nonces";
 const char* NVS_INTERVALO = "intervalo_s";
+const char* NVS_CERO[3]   = {"cero1", "cero2", "cero3"};
+const char* NVS_LLENO[3]  = {"lleno1", "lleno2", "lleno3"};
 
 // ===== PINES DEL WIO-SX1262 =====
 #define PIN_NSS    41
@@ -104,6 +113,13 @@ const uint16_t SIN_ECO         = 0xFFFF;
 const uint16_t DEMASIADO_CERCA = 0xFFFE;
 const uint16_t DEMASIADO_LEJOS = 0xFFFD;
 
+// ===== CALIBRACION =====
+const uint16_t SIN_CALIBRAR      = 0xFFFF;
+const uint16_t SPAN_MIN_MM       = 100;     // el cero tiene que estar al menos 10 cm mas lejos que el lleno
+const uint16_t NIVEL_SIN_CALIBRAR = 0xFFFF;
+uint16_t ceroMm[N_TANQUES]  = {SIN_CALIBRAR, SIN_CALIBRAR, SIN_CALIBRAR};
+uint16_t llenoMm[N_TANQUES] = {SIN_CALIBRAR, SIN_CALIBRAR, SIN_CALIBRAR};
+
 // ===== CICLO DE MEDICION =====
 const unsigned long ARRANQUE_CICLO_MS = 1000UL;   // primer turno, despues de arrancar o de un set_config
 // Lo que puede tardar medir los 3 tanques (5 muestras de hasta ~100 ms cada una), con margen.
@@ -128,16 +144,21 @@ const uint8_t PUERTO_REPORTE  = 2;
 const uint8_t PUERTO_COMANDOS = 10;   // CS_FPORT_COMANDOS del lorawan-bridge
 
 const uint8_t CMD_MEDIR_AHORA = 0x01;  // 01 ref
-const uint8_t CMD_SET_CONFIG  = 0x02;  // 02 ref hi lo
+const uint8_t CMD_SET_CONFIG  = 0x02;  // 02 ref (id hi lo)...
 
-const uint8_t RES_APLICADO            = 0;
-const uint8_t RES_FUERA_DE_RANGO      = 1;
-const uint8_t RES_COMANDO_DESCONOCIDO = 2;
+const uint8_t PAR_INTERVALO = 0x01;
+const uint8_t PAR_CERO      = 0x10;    // + numero de tanque (0x11..0x13)
+const uint8_t PAR_LLENO     = 0x20;    // + numero de tanque (0x21..0x23)
 
-const size_t TAM_MEDICION = 2 * N_TANQUES;  // 6 bytes
-const size_t TAM_REPORTE  = 4;
+const uint8_t RES_APLICADO             = 0;
+const uint8_t RES_FUERA_DE_RANGO       = 1;
+const uint8_t RES_COMANDO_DESCONOCIDO  = 2;
+const uint8_t RES_CALIBRACION_INVALIDA = 3;
 
-// ===== INTERVALO DE MEDICION Y ENVIO (set_config) =====
+const size_t TAM_MEDICION_MAX = 1 + 4 * N_TANQUES;  // 13 bytes
+const size_t TAM_REPORTE      = 4 + 4 * N_TANQUES;  // 16 bytes
+
+// ===== INTERVALO DE MEDICION (set_config) =====
 // Con 60 s los turnos quedan a 20 s: deja lugar entre turnos para un uplink con sus
 // reintentos y para el join.
 const uint16_t INTERVALO_MIN_S = 60;
@@ -145,20 +166,18 @@ const uint16_t INTERVALO_MAX_S = 43200;               // 12 h, igual que el code
 uint16_t       intervaloS      = INTERVALO_MIN_S;     // duracion del ciclo de los 3 tanques
 
 // ===== ENVIOS PENDIENTES =====
-struct EnvioPendiente {
-  bool          activo;
-  uint8_t       payload[TAM_MEDICION];
-  uint16_t      intentos;
-  unsigned long proximoIntento;
-};
-EnvioPendiente medicion = {};
+// Tanques medidos que todavia no se entregaron. El payload se arma al enviar, con la ultima
+// medicion de cada uno: si un reintento se demora y el tanque se vuelve a medir, sale la nueva.
+uint8_t       medicionMascara        = 0;
+uint16_t      medicionIntentos       = 0;
+unsigned long medicionProximoIntento = 0;
 
 // Reportes de comandos (contrato 3.4). Una cola chica: en clase A llega a lo sumo un
 // comando por uplink, asi que casi nunca hay mas de uno esperando.
 struct Reporte {
   uint8_t  ref;
   uint8_t  resultado;
-  uint16_t intervaloS;
+  uint8_t  bytes[TAM_REPORTE];
 };
 const uint8_t MAX_REPORTES = 4;
 Reporte       reportes[MAX_REPORTES];
@@ -176,33 +195,41 @@ const unsigned long MARGEN_UNION_MS       = 9000UL;   // lo que puede tardar un 
 const uint8_t       MAX_INTENTOS_REPORTE  = 4;
 const unsigned long ESPERA_UNION_BASE_MS  = 30000UL;
 const unsigned long ESPERA_UNION_MAX_MS   = 300000UL;
+// Uplinks seguidos sin ACK antes de descartar la sesion y hacer un join nuevo. Con turnos de
+// 20 s y sus reintentos son unos minutos: alcanza para no reiniciar por un ACK perdido.
+const uint8_t       MAX_FALLOS_SEGUIDOS   = 12;
 
 bool          necesitaUnirse = true;
 unsigned long proximoUnion   = 0;
 uint8_t       fallosUnion    = 0;
+uint8_t       fallosSeguidos = 0;
 
 // ===== PROTOTIPOS =====
 void iniciarSensores();
 uint16_t leerDistanciaMm(uint8_t i);
 void imprimirDistancia(uint8_t i, uint16_t d);
 void guardarMedicion(uint8_t t, uint16_t d, unsigned long instante);
+bool esValida(uint16_t d);
+uint16_t nivelDecimas(uint8_t t, uint16_t d);
 void medirTurno();
 void medirTodos();
 void avanzarTurno();
 unsigned long instanteTurno(uint8_t t);
 void reiniciarCiclo();
-void armarMedicion();
 void atenderRed();
 void intentarMedicion();
 void intentarReporte();
 bool enviarUplink(uint8_t puerto, const uint8_t* payload, size_t tam);
 void procesarBajada(uint8_t puerto, const uint8_t* datos, size_t tam);
+void aplicarSetConfig(uint8_t ref, const uint8_t* datos, size_t tam);
 void encolarReporte(uint8_t ref, uint8_t resultado);
+void ponerU16(uint8_t* b, uint16_t v);
 unsigned long calcularEspera(uint16_t intento);
 void unirse();
+void forzarJoin();
 void fijarDatarate();
 void restaurarNonces();
-void cargarIntervalo();
+void cargarConfig();
 long msHasta(unsigned long instante);
 void detener();
 
@@ -235,7 +262,7 @@ void setup() {
 
   almacen.begin(NVS_ESPACIO, false);
   restaurarNonces();
-  cargarIntervalo();
+  cargarConfig();
 
   // El ciclo de medicion arranca ya: no espera al join. El join se intenta
   // en los huecos entre turnos (ver atenderRed).
@@ -266,11 +293,42 @@ void iniciarSensores() {
   }
 }
 
+// Una medicion que se manda: dentro del rango, o el agua en la zona ciega (tanque lleno).
+bool esValida(uint16_t d) {
+  return (d >= DIST_MIN_MM && d <= DIST_MAX_MM) || d == DEMASIADO_CERCA;
+}
+
+// Guarda la medicion y la deja pendiente de envio. Una que no es valida no se manda: si el
+// tanque tenia una anterior sin entregar, se descarta, porque ya no es la ultima.
 void guardarMedicion(uint8_t t, uint16_t d, unsigned long instante) {
   ultima[t].dist     = d;       // RAM: pisa la medicion anterior de este tanque
   ultima[t].instante = instante;
   ultima[t].hecha    = true;
   imprimirDistancia(t, d);
+
+  uint8_t bit = 1 << t;
+  if (esValida(d)) {
+    if (medicionMascara == 0) {
+      medicionIntentos       = 0;
+      medicionProximoIntento = millis();
+    }
+    medicionMascara |= bit;
+  } else {
+    medicionMascara &= ~bit;
+  }
+}
+
+// Nivel en decimas de %, 0..1000, con la calibracion del tanque. La zona ciega cuenta como
+// 250 mm. Se recorta a 0..100 %: el agua apenas por encima del lleno o por debajo del cero
+// es el tope de la escala, como en un transmisor de nivel.
+uint16_t nivelDecimas(uint8_t t, uint16_t d) {
+  if (ceroMm[t] == SIN_CALIBRAR || llenoMm[t] == SIN_CALIBRAR) return NIVEL_SIN_CALIBRAR;
+  long dist = (d == DEMASIADO_CERCA) ? DIST_MIN_MM : d;
+  long span = (long)ceroMm[t] - (long)llenoMm[t];
+  long n    = ((long)ceroMm[t] - dist) * 1000L / span;
+  if (n < 0)    n = 0;
+  if (n > 1000) n = 1000;
+  return (uint16_t)n;
 }
 
 // Instante del turno t (0 = tanque 1) del ciclo actual. Se calcula desde el inicio del ciclo
@@ -287,24 +345,23 @@ void reiniciarCiclo() {
   proximaMedicion = inicioCiclo;
   Serial.print(F("Ciclo: los 3 tanques cada "));
   Serial.print(intervaloS);
-  Serial.print(F(" s, un turno cada "));
+  Serial.print(F(" s, un turno (medir y mandar) cada "));
   Serial.print(intervaloS / (float)N_TANQUES, 1);
   Serial.println(F(" s"));
 }
 
-// Pasa al turno siguiente. Al terminar el tanque 3 cierra el ciclo: deja lista la medicion
-// para enviar y corre el inicio del ciclo un intervalo_s.
+// Pasa al turno siguiente. Al terminar el tanque 3, el ciclo siguiente empieza un intervalo_s
+// despues del anterior.
 void avanzarTurno() {
   turno++;
   if (turno == N_TANQUES) {
-    armarMedicion();
     turno = 0;
     inicioCiclo += (uint32_t)intervaloS * 1000UL;
   }
   proximaMedicion = instanteTurno(turno);
 }
 
-// Mide el tanque que toca y avanza al siguiente turno.
+// Mide el tanque que toca (queda pendiente de envio) y avanza al siguiente turno.
 void medirTurno() {
   // Si algo retraso el nodo hasta pasar tambien el turno siguiente, salta los turnos perdidos
   // en vez de medir varios tanques seguidos: cada tanque conserva su lugar en el ciclo.
@@ -323,8 +380,8 @@ void medirTurno() {
   avanzarTurno();
 }
 
-// medir_ahora: mide los 3 tanques en un hueco entre turnos. No toca proximaMedicion ni
-// turno, asi que el ciclo sigue en sus segundos.
+// medir_ahora: mide los 3 tanques en un hueco entre turnos y los deja pendientes para salir
+// juntos. No toca el ciclo, asi que los turnos siguen en sus segundos.
 void medirTodos() {
   Serial.println(F("[MED] medir_ahora: midiendo los 3 tanques"));
   for (uint8_t t = 0; t < N_TANQUES; t++) {
@@ -332,7 +389,6 @@ void medirTodos() {
     guardarMedicion(t, leerDistanciaMm(t), inicio);
   }
   medicionPedida = false;
-  armarMedicion();
 }
 
 uint16_t leerDistanciaMm(uint8_t i) {
@@ -374,27 +430,17 @@ void imprimirDistancia(uint8_t i, uint16_t d) {
   Serial.print(F("[MED] Tanque "));
   Serial.print(i + 1);
   Serial.print(F(": "));
-  if (d == SIN_ECO)              Serial.println(F("sin eco"));
-  else if (d == DEMASIADO_CERCA) Serial.println(F("agua en la zona ciega (tanque lleno, se informa 25 cm)"));
-  else if (d == DEMASIADO_LEJOS) Serial.println(F("demasiado lejos"));
-  else { Serial.print(d / 10.0, 1); Serial.println(F(" cm")); }
-}
-
-// ===== MEDICION PERIODICA =====
-// Toma una foto de lo que hay en RAM y la deja lista para enviar por el fPort 1.
-// Si habia una sin entregar, la reemplaza: la nueva trae datos mas recientes.
-void armarMedicion() {
-  if (medicion.activo) {
-    Serial.println(F("[TX] medicion anterior sin entregar: la reemplaza la nueva"));
+  if (d == SIN_ECO)              { Serial.println(F("sin eco (no se manda)")); return; }
+  if (d == DEMASIADO_LEJOS)      { Serial.println(F("demasiado lejos (no se manda)")); return; }
+  if (d == DEMASIADO_CERCA)      Serial.print(F("agua en la zona ciega (tanque lleno, se informa 25 cm)"));
+  else                           { Serial.print(d / 10.0, 1); Serial.print(F(" cm")); }
+  uint16_t n = nivelDecimas(i, d);
+  if (n != NIVEL_SIN_CALIBRAR) {
+    Serial.print(F(", nivel "));
+    Serial.print(n / 10.0, 1);
+    Serial.print(F(" %"));
   }
-  for (uint8_t i = 0; i < N_TANQUES; i++) {
-    uint16_t d = ultima[i].hecha ? ultima[i].dist : SIN_ECO;
-    medicion.payload[2 * i]     = (d >> 8) & 0xFF;
-    medicion.payload[2 * i + 1] = d & 0xFF;
-  }
-  medicion.intentos       = 0;
-  medicion.proximoIntento = millis();
-  medicion.activo         = true;
+  Serial.println();
 }
 
 // ===== RED Y MEDIR_AHORA: solo en los huecos entre turnos =====
@@ -421,24 +467,39 @@ void atenderRed() {
   // Primero los reportes: confirman el comando y son lo que espera quien lo mando.
   if (nReportes > 0 && msHasta(reporteProximoIntento) <= 0) {
     intentarReporte();
-  } else if (medicion.activo && msHasta(medicion.proximoIntento) <= 0) {
+  } else if (medicionMascara != 0 && msHasta(medicionProximoIntento) <= 0) {
     intentarMedicion();
   }
 }
 
 void intentarMedicion() {
-  medicion.intentos++;
-  Serial.print(F("[TX] medicion, intento "));
-  Serial.print(medicion.intentos);
+  uint8_t payload[TAM_MEDICION_MAX];
+  uint8_t mascara = medicionMascara;
+  size_t  n = 0;
+  payload[n++] = mascara;
+  for (uint8_t t = 0; t < N_TANQUES; t++) {
+    if (!(mascara & (1 << t))) continue;
+    ponerU16(&payload[n], ultima[t].dist);
+    ponerU16(&payload[n + 2], nivelDecimas(t, ultima[t].dist));
+    n += 4;
+  }
+
+  medicionIntentos++;
+  Serial.print(F("[TX] medicion tanques 0x"));
+  Serial.print(mascara, HEX);
+  Serial.print(F(", intento "));
+  Serial.print(medicionIntentos);
   Serial.print(F(" ... "));
 
-  if (enviarUplink(PUERTO_MEDICION, medicion.payload, TAM_MEDICION)) {
-    medicion.activo = false;
+  if (enviarUplink(PUERTO_MEDICION, payload, n)) {
+    medicionMascara &= ~mascara;   // lo que se midio mientras tanto sigue pendiente
+    medicionIntentos       = 0;
+    medicionProximoIntento = millis();
     return;
   }
 
-  unsigned long espera = calcularEspera(medicion.intentos + 1);
-  medicion.proximoIntento = millis() + espera;
+  unsigned long espera = calcularEspera(medicionIntentos + 1);
+  medicionProximoIntento = millis() + espera;
   Serial.print(F("     reintento en "));
   Serial.print(espera / 1000.0, 1);
   Serial.println(F(" s (si hay hueco antes del proximo turno)"));
@@ -446,9 +507,6 @@ void intentarMedicion() {
 
 void intentarReporte() {
   const Reporte& r = reportes[0];
-  uint8_t payload[TAM_REPORTE] = {
-    r.ref, r.resultado, (uint8_t)((r.intervaloS >> 8) & 0xFF), (uint8_t)(r.intervaloS & 0xFF)
-  };
 
   reporteIntentos++;
   Serial.print(F("[TX] reporte ref="));
@@ -459,7 +517,7 @@ void intentarReporte() {
   Serial.print(reporteIntentos);
   Serial.print(F(" ... "));
 
-  bool entregado = enviarUplink(PUERTO_REPORTE, payload, TAM_REPORTE);
+  bool entregado = enviarUplink(PUERTO_REPORTE, r.bytes, TAM_REPORTE);
   if (!entregado && reporteIntentos < MAX_INTENTOS_REPORTE) {
     reporteProximoIntento = millis() + calcularEspera(reporteIntentos + 1);
     return;
@@ -491,29 +549,35 @@ bool enviarUplink(uint8_t puerto, const uint8_t* payload, size_t tam) {
     return false;
   }
 
+  bool confirmado = false;
   if (estado < RADIOLIB_ERR_NONE) {
     Serial.print(F("ERROR, codigo "));
     Serial.println(estado);
-    return false;
-  }
-
-  // Un comando puede llegar aunque el ACK no venga en esa ventana: se procesa igual.
-  if (estado > 0 && rxTam > 0) {
-    procesarBajada(bajada.fPort, rxBuffer, rxTam);
-  }
-
-  if (CONFIRMADO && !bajada.confirming) {
-    Serial.println(F("sin ACK del servidor"));
-    return false;
-  }
-
-  if (estado > 0) {
-    Serial.print(F("confirmado, ACK en RX"));
-    Serial.println(estado);
   } else {
-    Serial.println(F("enviado (sin downlink)"));
+    // Un comando puede llegar aunque el ACK no venga en esa ventana: se procesa igual.
+    if (estado > 0 && rxTam > 0) {
+      procesarBajada(bajada.fPort, rxBuffer, rxTam);
+    }
+    confirmado = !CONFIRMADO || bajada.confirming;
+    if (!confirmado) {
+      Serial.println(F("sin ACK del servidor"));
+    } else if (estado > 0) {
+      Serial.print(F("confirmado, ACK en RX"));
+      Serial.println(estado);
+    } else {
+      Serial.println(F("enviado (sin downlink)"));
+    }
   }
-  return true;
+
+  if (confirmado) {
+    fallosSeguidos = 0;
+    return true;
+  }
+  if (fallosSeguidos < 255) fallosSeguidos++;
+  if (fallosSeguidos >= MAX_FALLOS_SEGUIDOS) {
+    forzarJoin();
+  }
+  return false;
 }
 
 // ===== COMANDOS POR DOWNLINK (fPort 10) =====
@@ -542,30 +606,8 @@ void procesarBajada(uint8_t puerto, const uint8_t* datos, size_t tam) {
     return;
   }
 
-  if (op == CMD_SET_CONFIG && tam == 4) {
-    uint16_t pedidoS = ((uint16_t)datos[2] << 8) | datos[3];
-    if (pedidoS < INTERVALO_MIN_S || pedidoS > INTERVALO_MAX_S) {
-      // Fuera de rango: no se aplica nada (contrato 3.3).
-      encolarReporte(ref, RES_FUERA_DE_RANGO);
-      Serial.print(F(">>> set_config ref="));
-      Serial.print(ref);
-      Serial.print(F(" RECHAZADO: intervalo_s="));
-      Serial.print(pedidoS);
-      Serial.println(F(" fuera de 60..43200 <<<"));
-      return;
-    }
-    bool cambia = (pedidoS != intervaloS);
-    intervaloS = pedidoS;
-    if (almacen.getUInt(NVS_INTERVALO, 0) != pedidoS) {   // flash: solo si cambio
-      almacen.putUInt(NVS_INTERVALO, pedidoS);
-    }
-    encolarReporte(ref, RES_APLICADO);
-    Serial.print(F(">>> set_config ref="));
-    Serial.print(ref);
-    Serial.print(F(": intervalo_s="));
-    Serial.print(pedidoS);
-    Serial.println(cambia ? F(" (los turnos se recalculan) <<<") : F(" (sin cambios) <<<"));
-    if (cambia) reiniciarCiclo();
+  if (op == CMD_SET_CONFIG && tam >= 5 && (tam - 2) % 3 == 0) {
+    aplicarSetConfig(ref, datos + 2, tam - 2);
     return;
   }
 
@@ -579,7 +621,100 @@ void procesarBajada(uint8_t puerto, const uint8_t* datos, size_t tam) {
   Serial.println(F(" bytes) <<<"));
 }
 
-// El reporte lleva el intervalo vigente en el momento en que se atendio el comando.
+// set_config: primero valida TODO sobre una copia y recien despues aplica y guarda
+// (contrato 3.3: si algo no valida, no se aplica nada).
+void aplicarSetConfig(uint8_t ref, const uint8_t* entradas, size_t tam) {
+  uint16_t nuevoIntervalo = intervaloS;
+  uint16_t nuevoCero[N_TANQUES], nuevoLleno[N_TANQUES];
+  for (uint8_t t = 0; t < N_TANQUES; t++) { nuevoCero[t] = ceroMm[t]; nuevoLleno[t] = llenoMm[t]; }
+
+  for (size_t i = 0; i < tam; i += 3) {
+    uint8_t  id = entradas[i];
+    uint16_t v  = ((uint16_t)entradas[i + 1] << 8) | entradas[i + 2];
+    uint8_t  t  = (id & 0x0F) - 1;
+    if (id == PAR_INTERVALO) {
+      if (v < INTERVALO_MIN_S || v > INTERVALO_MAX_S) {
+        encolarReporte(ref, RES_FUERA_DE_RANGO);
+        Serial.println(F(">>> set_config RECHAZADO: intervalo_s fuera de 60..43200 <<<"));
+        return;
+      }
+      nuevoIntervalo = v;
+    } else if ((id & 0xF0) == PAR_CERO || (id & 0xF0) == PAR_LLENO) {
+      if ((id & 0x0F) < 1 || (id & 0x0F) > N_TANQUES) {
+        encolarReporte(ref, RES_COMANDO_DESCONOCIDO);
+        Serial.println(F(">>> set_config RECHAZADO: tanque inexistente <<<"));
+        return;
+      }
+      if (v < DIST_MIN_MM || v > DIST_MAX_MM) {
+        encolarReporte(ref, RES_FUERA_DE_RANGO);
+        Serial.println(F(">>> set_config RECHAZADO: cero o lleno fuera de 25..600 cm <<<"));
+        return;
+      }
+      if ((id & 0xF0) == PAR_CERO) nuevoCero[t] = v; else nuevoLleno[t] = v;
+    } else {
+      encolarReporte(ref, RES_COMANDO_DESCONOCIDO);
+      Serial.print(F(">>> set_config RECHAZADO: parametro desconocido 0x"));
+      Serial.print(id, HEX);
+      Serial.println(F(" <<<"));
+      return;
+    }
+  }
+
+  // Con los dos definidos, el cero (vacio) tiene que quedar mas lejos que el lleno.
+  for (uint8_t t = 0; t < N_TANQUES; t++) {
+    if (nuevoCero[t] != SIN_CALIBRAR && nuevoLleno[t] != SIN_CALIBRAR &&
+        (long)nuevoCero[t] < (long)nuevoLleno[t] + SPAN_MIN_MM) {
+      encolarReporte(ref, RES_CALIBRACION_INVALIDA);
+      Serial.print(F(">>> set_config RECHAZADO: en el tanque "));
+      Serial.print(t + 1);
+      Serial.println(F(" el cero tiene que estar al menos 10 cm mas lejos que el lleno <<<"));
+      return;
+    }
+  }
+
+  // Todo valido: aplicar y guardar en flash solo lo que cambio.
+  bool cambiaIntervalo = (nuevoIntervalo != intervaloS);
+  intervaloS = nuevoIntervalo;
+  if (almacen.getUInt(NVS_INTERVALO, 0) != intervaloS) almacen.putUInt(NVS_INTERVALO, intervaloS);
+  for (uint8_t t = 0; t < N_TANQUES; t++) {
+    ceroMm[t]  = nuevoCero[t];
+    llenoMm[t] = nuevoLleno[t];
+    if (ceroMm[t] != SIN_CALIBRAR && almacen.getUShort(NVS_CERO[t], SIN_CALIBRAR) != ceroMm[t]) {
+      almacen.putUShort(NVS_CERO[t], ceroMm[t]);
+    }
+    if (llenoMm[t] != SIN_CALIBRAR && almacen.getUShort(NVS_LLENO[t], SIN_CALIBRAR) != llenoMm[t]) {
+      almacen.putUShort(NVS_LLENO[t], llenoMm[t]);
+    }
+  }
+  encolarReporte(ref, RES_APLICADO);
+
+  Serial.print(F(">>> set_config ref="));
+  Serial.print(ref);
+  Serial.print(F(" aplicado: intervalo_s="));
+  Serial.print(intervaloS);
+  for (uint8_t t = 0; t < N_TANQUES; t++) {
+    Serial.print(F(", tanque "));
+    Serial.print(t + 1);
+    if (ceroMm[t] == SIN_CALIBRAR || llenoMm[t] == SIN_CALIBRAR) {
+      Serial.print(F(" sin calibrar"));
+    } else {
+      Serial.print(F(" cero "));
+      Serial.print(ceroMm[t] / 10.0, 1);
+      Serial.print(F(" cm / lleno "));
+      Serial.print(llenoMm[t] / 10.0, 1);
+      Serial.print(F(" cm"));
+    }
+  }
+  Serial.println(F(" <<<"));
+  if (cambiaIntervalo) reiniciarCiclo();
+}
+
+void ponerU16(uint8_t* b, uint16_t v) {
+  b[0] = (v >> 8) & 0xFF;
+  b[1] = v & 0xFF;
+}
+
+// El reporte lleva la config vigente en el momento en que se atendio el comando.
 // Con la cola llena, el reporte nuevo se pierde (el comando se aplica igual) y AURA ve ese
 // comando como pendiente. No se descarta el primero porque puede estar enviandose.
 void encolarReporte(uint8_t ref, uint8_t resultado) {
@@ -592,9 +727,16 @@ void encolarReporte(uint8_t ref, uint8_t resultado) {
     reporteIntentos       = 0;
     reporteProximoIntento = millis();
   }
-  reportes[nReportes].ref        = ref;
-  reportes[nReportes].resultado  = resultado;
-  reportes[nReportes].intervaloS = intervaloS;
+  Reporte& r = reportes[nReportes];
+  r.ref       = ref;
+  r.resultado = resultado;
+  r.bytes[0]  = ref;
+  r.bytes[1]  = resultado;
+  ponerU16(&r.bytes[2], intervaloS);
+  for (uint8_t t = 0; t < N_TANQUES; t++) {
+    ponerU16(&r.bytes[4 + 2 * t], ceroMm[t]);
+    ponerU16(&r.bytes[4 + 2 * N_TANQUES + 2 * t], llenoMm[t]);
+  }
   nReportes++;
 }
 
@@ -623,16 +765,21 @@ void unirse() {
   // Unico dato de LoRaWAN que se guarda en flash: el DevNonce, una vez por join.
   almacen.putBytes(NVS_NONCES, node.getBufferNonces(), RADIOLIB_LORAWAN_NONCES_BUF_SIZE);
 
-  if (estado == RADIOLIB_LORAWAN_NEW_SESSION || estado == RADIOLIB_LORAWAN_SESSION_RESTORED) {
+  if (estado == RADIOLIB_LORAWAN_NEW_SESSION || estado == RADIOLIB_LORAWAN_SESSION_RESTORED ||
+      estado == RADIOLIB_ERR_NONE) {
     Serial.println(F("OK - join nuevo"));
     necesitaUnirse = false;
     fallosUnion    = 0;
+    fallosSeguidos = 0;
     fijarDatarate();
     return;
   }
 
+  // Espera creciente (30 s, 1, 2, 4 min, despues 5 min), con hasta un 20 % de azar para que
+  // los nodos que arrancan juntos (despues de un corte de luz) no reintenten sincronizados.
   unsigned long espera = ESPERA_UNION_BASE_MS << (fallosUnion < 4 ? fallosUnion : 4);
   if (espera > ESPERA_UNION_MAX_MS) espera = ESPERA_UNION_MAX_MS;
+  espera += random(espera / 5);
   if (fallosUnion < 255) fallosUnion++;
   proximoUnion = millis() + espera;
 
@@ -644,6 +791,19 @@ void unirse() {
   Serial.print(F("Se reintenta en "));
   Serial.print(espera / 1000UL);
   Serial.println(F(" s; mientras tanto se sigue midiendo."));
+}
+
+// La red dejo de confirmar: descarta la sesion y hace un join nuevo. clearSession() no toca
+// los DevNonce, asi que el join siguiente usa uno nuevo y ChirpStack lo acepta.
+void forzarJoin() {
+  Serial.print(F("[RED] "));
+  Serial.print(fallosSeguidos);
+  Serial.println(F(" uplinks seguidos sin ACK: se descarta la sesion y se hace un join nuevo"));
+  node.clearSession();
+  necesitaUnirse = true;
+  proximoUnion   = millis();
+  fallosUnion    = 0;
+  fallosSeguidos = 0;
 }
 
 void fijarDatarate() {
@@ -673,15 +833,31 @@ void restaurarNonces() {
   node.setBufferNonces(buffer);
 }
 
-void cargarIntervalo() {
-  if (!almacen.isKey(NVS_INTERVALO)) return;
-
-  uint32_t s = almacen.getUInt(NVS_INTERVALO, INTERVALO_MIN_S);
-  if (s >= INTERVALO_MIN_S && s <= INTERVALO_MAX_S) {   // un valor fuera de rango se ignora
-    intervaloS = (uint16_t)s;
-    Serial.print(F("intervalo_s recuperado de NVS: "));
-    Serial.println(intervaloS);
+// intervalo_s y la calibracion guardados. Un valor fuera de rango (de una version anterior o
+// corrupto) se ignora y queda el valor por defecto.
+void cargarConfig() {
+  if (almacen.isKey(NVS_INTERVALO)) {
+    uint32_t s = almacen.getUInt(NVS_INTERVALO, INTERVALO_MIN_S);
+    if (s >= INTERVALO_MIN_S && s <= INTERVALO_MAX_S) intervaloS = (uint16_t)s;
   }
+  for (uint8_t t = 0; t < N_TANQUES; t++) {
+    uint16_t c = almacen.getUShort(NVS_CERO[t], SIN_CALIBRAR);
+    uint16_t l = almacen.getUShort(NVS_LLENO[t], SIN_CALIBRAR);
+    if (c >= DIST_MIN_MM && c <= DIST_MAX_MM) ceroMm[t] = c;
+    if (l >= DIST_MIN_MM && l <= DIST_MAX_MM) llenoMm[t] = l;
+    if (ceroMm[t] != SIN_CALIBRAR && llenoMm[t] != SIN_CALIBRAR &&
+        (long)ceroMm[t] < (long)llenoMm[t] + SPAN_MIN_MM) {
+      ceroMm[t] = llenoMm[t] = SIN_CALIBRAR;   // par inconsistente: mejor sin calibrar
+    }
+  }
+  Serial.print(F("Config: intervalo_s="));
+  Serial.print(intervaloS);
+  for (uint8_t t = 0; t < N_TANQUES; t++) {
+    Serial.print(F(", tanque "));
+    Serial.print(t + 1);
+    Serial.print((ceroMm[t] != SIN_CALIBRAR && llenoMm[t] != SIN_CALIBRAR) ? F(" calibrado") : F(" sin calibrar"));
+  }
+  Serial.println();
 }
 
 // ===== UTILIDADES =====

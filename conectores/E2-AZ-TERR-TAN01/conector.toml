@@ -6,11 +6,15 @@ sdk     = ">=1,<2"
 autores = ["forzanijuan22", "AlejoRacca", "Agucesano"]   # usuarios de GitHub del grupo
 clase   = "conector:ConectorTanques"
 
-# Un campo por tanque: la distancia del sensor ultrasónico al agua, en cm con un decimal. Más
-# agua = menos distancia. El rango es el mismo que valida el firmware (DIST_MIN_MM y DIST_MAX_MM
-# de E2-AZ-TERR-TAN01.ino, 250 a 6000 mm): un valor fuera de acá no se guarda. 25 quiere decir
-# "25 cm o menos": el agua en la zona ciega del sensor, tanque lleno. Los nombres tienen que
-# coincidir con los que devuelve el codec (dispositivos/E2-AZ-TERR-TAN01/codec.js).
+# Por tanque, dos campos. Los nombres tienen que coincidir con los que devuelve el codec
+# (dispositivos/E2-AZ-TERR-TAN01/codec.js).
+#
+# distancia_tanqueN_cm: distancia del sensor ultrasónico al agua, en cm con un decimal. Más agua =
+# menos distancia. El rango es el que valida el firmware (250 a 6000 mm). 25 quiere decir
+# "25 cm o menos": el agua en la zona ciega del sensor, tanque lleno.
+#
+# nivel_tanqueN_pct: nivel de agua en %, con un decimal, calculado en el nodo con el cero y el
+# lleno del tanque (set_config). Solo llega si el tanque está calibrado.
 [campos.distancia_tanque1_cm]
 unidad = "cm"
 min = 25
@@ -25,3 +29,18 @@ max = 600
 unidad = "cm"
 min = 25
 max = 600
+
+[campos.nivel_tanque1_pct]
+unidad = "%"
+min = 0
+max = 100
+
+[campos.nivel_tanque2_pct]
+unidad = "%"
+min = 0
+max = 100
+
+[campos.nivel_tanque3_pct]
+unidad = "%"
+min = 0
+max = 100

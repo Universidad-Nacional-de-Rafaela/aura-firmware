@@ -12,137 +12,144 @@ sys.path.insert(0, str(CARPETA.parent.parent / "comun" / "python"))   # aura_sdk
 from aura_sdk import ContextoDePrueba, Mensaje, cargar_conector, procesar  # noqa: E402
 
 T0 = datetime(2026, 10, 9, 12, 0, tzinfo=timezone.utc)
-SIN_ECO = 65535   # 0xFFFF: lo que manda el firmware si el sensor no responde
+SIN_ECO = 65535   # 0xFFFF: un valor fuera de rango, como el que el firmware ya no manda
 
 
-def msg(values, minuto=0):
-    return Mensaje(hw_id="eui-0000000000000001", values=values, ts=T0 + timedelta(minutes=minuto),
-                   ingest_id=f"id-{minuto}")
+def msg(values, segundos=0):
+    return Mensaje(hw_id="eui-0000000000000001", values=values, ts=T0 + timedelta(seconds=segundos),
+                   ingest_id=f"id-{segundos}")
+
+
+def tanque(n, dist, nivel=None):
+    v = {f"distancia_tanque{n}_cm": dist}
+    if nivel is not None:
+        v[f"nivel_tanque{n}_pct"] = nivel
+    return v
 
 
 class ConectorTanques(unittest.TestCase):
     def setUp(self):
         self.manifiesto, self.conector = cargar_conector(CARPETA)
         self.ctx = ContextoDePrueba(self.manifiesto)
-        self.umbral = self.conector.umbral_cm(0)
-        self.hist = self.conector.HISTERESIS_CM
+        self.t = 0
 
     def alertas(self, tipo):
         return [a for a in self.ctx.alertas if a.tipo == tipo]
 
-    def test_guarda_los_tres_tanques(self):
-        valores = {"distancia_tanque1_cm": 150, "distancia_tanque2_cm": 200, "distancia_tanque3_cm": 300}
-        r = procesar(self.conector, self.ctx, msg(valores))
-        self.assertEqual(r.resultado, "persistido")
-        self.assertEqual(self.ctx.serie("distancia_tanque2_cm"), [(T0, 200)])
+    def enviar(self, values, paso=20):
+        """Un mensaje cada `paso` segundos, como los turnos del nodo con intervalo_s = 60."""
+        r = procesar(self.conector, self.ctx, msg(values, self.t))
+        self.t += paso
+        return r
 
-    def test_un_sensor_con_falla_no_se_guarda_pero_los_demas_si(self):
-        valores = {"distancia_tanque1_cm": 150, "distancia_tanque2_cm": SIN_ECO, "distancia_tanque3_cm": 300}
-        r = procesar(self.conector, self.ctx, msg(valores))
-        self.assertEqual(r.resultado, "persistido")
-        self.assertEqual(r.quitados, ["distancia_tanque2_cm"])
-        self.assertEqual(self.ctx.serie("distancia_tanque2_cm"), [])
-        self.assertEqual(len(self.ctx.serie("distancia_tanque1_cm")), 1)
+    def ciclos(self, n, d1=150, d2=200, d3=300, niveles=(None, None, None), sin=()):
+        """n ciclos normales: un mensaje por tanque, salvo los tanques de `sin`."""
+        for _ in range(n):
+            for numero, d in ((1, d1), (2, d2), (3, d3)):
+                if numero in sin:
+                    self.t += 20
+                    continue
+                self.enviar(tanque(numero, d, niveles[numero - 1]))
 
-    def test_todos_con_falla_se_descarta(self):
-        valores = {f"distancia_tanque{i}_cm": SIN_ECO for i in (1, 2, 3)}
-        r = procesar(self.conector, self.ctx, msg(valores))
-        self.assertEqual((r.resultado, r.motivo), ("descartado", "sin_campos_validos"))
+    # --- guardar ---
+
+    def test_un_turno_guarda_su_tanque(self):
+        r = self.enviar(tanque(2, 244.5))
+        self.assertEqual(r.resultado, "persistido")
+        self.assertEqual(self.ctx.serie("distancia_tanque2_cm"), [(T0, 244.5)])
+
+    def test_medir_ahora_guarda_los_tres_con_nivel(self):
+        valores = {**tanque(1, 150, 50.0), **tanque(2, 200, 30.5), **tanque(3, 25, 100.0)}
+        r = self.enviar(valores)
+        self.assertEqual(r.resultado, "persistido")
+        self.assertEqual(self.ctx.serie("nivel_tanque2_pct"), [(T0, 30.5)])
 
     def test_fuera_de_rango_no_se_guarda(self):
-        for minuto, valor in enumerate((24.9, 600.1)):
-            r = procesar(self.conector, self.ctx, msg({"distancia_tanque1_cm": valor}, minuto))
-            self.assertEqual((r.resultado, r.motivo), ("descartado", "sin_campos_validos"))
+        for valores in (tanque(1, 24.9), tanque(1, 600.1), tanque(1, SIN_ECO), tanque(1, 100, 100.1)):
+            r = self.enviar(valores)
+            if "nivel_tanque1_pct" in valores:
+                self.assertEqual(r.quitados, ["nivel_tanque1_pct"])
+            else:
+                self.assertEqual((r.resultado, r.motivo), ("descartado", "sin_campos_validos"))
 
     def test_los_limites_del_rango_si_se_guardan(self):
-        for minuto, valor in enumerate((25, 600)):
-            r = procesar(self.conector, self.ctx, msg({"distancia_tanque1_cm": valor}, minuto))
-            self.assertEqual(r.resultado, "persistido")
+        for valores in (tanque(1, 25, 0), tanque(1, 600, 100)):
+            self.assertEqual(self.enviar(valores).resultado, "persistido")
 
     def test_un_campo_que_no_esta_en_el_manifiesto_no_se_guarda(self):
-        r = procesar(self.conector, self.ctx, msg({"contador": 7}))
+        r = self.enviar({"distancia_tanque1_mm": 1500})
         self.assertEqual((r.resultado, r.motivo), ("descartado", "sin_campos_validos"))
 
-    def test_umbral_de_prueba_es_el_20_por_ciento(self):
-        # 163 cm de altura (valor de prueba) y 20 % de agua: 163 - 32.6 = 130.4 cm.
-        self.assertEqual(self.conector.ALTURA_CM, (163, 163, 163))
-        self.assertEqual(self.umbral, 130.4)
+    # --- tanque_bajo, con el nivel ---
 
     def test_alerta_una_vez_por_cruce(self):
-        alto = self.umbral + 20
-        bajo = self.umbral - 20
-        for minuto, valor in enumerate([bajo, alto, alto + 10, alto, bajo, bajo]):
-            procesar(self.conector, self.ctx, msg({"distancia_tanque1_cm": valor}, minuto))
-        self.assertEqual([(a.tipo, a.severidad) for a in self.alertas("tanque_bajo")],
-                         [("tanque_bajo", "warning"), ("tanque_bajo", "info")])
+        for nivel in (50, 15, 12, 10, 40, 60):
+            self.enviar(tanque(1, 100, nivel))
+        self.assertEqual([a.severidad for a in self.alertas("tanque_bajo")], ["warning", "info"])
+        self.assertIn("Tanque 1", self.alertas("tanque_bajo")[0].mensaje)
 
     def test_histeresis_no_repite_avisos_con_el_nivel_en_el_borde(self):
-        u = self.umbral
-        # Entra en bajo y oscila +-1 cm alrededor del umbral: un solo aviso.
-        for minuto, valor in enumerate([u - 20, u + 1, u - 1, u + 1, u - 1, u - 3]):
-            procesar(self.conector, self.ctx, msg({"distancia_tanque1_cm": valor}, minuto))
+        for nivel in (50, 19, 21, 19.5, 22, 20, 24.9):
+            self.enviar(tanque(1, 100, nivel))
         self.assertEqual([a.severidad for a in self.alertas("tanque_bajo")], ["warning"])
-        # Sale recién cuando el agua sube más que la histéresis por encima del umbral.
-        procesar(self.conector, self.ctx, msg({"distancia_tanque1_cm": u - self.hist}, 10))
+        self.enviar(tanque(1, 100, 25))   # mínimo + histéresis
         self.assertEqual([a.severidad for a in self.alertas("tanque_bajo")], ["warning", "info"])
 
     def test_cada_tanque_alerta_por_separado(self):
-        alto = self.umbral + 20
-        procesar(self.conector, self.ctx, msg({"distancia_tanque1_cm": alto, "distancia_tanque3_cm": 50}))
-        self.assertEqual(len(self.alertas("tanque_bajo")), 1)
-        self.assertIn("Tanque 1", self.alertas("tanque_bajo")[0].mensaje)
-
-    def test_un_tanque_bajo_desde_la_primera_medicion_alerta(self):
-        procesar(self.conector, self.ctx, msg({"distancia_tanque2_cm": self.umbral + 1}))
-        self.assertEqual([a.severidad for a in self.alertas("tanque_bajo")], ["warning"])
-        self.assertIn("Tanque 2", self.alertas("tanque_bajo")[0].mensaje)
-
-    def test_tanques_de_distinta_altura_tienen_su_propio_umbral(self):
-        self.conector.ALTURA_CM = (163, 200, 250)
-        self.assertEqual([self.conector.umbral_cm(i) for i in range(3)], [130.4, 160.0, 200.0])
-        # 150 cm: bajo para el tanque 1, normal para el 2 y el 3.
-        procesar(self.conector, self.ctx, msg({f"distancia_tanque{i}_cm": 150 for i in (1, 2, 3)}))
+        self.enviar({**tanque(1, 100, 10), **tanque(2, 100, 80), **tanque(3, 100, 50)})
         self.assertEqual([a.mensaje[:9] for a in self.alertas("tanque_bajo")], ["Tanque 1:"])
 
-    # --- alerta `sensor`: el codec no manda el campo de un sensor que falla ---
+    def test_sin_calibrar_no_hay_tanque_bajo(self):
+        for d in (100, 300, 590):
+            self.enviar(tanque(1, d))
+        self.assertEqual(self.alertas("tanque_bajo"), [])
 
-    def test_un_sensor_que_deja_de_medir_alerta_una_vez_y_avisa_cuando_vuelve(self):
-        ok = {"distancia_tanque1_cm": 150, "distancia_tanque2_cm": 200, "distancia_tanque3_cm": 300}
-        sin_2 = {"distancia_tanque1_cm": 150, "distancia_tanque3_cm": 300}
-        for minuto, valores in enumerate([ok, sin_2, sin_2, ok]):
-            procesar(self.conector, self.ctx, msg(valores, minuto))
-        self.assertEqual([(a.severidad, "Tanque 2" in a.mensaje) for a in self.alertas("sensor")],
-                         [("warning", True), ("info", True)])
-
-    def test_un_sensor_caido_desde_el_primer_mensaje_alerta_una_sola_vez(self):
-        sin_2 = {"distancia_tanque1_cm": 150, "distancia_tanque3_cm": 300}
-        for minuto in range(3):
-            procesar(self.conector, self.ctx, msg(sin_2, minuto))
-        self.assertEqual([a.severidad for a in self.alertas("sensor")], ["warning"])
-
-    def test_sin_fallas_no_hay_alerta_de_sensor(self):
-        ok = {"distancia_tanque1_cm": 150, "distancia_tanque2_cm": 200, "distancia_tanque3_cm": 300}
-        for minuto in range(3):
-            procesar(self.conector, self.ctx, msg(ok, minuto))
-        self.assertEqual(self.alertas("sensor"), [])
-
-    def test_si_fallan_los_tres_no_hay_alerta_de_sensor(self):
-        ok = {"distancia_tanque1_cm": 150, "distancia_tanque2_cm": 200, "distancia_tanque3_cm": 300}
-        procesar(self.conector, self.ctx, msg(ok, 0))
-        procesar(self.conector, self.ctx, msg({}, 1))
-        self.assertEqual(self.alertas("sensor"), [])
-
-    # --- tanque lleno: el agua en la zona ciega llega como 25 cm (el tope del rango) ---
-
-    def test_tanque_lleno_no_es_falla_de_sensor_ni_tanque_bajo(self):
-        normal = {"distancia_tanque1_cm": 90, "distancia_tanque2_cm": 90, "distancia_tanque3_cm": 90}
-        llenos = {"distancia_tanque1_cm": 25, "distancia_tanque2_cm": 25, "distancia_tanque3_cm": 25}
-        for minuto, valores in enumerate([normal, llenos, llenos, normal]):
-            r = procesar(self.conector, self.ctx, msg(valores, minuto))
-            self.assertEqual(r.resultado, "persistido")
+    def test_tanque_lleno_no_es_falla_ni_tanque_bajo(self):
+        self.ciclos(4, d1=25, d2=25, d3=25, niveles=(100, 100, 100))
         self.assertEqual(self.alertas("sensor"), [])
         self.assertEqual(self.alertas("tanque_bajo"), [])
-        self.assertEqual(self.ctx.serie("distancia_tanque1_cm")[1], (T0 + timedelta(minutes=1), 25))
+
+    # --- sensor: un tanque deja de llegar mientras los otros siguen ---
+
+    def test_ciclos_normales_no_alertan(self):
+        self.ciclos(10)
+        self.assertEqual(self.alertas("sensor"), [])
+
+    def test_un_sensor_que_deja_de_medir_alerta_una_vez_y_avisa_cuando_vuelve(self):
+        self.ciclos(2)
+        self.ciclos(6, sin=(2,))
+        alertas = [(a.severidad, a.mensaje[:9]) for a in self.alertas("sensor")]
+        self.assertEqual(alertas, [("warning", "Tanque 2:")])
+        self.ciclos(2)
+        alertas = [(a.severidad, a.mensaje[:9]) for a in self.alertas("sensor")]
+        self.assertEqual(alertas, [("warning", "Tanque 2:"), ("info", "Tanque 2:")])
+
+    def test_una_medicion_perdida_no_alerta(self):
+        self.ciclos(2)
+        self.ciclos(1, sin=(3,))
+        self.ciclos(3)
+        self.assertEqual(self.alertas("sensor"), [])
+
+    def test_un_sensor_que_nunca_midio_alerta_una_sola_vez(self):
+        self.ciclos(8, sin=(3,))
+        self.assertEqual([a.severidad for a in self.alertas("sensor")], ["warning"])
+
+    def test_no_depende_del_intervalo(self):
+        # Con intervalo_s = 12 h los turnos quedan a 4 h: los avisos tienen que ser los mismos.
+        paso = 4 * 3600
+        for _ in range(2):
+            for n in (1, 2, 3):
+                self.enviar(tanque(n, 100), paso)
+        for _ in range(6):
+            for n in (1, 3):
+                self.enviar(tanque(n, 100), paso)
+            self.t += paso
+        self.assertEqual([a.severidad for a in self.alertas("sensor")], ["warning"])
+
+    def test_si_fallan_los_tres_no_hay_alerta_de_sensor(self):
+        self.ciclos(2)
+        self.enviar({})   # AURA lo descarta antes de llegar al conector de verdad
+        self.assertEqual(self.alertas("sensor"), [])
 
 
 if __name__ == "__main__":
