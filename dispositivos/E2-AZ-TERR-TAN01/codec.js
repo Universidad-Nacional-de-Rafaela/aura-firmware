@@ -7,13 +7,14 @@
 //
 // SUBIDA
 // fPort 1, 6 bytes, medicion (big endian):
-//   0-1 distancia del sensor al agua, tanque 1, en mm (uint16)
+//   0-1 distancia del sensor al agua, tanque 1, en cm x 10 (= mm) (uint16)
 //   2-3 lo mismo para el tanque 2
 //   4-5 lo mismo para el tanque 3
+//   values la trae en cm con un decimal: distancia_tanqueN_cm (2462 -> 246.2).
 //   0xFFFE = el agua esta dentro de la zona ciega del sensor (tanque lleno). No es una falla:
-//   se informa 250 mm, el nivel maximo que el sensor puede medir (saturacion del rango, como
-//   un transmisor 4-20 mA en su tope). Quiere decir "250 mm o menos".
-//   0xFFFF sin eco, 0xFFFD demasiado lejos, o cualquier otro valor fuera de 250..6000 mm: es una
+//   se informa 25 cm, el nivel maximo que el sensor puede medir (saturacion del rango, como
+//   un transmisor 4-20 mA en su tope). Quiere decir "25 cm o menos".
+//   0xFFFF sin eco, 0xFFFD demasiado lejos, o cualquier otro valor fuera de 25..600 cm: es una
 //   falla y el campo del tanque no aparece en values (§3.1).
 //   Los nombres de los campos son los de conector.toml.
 // fPort 2, 4 bytes, reporte de un comando:
@@ -25,21 +26,24 @@
 //   medir_ahora                            -> 01 ref
 //   set_config {"intervalo_s": 60..43200}  -> 02 ref intervalo_hi intervalo_lo
 // El nodo contesta cada comando con un reporte en el fPort 2. Despues de medir_ahora mide los
-// tres tanques y manda ademas la medicion en el fPort 1. El nodo redondea intervalo_s hacia
-// arriba a un multiplo de 60; el reporte trae el valor que quedo vigente.
+// tres tanques y manda ademas la medicion en el fPort 1. intervalo_s es cada cuanto mide los
+// tres tanques y envia: el nodo reparte los turnos cada intervalo_s / 3.
 
 var N_TANQUES = 3;
-var DIST_MIN_MM = 250;            // iguales a conector.toml y al sketch
-var DIST_MAX_MM = 6000;
+var DIST_MIN_MM = 250;            // en los bytes (mm = cm x 10); iguales al sketch
+var DIST_MAX_MM = 6000;           // en values: 25 a 600 cm, como conector.toml
 var INTERVALO_MIN_S = 60;
 var INTERVALO_MAX_S = 43200;      // 12 h; el uplink interval del device profile tiene que ser este maximo
-var CICLO_S = 60;
 var MOTIVOS = { 1: "fuera_de_rango", 2: "comando_desconocido" };
 var ZONA_CIEGA = 0xFFFE;          // el firmware lo manda cuando el agua esta mas cerca que 250 mm
 var FALLAS = { 0xFFFF: "sin eco", 0xFFFD: "demasiado lejos" };
 
 function u16(bytes, i) {
   return (bytes[i] << 8) | bytes[i + 1];
+}
+
+function cm(mm) {
+  return mm / 10;                 // 2462 -> 246.2: un decimal exacto, sin redondeo
 }
 
 function decodeUplink(input) {
@@ -62,12 +66,12 @@ function decodeUplink(input) {
   for (var n = 1; n <= N_TANQUES; n++) {
     var dist = u16(b, 2 * (n - 1));
     if (dist >= DIST_MIN_MM && dist <= DIST_MAX_MM) {
-      values["distancia_tanque" + n + "_mm"] = dist;
+      values["distancia_tanque" + n + "_cm"] = cm(dist);
     } else if (dist === ZONA_CIEGA) {
-      values["distancia_tanque" + n + "_mm"] = DIST_MIN_MM;
-      warnings.push("tanque " + n + ": agua en la zona ciega (lleno), se informa " + DIST_MIN_MM + " mm");
+      values["distancia_tanque" + n + "_cm"] = cm(DIST_MIN_MM);
+      warnings.push("tanque " + n + ": agua en la zona ciega (lleno), se informa " + cm(DIST_MIN_MM) + " cm");
     } else {
-      warnings.push("tanque " + n + ": " + (FALLAS[dist] || "fuera de rango (" + dist + " mm)"));
+      warnings.push("tanque " + n + ": " + (FALLAS[dist] || "fuera de rango (" + cm(dist) + " cm)"));
     }
   }
   // Si ningun tanque dio una medicion valida, no se publica data (§3.1).
@@ -98,11 +102,7 @@ function encodeDownlink(input) {
     if (typeof s !== "number" || s % 1 !== 0 || s < INTERVALO_MIN_S || s > INTERVALO_MAX_S) {
       return { errors: ["set_config: intervalo_s tiene que ser un entero entre " + INTERVALO_MIN_S + " y " + INTERVALO_MAX_S] };
     }
-    var res = { bytes: [0x02, ref, (s >> 8) & 0xff, s & 0xff] };
-    if (s % CICLO_S !== 0) {
-      res.warnings = ["el nodo redondea intervalo_s a " + Math.ceil(s / CICLO_S) * CICLO_S + " s (multiplo de " + CICLO_S + ")"];
-    }
-    return res;
+    return { bytes: [0x02, ref, (s >> 8) & 0xff, s & 0xff] };
   }
   return { errors: ["comando desconocido: " + d.command] };
 }

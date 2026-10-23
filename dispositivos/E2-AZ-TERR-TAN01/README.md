@@ -37,14 +37,14 @@ mide ninguno, no se publica `data`.
 
 | Campo | Unidad | Rango válido | Cada cuánto |
 |---|---|---|---|
-| `distancia_tanque1_mm` | mm | 250 a 6000 | 60 s, configurable; y al pedir `medir_ahora` |
-| `distancia_tanque2_mm` | mm | 250 a 6000 | ídem |
-| `distancia_tanque3_mm` | mm | 250 a 6000 | ídem |
+| `distancia_tanque1_cm` | cm, con un decimal | 25 a 600 | cada `intervalo_s` (60 s por defecto); y al pedir `medir_ahora` |
+| `distancia_tanque2_cm` | cm, con un decimal | 25 a 600 | ídem |
+| `distancia_tanque3_cm` | cm, con un decimal | 25 a 600 | ídem |
 
-Los tres tanques se miden en turnos de 20 s: el 1 en el segundo 0, el 2 en el 20 y el 3 en el 40
-de cada minuto (el segundo 0 es el arranque de la placa). La medición periódica sale después de
-medir el tanque 3, con la última medición de cada tanque, que vive solo en RAM. Ningún comando
-mueve los turnos: la red y `medir_ahora` usan los huecos entre turnos.
+Cada `intervalo_s` se miden los tres tanques, en turnos repartidos cada `intervalo_s / 3`: con
+60 s, el 1 en el segundo 0, el 2 en el 20 y el 3 en el 40 (el segundo 0 es el arranque de la
+placa); con 300 s, cada 100 s. La medición sale después del tanque 3, con la última medición de
+cada tanque, que vive solo en RAM. La red y `medir_ahora` usan los huecos entre turnos.
 
 La distancia de cada tanque es la mediana de 5 lecturas. Si el sensor no responde o mide más
 lejos que el rango, el firmware manda un valor especial (`0xFFFF` sin eco, `0xFFFD` demasiado
@@ -52,14 +52,14 @@ lejos). Eso **es una falla**: el codec no pone el campo en `values` y el conecto
 
 **Tanque lleno.** El sensor va en la tapa y el AJ-SR04M no mide a menos de unos 25 cm (zona
 ciega). Con el tanque lleno el agua puede quedar dentro de esa zona: el firmware manda `0xFFFE` y
-el codec lo informa como **250 mm**, el nivel máximo que el sensor puede medir. No es una falla
-sino la saturación del rango, como un transmisor 4-20 mA en su tope: `250` quiere decir "250 mm
+el codec lo informa como **25 cm**, el nivel máximo que el sensor puede medir. No es una falla
+sino la saturación del rango, como un transmisor 4-20 mA en su tope: `25` quiere decir "25 cm
 o menos". No dispara la alerta `sensor` ni `tanque_bajo`.
 
 Alertas (contrato §3.5). El nodo LoRaWAN no publica alertas propias: las genera el conector.
 - `sensor`: cuando falta el campo de un tanque en un mensaje que sí trae otro, e `info` cuando vuelve.
 - `tanque_bajo`: `warning` cuando a un tanque le queda menos del 20 % de agua e `info` cuando se
-  recupera (con 50 mm de margen). La bomba la maneja un control externo: el aviso sirve para
+  recupera (con 5 cm de margen). La bomba la maneja un control externo: el aviso sirve para
   saber que no llenó a tiempo.
 
 ## Comandos
@@ -71,11 +71,11 @@ cada uno con un reporte en el fPort 2 que lleva el `ref` del comando, el resulta
 | Comando | Bytes | Qué hace |
 |---|---|---|
 | `medir_ahora` | `01 ref` | mide los tres tanques en el próximo hueco entre turnos (sin mover el ciclo) y manda la medición enseguida del reporte |
-| `set_config {"intervalo_s": 60..43200}` | `02 ref hi lo` | cambia cada cuánto sale la medición periódica |
+| `set_config {"intervalo_s": 60..43200}` | `02 ref hi lo` | cambia cada cuánto se miden los tres tanques y se envía; los turnos se recalculan solos (`intervalo_s / 3`) y el ciclo arranca de nuevo por el tanque 1 |
 
 | Parámetro de `set_config` | Rango | Valor en esta placa |
 |---|---|---|
-| `intervalo_s` | 60 a 43200; se redondea hacia arriba a un múltiplo de 60 y el reporte informa el que quedó | 60 (se guarda en memoria no volátil) |
+| `intervalo_s` | 60 a 43200 s, entero | 60 (se guarda en memoria no volátil) |
 
 Un valor fuera de rango no cambia nada y se contesta con `fuera_de_rango`. Un comando que el
 nodo no conoce, o mal armado, se contesta con `comando_desconocido`.
@@ -93,7 +93,7 @@ profile nuevo (contrato §7). Los tests están en [`tests/`](tests/) (`make -C t
 
 | fPort | Bytes | Qué es |
 |---|---|---|
-| 1 | 6 | Medición: distancia de cada tanque en mm, uint16 big endian. `0xFFFE` (zona ciega, tanque lleno) se informa como 250. `0xFFFF`, `0xFFFD` o fuera de 250..6000: el campo no aparece en `values` |
+| 1 | 6 | Medición: distancia de cada tanque en cm × 10 (= mm), uint16 big endian; `values` la trae en cm con un decimal. `0xFFFE` (zona ciega, tanque lleno) se informa como 25 cm. `0xFFFF`, `0xFFFD` o fuera de 25..600 cm: el campo no aparece en `values` |
 | 2 | 4 | Reporte de un comando: `ref`, resultado (0 aplicado, 1 fuera de rango, 2 comando desconocido), intervalo vigente en s (uint16) |
 
 ### Device profile
@@ -118,5 +118,5 @@ profile nuevo (contrato §7). Los tests están en [`tests/`](tests/) (`make -C t
 ## Notas
 
 - Pendiente: probar en la placa y en ChirpStack.
-- Pendiente: `ALTURA_MM` del conector tiene valores de prueba (1630 mm por tanque), hasta medir la
+- Pendiente: `ALTURA_CM` del conector tiene valores de prueba (163 cm por tanque), hasta medir la
   distancia del sensor al fondo de cada tanque.

@@ -7,10 +7,12 @@
  * medicion en el fPort 1, reporte de comandos en el fPort 2 y comandos con "ref" en el fPort 10.
  * El par de este sketch es codec.js, en esta carpeta: si cambia el formato de uno, cambia el otro.
  *
- * --- CICLO DE MEDICION (fijo: ningun comando lo mueve) ---
- * Un tanque cada 20 s: tanque 1 en el segundo 0, tanque 2 en el 20 y tanque 3 en el 40 de
- * cada minuto (el segundo 0 es el arranque de la placa). La red (join, uplinks, reintentos)
- * y las mediciones pedidas con medir_ahora solo usan los huecos entre turnos.
+ * --- CICLO DE MEDICION (intervalo_s, configurable con set_config) ---
+ * Cada intervalo_s se miden los 3 tanques, repartidos en turnos iguales de intervalo_s / 3:
+ * con 60 s (por defecto), el tanque 1 en el segundo 0, el 2 en el 20 y el 3 en el 40; con
+ * 300 s, cada 100 s. Despues del tanque 3 sale la medicion por LoRaWAN. Si set_config cambia
+ * intervalo_s, los turnos se recalculan solos y el ciclo arranca de nuevo por el tanque 1.
+ * La red (join, uplinks, reintentos) y medir_ahora solo usan los huecos entre turnos.
  *
  * --- MEMORIA ---
  * Las mediciones viven solo en RAM: cada tanque guarda su ultima medicion hasta que la proxima
@@ -21,13 +23,14 @@
  *
  * --- SUBIDA (uplinks confirmados) ---
  * fPort 1, medicion, 6 bytes, big-endian:
- *   [0..1] distancia tanque 1 en mm   [2..3] tanque 2   [4..5] tanque 3
+ *   [0..1] distancia tanque 1 en mm (= cm x 10)   [2..3] tanque 2   [4..5] tanque 3
+ *   El codec la pasa a cm con un decimal (2462 -> 246.2 cm).
  *   Sin medicion valida: 0xFFFF sin eco, 0xFFFD demasiado lejos (el codec no los pone en
  *   values, contrato 3.1). 0xFFFE = demasiado cerca: el agua esta dentro de la zona ciega del
- *   sensor, o sea el tanque esta lleno. No es una falla: el codec lo informa como 250 mm, el
+ *   sensor, o sea el tanque esta lleno. No es una falla: el codec lo informa como 25 cm, el
  *   nivel maximo que el sensor puede medir (saturacion del rango).
- *   Sale despues de medir el tanque 3, cada intervalo_s, con la ultima medicion de cada
- *   tanque guardada en RAM; y ademas despues de un medir_ahora, con una medicion nueva.
+ *   Sale al terminar cada ciclo (despues del tanque 3), con la ultima medicion de cada
+ *   tanque; y ademas despues de un medir_ahora, con una medicion nueva de los tres.
  * fPort 2, reporte de un comando (contrato 3.4), 4 bytes:
  *   [0] ref del comando   [1] resultado: 0 aplicado, 1 fuera de rango, 2 comando desconocido
  *   [2..3] intervalo_s vigente
@@ -35,9 +38,8 @@
  * --- BAJADA (fPort 10; el lorawan-bridge pone el ref) ---
  *   01 ref         medir_ahora: mide los 3 tanques en el proximo hueco entre turnos, sin
  *                  mover el ciclo, y manda la medicion por el fPort 1.
- *   02 ref hi lo   set_config intervalo_s (60 a 43200). Se redondea hacia arriba a un
- *                  multiplo de 60 s, porque la medicion periodica sale despues del tanque 3;
- *                  el reporte informa el valor que quedo vigente.
+ *   02 ref hi lo   set_config intervalo_s (60 a 43200): cada cuanto se miden los 3 tanques
+ *                  y se envia. Los turnos pasan a intervalo_s / 3 y el ciclo arranca de nuevo.
  *   Cada comando se contesta con un reporte en el fPort 2. Un comando desconocido o mal
  *   armado se contesta con resultado 2 y no cambia nada.
  *   Clase A: el nodo recibe el comando en la ventana que sigue a su proximo uplink (hasta
@@ -103,8 +105,7 @@ const uint16_t DEMASIADO_CERCA = 0xFFFE;
 const uint16_t DEMASIADO_LEJOS = 0xFFFD;
 
 // ===== CICLO DE MEDICION =====
-const unsigned long PASO_MEDICION_MS = 20000UL;                       // un tanque cada 20 s
-const unsigned long CICLO_MS         = PASO_MEDICION_MS * N_TANQUES;  // 60 s
+const unsigned long ARRANQUE_CICLO_MS = 1000UL;   // primer turno, despues de arrancar o de un set_config
 // Lo que puede tardar medir los 3 tanques (5 muestras de hasta ~100 ms cada una), con margen.
 const unsigned long DURACION_MEDIR_TODOS_MS = 3000UL;
 
@@ -116,6 +117,7 @@ struct Medicion {
 };
 Medicion ultima[N_TANQUES];
 
+unsigned long inicioCiclo     = 0;      // millis() del turno del tanque 1 de este ciclo
 unsigned long proximaMedicion = 0;      // millis() del proximo turno
 uint8_t       turno           = 0;      // tanque que toca medir (0 = tanque 1)
 bool          medicionPedida  = false;  // llego un medir_ahora y todavia no se midio
@@ -135,11 +137,12 @@ const uint8_t RES_COMANDO_DESCONOCIDO = 2;
 const size_t TAM_MEDICION = 2 * N_TANQUES;  // 6 bytes
 const size_t TAM_REPORTE  = 4;
 
-// ===== INTERVALO DE ENVIO (set_config) =====
-const uint16_t INTERVALO_MIN_S = CICLO_MS / 1000UL;  // 60: cada tanque se mide una vez por minuto
-const uint16_t INTERVALO_MAX_S = 43200;              // 12 h, igual que el codec
-uint16_t       intervaloEnvioS  = INTERVALO_MIN_S;   // siempre multiplo de INTERVALO_MIN_S
-uint16_t       ciclosDesdeEnvio = 0xFFFF;            // arranca alto: el 1er ciclo ya envia
+// ===== INTERVALO DE MEDICION Y ENVIO (set_config) =====
+// Con 60 s los turnos quedan a 20 s: deja lugar entre turnos para un uplink con sus
+// reintentos y para el join.
+const uint16_t INTERVALO_MIN_S = 60;
+const uint16_t INTERVALO_MAX_S = 43200;               // 12 h, igual que el codec
+uint16_t       intervaloS      = INTERVALO_MIN_S;     // duracion del ciclo de los 3 tanques
 
 // ===== ENVIOS PENDIENTES =====
 struct EnvioPendiente {
@@ -185,8 +188,9 @@ void imprimirDistancia(uint8_t i, uint16_t d);
 void guardarMedicion(uint8_t t, uint16_t d, unsigned long instante);
 void medirTurno();
 void medirTodos();
-void cerrarCiclo();
-uint16_t ciclosPorEnvio();
+void avanzarTurno();
+unsigned long instanteTurno(uint8_t t);
+void reiniciarCiclo();
 void armarMedicion();
 void atenderRed();
 void intentarMedicion();
@@ -235,9 +239,8 @@ void setup() {
 
   // El ciclo de medicion arranca ya: no espera al join. El join se intenta
   // en los huecos entre turnos (ver atenderRed).
-  proximaMedicion = millis() + 1000UL;
-  proximoUnion    = millis();
-  Serial.println(F("Ciclo: tanque 1 en s0, tanque 2 en s20, tanque 3 en s40"));
+  reiniciarCiclo();
+  proximoUnion = millis();
   Serial.println();
 }
 
@@ -270,29 +273,54 @@ void guardarMedicion(uint8_t t, uint16_t d, unsigned long instante) {
   imprimirDistancia(t, d);
 }
 
+// Instante del turno t (0 = tanque 1) del ciclo actual. Se calcula desde el inicio del ciclo
+// y no sumando pasos, asi que no acumula deriva aunque intervalo_s no sea multiplo de 3.
+unsigned long instanteTurno(uint8_t t) {
+  return inicioCiclo + (uint32_t)intervaloS * 1000UL * t / N_TANQUES;
+}
+
+// Arranca un ciclo nuevo por el tanque 1. Al encender y cuando set_config cambia intervalo_s:
+// asi los turnos quedan repartidos con el intervalo nuevo desde el primero.
+void reiniciarCiclo() {
+  inicioCiclo     = millis() + ARRANQUE_CICLO_MS;
+  turno           = 0;
+  proximaMedicion = inicioCiclo;
+  Serial.print(F("Ciclo: los 3 tanques cada "));
+  Serial.print(intervaloS);
+  Serial.print(F(" s, un turno cada "));
+  Serial.print(intervaloS / (float)N_TANQUES, 1);
+  Serial.println(F(" s"));
+}
+
+// Pasa al turno siguiente. Al terminar el tanque 3 cierra el ciclo: deja lista la medicion
+// para enviar y corre el inicio del ciclo un intervalo_s.
+void avanzarTurno() {
+  turno++;
+  if (turno == N_TANQUES) {
+    armarMedicion();
+    turno = 0;
+    inicioCiclo += (uint32_t)intervaloS * 1000UL;
+  }
+  proximaMedicion = instanteTurno(turno);
+}
+
 // Mide el tanque que toca y avanza al siguiente turno.
 void medirTurno() {
-  // Si algo retraso el nodo uno o mas turnos completos, los salta en vez de
-  // medir varios tanques seguidos: cada tanque conserva su segundo del minuto.
-  long atraso = -msHasta(proximaMedicion);
-  if (atraso >= (long)PASO_MEDICION_MS) {
-    uint32_t perdidos = (uint32_t)atraso / PASO_MEDICION_MS;
-    proximaMedicion += perdidos * PASO_MEDICION_MS;
-    turno = (turno + perdidos) % N_TANQUES;
+  // Si algo retraso el nodo hasta pasar tambien el turno siguiente, salta los turnos perdidos
+  // en vez de medir varios tanques seguidos: cada tanque conserva su lugar en el ciclo.
+  uint8_t perdidos = 0;
+  while (msHasta(instanteTurno(turno + 1)) <= 0) {   // turno + 1 == 3: el tanque 1 del ciclo siguiente
+    avanzarTurno();
+    perdidos++;
+  }
+  if (perdidos > 0) {
     Serial.print(F("[MED] turnos salteados: "));
     Serial.println(perdidos);
   }
 
-  uint8_t t = turno;
   unsigned long inicio = millis();
-  guardarMedicion(t, leerDistanciaMm(t), inicio);
-
-  proximaMedicion += PASO_MEDICION_MS;   // se suma al turno anterior, no a millis(): sin deriva
-  turno = (turno + 1) % N_TANQUES;
-
-  if (t == N_TANQUES - 1) {
-    cerrarCiclo();
-  }
+  guardarMedicion(turno, leerDistanciaMm(turno), inicio);
+  avanzarTurno();
 }
 
 // medir_ahora: mide los 3 tanques en un hueco entre turnos. No toca proximaMedicion ni
@@ -347,25 +375,12 @@ void imprimirDistancia(uint8_t i, uint16_t d) {
   Serial.print(i + 1);
   Serial.print(F(": "));
   if (d == SIN_ECO)              Serial.println(F("sin eco"));
-  else if (d == DEMASIADO_CERCA) Serial.println(F("agua en la zona ciega (tanque lleno, se informa 250 mm)"));
+  else if (d == DEMASIADO_CERCA) Serial.println(F("agua en la zona ciega (tanque lleno, se informa 25 cm)"));
   else if (d == DEMASIADO_LEJOS) Serial.println(F("demasiado lejos"));
-  else { Serial.print(d); Serial.println(F(" mm")); }
+  else { Serial.print(d / 10.0, 1); Serial.println(F(" cm")); }
 }
 
 // ===== MEDICION PERIODICA =====
-uint16_t ciclosPorEnvio() {
-  return intervaloEnvioS / INTERVALO_MIN_S;
-}
-
-// Se llama al terminar el turno del tanque 3: cierra el minuto.
-void cerrarCiclo() {
-  if (ciclosDesdeEnvio < 0xFFFF) ciclosDesdeEnvio++;
-  if (ciclosDesdeEnvio >= ciclosPorEnvio()) {
-    armarMedicion();
-    ciclosDesdeEnvio = 0;
-  }
-}
-
 // Toma una foto de lo que hay en RAM y la deja lista para enviar por el fPort 1.
 // Si habia una sin entregar, la reemplaza: la nueva trae datos mas recientes.
 void armarMedicion() {
@@ -539,23 +554,18 @@ void procesarBajada(uint8_t puerto, const uint8_t* datos, size_t tam) {
       Serial.println(F(" fuera de 60..43200 <<<"));
       return;
     }
-    // Redondeo hacia arriba a un multiplo de 60 (43200 ya es multiplo, no se pasa del maximo).
-    uint16_t nuevoS = ((pedidoS + INTERVALO_MIN_S - 1) / INTERVALO_MIN_S) * INTERVALO_MIN_S;
-    intervaloEnvioS = nuevoS;
-    if (almacen.getUInt(NVS_INTERVALO, 0) != nuevoS) {   // flash: solo si cambio
-      almacen.putUInt(NVS_INTERVALO, nuevoS);
+    bool cambia = (pedidoS != intervaloS);
+    intervaloS = pedidoS;
+    if (almacen.getUInt(NVS_INTERVALO, 0) != pedidoS) {   // flash: solo si cambio
+      almacen.putUInt(NVS_INTERVALO, pedidoS);
     }
     encolarReporte(ref, RES_APLICADO);
     Serial.print(F(">>> set_config ref="));
     Serial.print(ref);
     Serial.print(F(": intervalo_s="));
-    Serial.print(nuevoS);
-    if (nuevoS != pedidoS) {
-      Serial.print(F(" (pedido "));
-      Serial.print(pedidoS);
-      Serial.print(F(", redondeado a multiplo de 60)"));
-    }
-    Serial.println(F(" <<<"));
+    Serial.print(pedidoS);
+    Serial.println(cambia ? F(" (los turnos se recalculan) <<<") : F(" (sin cambios) <<<"));
+    if (cambia) reiniciarCiclo();
     return;
   }
 
@@ -584,7 +594,7 @@ void encolarReporte(uint8_t ref, uint8_t resultado) {
   }
   reportes[nReportes].ref        = ref;
   reportes[nReportes].resultado  = resultado;
-  reportes[nReportes].intervaloS = intervaloEnvioS;
+  reportes[nReportes].intervaloS = intervaloS;
   nReportes++;
 }
 
@@ -667,11 +677,10 @@ void cargarIntervalo() {
   if (!almacen.isKey(NVS_INTERVALO)) return;
 
   uint32_t s = almacen.getUInt(NVS_INTERVALO, INTERVALO_MIN_S);
-  // Un valor fuera de rango o que no es multiplo de 60 (de una version anterior) se ignora.
-  if (s >= INTERVALO_MIN_S && s <= INTERVALO_MAX_S && s % INTERVALO_MIN_S == 0) {
-    intervaloEnvioS = (uint16_t)s;
+  if (s >= INTERVALO_MIN_S && s <= INTERVALO_MAX_S) {   // un valor fuera de rango se ignora
+    intervaloS = (uint16_t)s;
     Serial.print(F("intervalo_s recuperado de NVS: "));
-    Serial.println(intervaloEnvioS);
+    Serial.println(intervaloS);
   }
 }
 

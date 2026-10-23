@@ -19,14 +19,21 @@ function be(...valores) {   // uint16 big endian
 caso("medicion con los tres tanques", () => {
   const r = decodeUplink({ fPort: 1, bytes: be(1500, 2000, 3000) });
   assert.deepStrictEqual(r.data, {
-    distancia_tanque1_mm: 1500, distancia_tanque2_mm: 2000, distancia_tanque3_mm: 3000,
+    distancia_tanque1_cm: 150, distancia_tanque2_cm: 200, distancia_tanque3_cm: 300,
   });
   assert.strictEqual(r.errors, undefined);
 });
 
+caso("los mm de los bytes pasan a cm con un decimal", () => {
+  const r = decodeUplink({ fPort: 1, bytes: be(2462, 2445, 1007) });
+  assert.deepStrictEqual(r.data, {
+    distancia_tanque1_cm: 246.2, distancia_tanque2_cm: 244.5, distancia_tanque3_cm: 100.7,
+  });
+});
+
 caso("un sensor sin eco no aparece en values", () => {
   const r = decodeUplink({ fPort: 1, bytes: be(1510, 0xffff, 4500) });
-  assert.deepStrictEqual(r.data, { distancia_tanque1_mm: 1510, distancia_tanque3_mm: 4500 });
+  assert.deepStrictEqual(r.data, { distancia_tanque1_cm: 151, distancia_tanque3_cm: 450 });
   assert.ok(r.warnings[0].includes("tanque 2"));
 });
 
@@ -36,23 +43,23 @@ caso("sin eco, demasiado lejos y fuera de rango no aparecen", () => {
   assert.ok(r.errors[0].includes("sin lecturas validas"));
 });
 
-caso("zona ciega (tanque lleno) se informa como 250 mm, no como falla", () => {
+caso("zona ciega (tanque lleno) se informa como 25 cm, no como falla", () => {
   const r = decodeUplink({ fPort: 1, bytes: be(0xfffe, 1200, 0xffff) });
-  assert.deepStrictEqual(r.data, { distancia_tanque1_mm: 250, distancia_tanque2_mm: 1200 });
+  assert.deepStrictEqual(r.data, { distancia_tanque1_cm: 25, distancia_tanque2_cm: 120 });
   assert.strictEqual(r.errors, undefined);
 });
 
 caso("los tres tanques llenos publican data (no es error)", () => {
   const r = decodeUplink({ fPort: 1, bytes: be(0xfffe, 0xfffe, 0xfffe) });
   assert.deepStrictEqual(r.data, {
-    distancia_tanque1_mm: 250, distancia_tanque2_mm: 250, distancia_tanque3_mm: 250,
+    distancia_tanque1_cm: 25, distancia_tanque2_cm: 25, distancia_tanque3_cm: 25,
   });
   assert.strictEqual(r.errors, undefined);
 });
 
-caso("los bordes del rango (250 y 6000) son validos", () => {
+caso("los bordes del rango (25 y 600 cm) son validos", () => {
   const r = decodeUplink({ fPort: 1, bytes: be(250, 6000, 6001) });
-  assert.deepStrictEqual(r.data, { distancia_tanque1_mm: 250, distancia_tanque2_mm: 6000 });
+  assert.deepStrictEqual(r.data, { distancia_tanque1_cm: 25, distancia_tanque2_cm: 600 });
 });
 
 caso("medicion con largo incorrecto es error", () => {
@@ -66,7 +73,7 @@ caso("fPort desconocido es error", () => {
 
 caso("values no trae campos de diagnostico", () => {
   const r = decodeUplink({ fPort: 1, bytes: be(1000, 0xffff, 2000) });
-  for (const k of Object.keys(r.data)) assert.match(k, /^distancia_tanque[123]_mm$/);
+  for (const k of Object.keys(r.data)) assert.match(k, /^distancia_tanque[123]_cm$/);
 });
 
 // ---------- subida: reporte (fPort 2) ----------
@@ -108,10 +115,9 @@ caso("set_config en los bordes (60 y 43200)", () => {
     [2, 255, 0xa8, 0xc0]);
 });
 
-caso("set_config que no es multiplo de 60 avisa el redondeo", () => {
+caso("set_config acepta cualquier entero del rango (90 s: turnos de 30 s)", () => {
   const r = encodeDownlink({ data: { command: "set_config", params: { intervalo_s: 90 }, ref: 3 } });
-  assert.deepStrictEqual(r.bytes, [2, 3, 0, 90]);
-  assert.ok(r.warnings[0].includes("120"));
+  assert.deepStrictEqual(r, { bytes: [2, 3, 0, 90] });
 });
 
 caso("set_config fuera de rango, no entero o con otro parametro es error", () => {

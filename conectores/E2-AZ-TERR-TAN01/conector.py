@@ -8,10 +8,9 @@ sensor que falla, así que acá se nota porque falta.
 El dispositivo solo mide: no maneja la bomba. `tanque_bajo` sirve para darse cuenta de que el
 control externo de la bomba no llenó a tiempo (bomba, control o provisión de agua).
 
-Lo que no es una medición válida (un valor fuera de 250 a 6000 mm, como los valores especiales
-que manda el firmware cuando el sensor falla) lo quita AURA al guardar, según los rangos de
-conector.toml. `250` llega cuando el agua está dentro de la zona ciega del sensor: el tanque está
-lleno, no es una falla.
+Las distancias llegan en cm, con un decimal. Lo que no es una medición válida (fuera de 25 a
+600 cm) lo quita AURA al guardar, según los rangos de conector.toml. `25` llega cuando el agua
+está dentro de la zona ciega del sensor: el tanque está lleno, no es una falla.
 
 No guarda estado en la instancia: AURA la puede recrear. Para saber cómo estaba el tanque
 antes, lee las mediciones guardadas con ctx.serie().
@@ -21,29 +20,29 @@ from datetime import datetime, timedelta, timezone
 from aura_sdk import Conector
 
 # Los campos de conector.toml, en orden: el tanque 1 es el primero.
-CAMPOS = ("distancia_tanque1_mm", "distancia_tanque2_mm", "distancia_tanque3_mm")
+CAMPOS = ("distancia_tanque1_cm", "distancia_tanque2_cm", "distancia_tanque3_cm")
 
 
 class ConectorTanques(Conector):
     # ---- VALORES DE PRUEBA: ajustar cuando se midan los tanques ----
-    # Distancia del sensor (en la tapa) al fondo de cada tanque, en mm: lo que mediría el
-    # sensor con el tanque vacío. 1630 es una estimación sin confirmar; probablemente sean
+    # Distancia del sensor (en la tapa) al fondo de cada tanque, en cm: lo que mediría el
+    # sensor con el tanque vacío. 163 es una estimación sin confirmar; probablemente sean
     # más grandes. Si los tres tanques son iguales, va el mismo número tres veces.
-    ALTURA_MM = (1630, 1630, 1630)
+    ALTURA_CM = (163, 163, 163)
     # Fracción del tanque con agua por debajo de la cual se avisa `tanque_bajo`.
     NIVEL_MINIMO = 0.20
     # Margen para no avisar varias veces si el nivel queda justo en el umbral: el aviso de que
     # el tanque se recuperó sale recién cuando el agua sube este margen por encima del umbral.
-    HISTERESIS_MM = 50
+    HISTERESIS_CM = 5
     # Hasta dónde mira hacia atrás para saber cómo estaba el tanque.
     VENTANA = timedelta(hours=24)
 
-    def umbral_mm(self, indice):
-        """Distancia del sensor al agua (mm) a partir de la cual el tanque está bajo.
+    def umbral_cm(self, indice):
+        """Distancia del sensor al agua (cm) a partir de la cual el tanque está bajo.
 
-        Con 1630 mm de altura y 20 % de mínimo: 1630 - 326 = 1304 mm.
+        Con 163 cm de altura y 20 % de mínimo: 163 - 32.6 = 130.4 cm.
         """
-        return round(self.ALTURA_MM[indice] * (1 - self.NIVEL_MINIMO))
+        return round(self.ALTURA_CM[indice] * (1 - self.NIVEL_MINIMO), 1)
 
     def al_recibir_datos(self, msg, ctx):
         ts = msg.ts or datetime.now(timezone.utc)
@@ -61,20 +60,20 @@ class ConectorTanques(Conector):
                 continue
             numero = indice + 1
             distancia = guardado[campo]
-            umbral = self.umbral_mm(indice)
+            umbral = self.umbral_cm(indice)
             estaba_bajo = self._estaba_bajo(anteriores[campo], umbral)
             if estaba_bajo:
-                esta_bajo = distancia > umbral - self.HISTERESIS_MM
+                esta_bajo = distancia > umbral - self.HISTERESIS_CM
             else:
                 esta_bajo = distancia > umbral
             # Alerta solo en el cruce, no en cada medición.
             if esta_bajo and not estaba_bajo:
                 ctx.alertar("tanque_bajo", "warning",
                             f"Tanque {numero}: queda menos del {self.NIVEL_MINIMO:.0%} de agua "
-                            f"(el agua está a {distancia} mm del sensor, umbral {umbral} mm)")
+                            f"(el agua está a {distancia} cm del sensor, umbral {umbral} cm)")
             elif not esta_bajo and estaba_bajo:
                 ctx.alertar("tanque_bajo", "info",
-                            f"Tanque {numero}: el agua volvió a {distancia} mm del sensor "
+                            f"Tanque {numero}: el agua volvió a {distancia} cm del sensor "
                             f"(más del {self.NIVEL_MINIMO:.0%})")
 
     def _estaba_bajo(self, puntos, umbral):
@@ -87,7 +86,7 @@ class ConectorTanques(Conector):
         for _, valor in reversed(puntos):
             if valor > umbral:
                 return True
-            if valor <= umbral - self.HISTERESIS_MM:
+            if valor <= umbral - self.HISTERESIS_CM:
                 return False
         return False
 
