@@ -7,7 +7,7 @@
 > (`docs/superpowers/…`) son de `aura-app`.
 
 **Estado**: normativo en `aura-app`. Ante una discrepancia con cualquier otro documento, manda el contrato; ante una discrepancia entre esta copia y la de `aura-app`, manda la de `aura-app`.
-**Versión del contrato**: 4.0 (propuesta) · **Última actualización**: 2026-10-14
+**Versión del contrato**: 4.1 (propuesta) · **Última actualización**: 2026-10-20
 **Alcance**: mensajería entre los dispositivos IoT y la plataforma (backend FastAPI). Hay **dos
 transportes**, cada uno con su adaptador
 ([ADR-003](adr/ADR-003-dos-transportes-mesh-interior-lorawan-exterior.md)):
@@ -65,7 +65,7 @@ nombre de ellos. Hay uno por transporte:
 ```
 nodos LoRaWAN ─► gateway LoRa ─► [broker LoRaWAN] ◄─► lorawan-bridge ──┐
                                  interno de ChirpStack                  ├─► [broker AURA] ◄─► backend ─► base
-hojas ─ESP-WIFI-MESH─► (relevos) ─ESP-WIFI-MESH─► raíz de la mesh ─WiFi┘      este contrato
+hojas ─ESP-WIFI-MESH─► concentrador del aula ─ESP-WIFI-MESH─► raíz de la mesh ─WiFi┘   este contrato
 ```
 
 | Broker | Qué circula | Quién lo usa |
@@ -223,6 +223,16 @@ o el DevEUI) y asignarlo al dispositivo en AURA. No se toca el firmware de ning�
 cada paquete (`esp_mesh_recv`). Los nodos encuentran al raíz por el **ID de la mesh**, no por su
 MAC: reemplazar el raíz no obliga a reflashear ningún nodo.
 
+**Aula y concentrador (v4.1, [ADR-007](adr/ADR-007-mesh-en-esp-idf-con-concentrador-por-aula.md)).**
+Cada aula tiene un **concentrador**, un nodo de la mesh de la cátedra que es el padre de las hojas
+de esa aula: ve sus datos y los reenvía al raíz una sola vez, juntos (trama interna LOTE, cada
+muestra con la MAC de su hoja). El raíz publica cada muestra con el `hw_id` de **la hoja que la
+midió**, no con el del concentrador: para AURA el concentrador es transparente, como un relevo.
+El aula **no está en el firmware**: AURA se la asigna a la hoja y al concentrador con el parámetro
+reservado `aula` de `set_config` (§3.3), y la placa la guarda en memoria no volátil. Una placa
+recién grabada no tiene aula: se cuelga del raíz o de cualquier concentrador, manda directo y AURA
+la ve en cuarentena hasta que la asigna. Todas las hojas de un mismo tipo llevan el mismo binario.
+
 ### 2.4 Un dispositivo es una placa
 
 En los dos transportes, **un dispositivo es una placa** (a la vez), no una sonda. Un nodo con
@@ -334,12 +344,21 @@ unirse a la mesh, al volver después de perderla y después de aplicar una confi
 | `config` | la configuración **vigente** en la hoja, tal como la tiene guardada (§3.4) |
 | `pendientes`, `descartadas` | muestras en la cola de la hoja y muestras perdidas por cola llena |
 | `alimentacion` | `"red"`, `"bateria"` o `"desconocida"` |
+| `modo` | `"sin_aula"` (todavía sin aula asignada), `"aula"` (colgada de su concentrador) o `"directo"` (no ve a su concentrador y manda directo al raíz) — v4.1 |
+| `en_flash` | muestras de la cola respaldadas en flash (§5); solo si hay alguna — v4.1 |
+| `eventos_perdidos` | resultados, reportes o alertas que no entraron en la cola de eventos; solo si hay alguno — v4.1 |
+| `rssi`, `capa` | cómo recibe la hoja a su padre y en qué capa de la mesh está — v4.1 |
+
+En `config` va siempre `aula` (`null` si no tiene).
 
 Qué pone el raíz en **su propio** `status`, cada 60 s: `rol: "raiz"`, `transporte: "mesh"`, `mac`,
 `canal`, `nodos_en_mesh`, contadores (`publicadas`, `confirmadas`, `acks_ignorados`,
 `values_invalidos`, `repetidas`, `ajenos`, `sin_lugar`, `version_distinta`, `invalidas`,
 `desbordes_radio`), `hora_valida` y `uptime_s`. `values_invalidos` cuenta las TELEMETRIA cuyo
 `values` no era un objeto (§3.1).
+
+El **concentrador** publica su propio `status` como cualquier placa de la mesh, con
+`rol: "concentrador"` y su `config` (incluida `aula`). Sin aula no anuncia nada a las hojas.
 
 El contador de la cola y la alimentación van acá y **no** en `values`, por la misma razón que
 `pend` y `desc` en la v1.x.
@@ -381,6 +400,13 @@ calibración) los recibe con el comando `set_config`:
 `params` lleva **solo los parámetros que cambian**. El nodo valida cada valor contra su rango
 antes de aplicarlo, lo guarda en memoria no volátil y, si algo no valida, **no aplica nada** del
 comando. Un comando mal armado no puede dejar el nodo inutilizable.
+
+**Parámetro reservado `aula` (mesh, v4.1).** En la mesh, `set_config` acepta `aula` en toda hoja
+y todo concentrador, además de los parámetros propios del dispositivo: `{"aula": "aula1"}`. Es un
+nombre corto en minúsculas (`a-z`, `0-9`, `-`, `_`), de 1 a 15 caracteres. Lo maneja la biblioteca
+de la mesh, no el código del grupo. Motivos de rechazo propios: `aula_invalida` (no cumple el
+formato) y `sin_parametros` (vino otro parámetro y el dispositivo no tiene ninguno). Un
+`set_config` que trae `aula` y otros parámetros sigue la regla de todo o nada.
 
 **Camino del comando en LoRaWAN.** El bridge saca el DevEUI del `hw_id` y encola un downlink
 **confirmado** con la **API gRPC de ChirpStack** (`DeviceService.Enqueue`, con el API key de
@@ -599,7 +625,7 @@ más de una vez, así que todo consumidor debe ser idempotente.
 | Radio → ChirpStack | ChirpStack junta las recepciones del mismo uplink por varios gateways y emite **un** evento con un `deduplicationId` | varios gateways, un solo dato |
 | Nodo → ChirpStack | uplinks confirmados con reintentos (firmware de `IC-lorawan-test`) | ⚠️ cómo trata ChirpStack un reintento con el mismo `fCnt` está **sin verificar en banco** |
 | Bridge → AURA | `ingest_id` = `deduplicationId` en `data` | sobrevive a reinicios del bridge: el id lo genera ChirpStack |
-| Hoja → raíz | la hoja **guarda cada muestra** en memoria no volátil y la reenvía hasta recibir la CONFIRMACION | sobrevive a cortes del raíz, del WiFi, del broker y de AURA, dentro de la capacidad de la cola (24 h a una muestra por minuto) |
+| Hoja → raíz | la hoja **guarda cada muestra** en una cola en RAM (400 muestras) y la reenvía hasta recibir la CONFIRMACION; lo que pasa **5 min sin confirmar** se respalda en flash (v4.1) | sobrevive a cortes del raíz, del WiFi, del broker y de AURA (unos 66 min de corte midiendo cada 10 s); **un reinicio de la hoja pierde lo que tenía menos de 5 min sin confirmar** |
 | Raíz → AURA | `ingest_id` generado **en la hoja**, un UUID por muestra, guardado con ella antes del primer envío | igual en cada reintento y después de reiniciar cualquier placa |
 | Backend → raíz | `ack` con el `ingest_id`, después del commit (§3.6) | un `ack` perdido solo provoca un reintento, que vuelve como `duplicado` |
 | Backend (REST) | `ingest_id` con `unique=True` en `ts_telemetry` (`models/telemetry.py`) | deduplicación real en base |
@@ -609,6 +635,11 @@ más de una vez, así que todo consumidor debe ser idempotente.
 `(tenant_id, ingest_id, ts)`. Una muestra de la mesh sin `ts` (la hoja todavía no tiene hora)
 llega con otra hora de llegada en cada reintento y el índice no la detecta: la deduplicación
 tiene que buscar el `ingest_id` explícitamente.
+
+**Por qué la cola de la hoja es híbrida (v4.1).** Escribir cada muestra en flash frenaba el loop
+y gasta la memoria; en marcha normal la confirmación llega en menos de un segundo y la flash no se
+toca. Solo un corte de más de 5 min la usa. **Debilidad aceptada**: si la hoja se reinicia durante
+un corte, se pierden las muestras de sus últimos 5 min sin confirmar.
 
 **Confirmación en la mesh.** El raíz confirma una muestra a la hoja **solo** cuando recibe el
 `ack` de ese `ingest_id` (§3.6). Hasta entonces la hoja la conserva. Que `esp_mesh_send` acepte la
@@ -723,7 +754,7 @@ generaciones de emisores sin adivinar por la forma del JSON.
 |---|---|---|
 | **Este documento** | árbol `hw/`, identidad por placa, `ack` (v4.0) | propuesta |
 | backend (`app/backend/ingesta/`) y `lorawan-bridge` (`servicios/lorawan_bridge/`) | árbol `hw/`, identidad por placa, `ack` | ✅ con tests y probados con los brokers del banco |
-| repo público `aura-firmware` | raíz de la mesh v4.0 sobre ESP-WIFI-MESH, `hw/<hw_id>/…`, `ack` | ✅ compilado, **sin probar en placa** |
+| repo público `aura-firmware` | mesh v4.1 en ESP-IDF (`Mesh_Red_Completa/`: raíz, concentrador por aula, hoja sobre `nodo_mesh`), `hw/<hw_id>/…`, `ack` | ✅ probada en placa de punta a punta (2026-10-20); falta una prueba larga. La versión Arduino (`comun/`, `infraestructura/`) queda obsoleta ([ADR-007](adr/ADR-007-mesh-en-esp-idf-con-concentrador-por-aula.md)) |
 | `docs/adr/ADR-004-…` | "un `device_id` desconocido no se confirma" (punto 5) | ⏸ reemplazado en ese punto por [ADR-005](adr/ADR-005-identidad-por-placa-y-mapeo-en-aura.md) |
 | `docs/adr/ADR-003-…` | "la telemetría de la mesh entra por REST"; mesh ESP-NOW | ⏸ reemplazado por [ADR-004](adr/ADR-004-mqtt-punto-comun-de-ingesta-con-ack-de-persistencia.md) y [ADR-006](adr/ADR-006-esp-wifi-mesh-reemplaza-a-esp-now-en-interior.md) en esos puntos |
 | `docs/adr/ADR-002-…` | "la mesh queda congelada"; tag `aura_device_id` | ⏸ reemplazado por ADR-003 y ADR-005 en esos puntos |
@@ -748,6 +779,7 @@ MAC del medidor. Mientras no se decida, sus mensajes se descartan:
 
 | Versión | Fecha | Cambio |
 |---|---|---|
+| 4.1 | 2026-10-20 | **Mesh en ESP-IDF con concentrador por aula** ([ADR-007](adr/ADR-007-mesh-en-esp-idf-con-concentrador-por-aula.md), `aura-firmware` #21). Compatible: el árbol de tópicos y los payloads no cambian. Nuevos: el **concentrador del aula** (§1, §2.3, transparente para AURA), el parámetro reservado **`aula`** de `set_config` con los motivos `aula_invalida` y `sin_parametros` (§3.3), y en el `status` de la hoja `modo`, `en_flash`, `eventos_perdidos`, `rssi`, `capa` y `config.aula` (§3.2). La cola de la hoja pasa a **híbrida**: RAM, y flash solo para lo que pasa 5 min sin confirmar (§5). En las hojas ya no hace falta el SSID del WiFi del edificio: solo el raíz se conecta al router. Pendiente 20. |
 | 4.0 | 2026-10-14 | El raíz de la mesh conecta con sesión persistente (pendiente 7); §1 y el pendiente 11 decían que no mandaba usuario y clave, y lo hace desde `aura-firmware` #9. |
 | 4.0 | 2026-10-14 | §10: pendientes 18 (LoRaWAN pierde la muestra si falla la base) y 19 (codecs con diagnóstico en `values`), encontrados al documentar el recorrido de los datos. |
 | 4.0 | 2026-10-14 | **`offline` inferido en el `lorawan-bridge`** (§3.2), con `last_seen_at` de ChirpStack y el *uplink interval* del profile; `details` suma `transporte`, `ultimo_uplink` e `intervalo_s`. |
@@ -805,7 +837,9 @@ citan.
     la cátedra o gestor de secretos.
 16. Sin objeto desde la v4.0: el descubrimiento por baliza firmada. ESP-WIFI-MESH descubre y
     elige padre sola, y la autenticación es la clave de la mesh (pendiente 8).
-17. **Prueba en placa de la mesh ESP-WIFI-MESH**
+17. **Prueba en placa de la mesh ESP-WIFI-MESH**. ✅ De punta a punta en ESP-IDF el 2026-10-20
+    ([ADR-007](adr/ADR-007-mesh-en-esp-idf-con-concentrador-por-aula.md), `aura-firmware/Mesh_Red_Completa/Broker_MQTT/LEEME.md`);
+    falta una prueba larga. Lo que sigue es el plan original, en Arduino
     (`aura-firmware/docs/mesh-wifi/estado-de-banco.md`): una hoja que se une sin la clave del WiFi
     del edificio, el raíz con IP y MQTT con la mesh andando, la MAC de origen a dos saltos, la
     bajada por MAC y el reenganche después de reiniciar el raíz. Si los dos primeros fallan, se
@@ -828,6 +862,15 @@ citan.
     **Para arrancar**: corregir ese codec (omitir la sonda que falla, sacar el contador, y mandar la
     falla como `alerts/sensor` desde un uplink en otro puerto), y que el conector de cada
     dispositivo rechace en el banco los campos que no declara en su `conector.toml`.
+
+20. **Asignar el aula desde AURA** (v4.1, §2.3 y §3.3). Hoy se hace mandando a mano
+    `set_config {"aula": …}` por la API de comandos. Falta que AURA lo haga sola al asignar una
+    placa a un dispositivo, sacando el aula del recinto del dispositivo, y que lo repita al
+    reemplazar la placa. Hasta entonces, una placa recién asignada sigue en `modo: "sin_aula"`
+    (manda directo al raíz, sus datos llegan igual).
+21. **El CI de `aura-firmware` no compila los proyectos ESP-IDF** (`Mesh_Red_Completa/`): solo los
+    sketches de Arduino. Falta un job con la imagen `espressif/idf` que haga `idf.py build` de los
+    tres proyectos y de cada hoja de `dispositivos/`.
 
 De la v1.x quedan resueltos el destino de los diagnósticos del gateway (van a `status.details`) y
 `pend`/`desc` (pasan a `pendientes`/`descartadas` en `status`). `lux_sim` sigue sin objeto.
