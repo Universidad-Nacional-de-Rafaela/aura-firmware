@@ -59,7 +59,7 @@ def procesar(conector, ctx, msg) -> ResultadoMensaje:
         conector.al_recibir_datos(msg, ctx)
     except ErrorDelAnfitrion as e:
         ctx._deshacer()
-        raise e.original
+        raise e.original from None
     except Exception as e:
         ctx._deshacer()
         if isinstance(e, FalloDelConector):

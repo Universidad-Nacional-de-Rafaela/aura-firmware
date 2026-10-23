@@ -5,10 +5,12 @@ python3 -m unittest discover -s comun/python/tests
 """
 import io
 import os
+import re
 import sys
 import time
 import unittest
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 
 SDK_DIR = Path(__file__).resolve().parent.parent
@@ -142,7 +144,7 @@ class EnSubproceso(unittest.TestCase):
     def test_murio_sin_mandar_fin(self):
         r, ctx, _ = correr("muere")
         self.assertIn("(murio)", ctx.alertas[0].mensaje)
-        self.assertIn("3", r.error)
+        self.assertIn("código 3", r.error)
 
     def test_linea_que_no_es_json(self):
         r, ctx, _ = correr("no_json")
@@ -179,11 +181,59 @@ class EnSubproceso(unittest.TestCase):
         e = ErrorDelAnfitrion(ConnectionError("x"))
         self.assertIsInstance(e.original, ConnectionError)
 
+    def test_mata_lo_que_lanzo_el_conector(self):
+        r, ctx, conector = correr("nieto", timeout_s=1)
+        self.assertIn("(timeout)", ctx.alertas[0].mensaje)
+        pid = int(re.search(r"nieto=(\d+)", conector.stderr).group(1))
+        self.assertTrue(_termina(pid), f"el nieto {pid} sigue vivo")
+
+    def test_stderr_grande_no_se_guarda_entero(self):
+        r, ctx, conector = correr("stderr_grande", timeout_s=10)
+        self.assertEqual((r.resultado, r.motivo), ("persistido", None), r.error)
+        self.assertLessEqual(len(conector.stderr), 4096)
+        self.assertTrue(conector.stderr.endswith("\nFIN-DEL-STDERR\n"))
+
+    @unittest.skipIf(os.geteuid() == 0, "root no respeta RLIMIT_NPROC")
+    def test_limite_de_procesos(self):
+        r, ctx, _ = correr("procesos", limites=Limites(procesos=1))
+        self.assertEqual(ctx.mediciones[-1].values, {"temp_c": 1}, r.error)   # el fork falló
+        r, ctx, _ = correr("procesos")
+        self.assertEqual(ctx.mediciones[-1].values, {"temp_c": 2}, r.error)   # sin el límite, pudo
+
+    def test_json_anidado_es_error_de_protocolo(self):
+        r, ctx, _ = correr("json_anidado")
+        self.assertEqual((r.resultado, r.motivo), ("persistido", "conector_fallo"))
+        self.assertIn("(protocolo)", ctx.alertas[0].mensaje)
+
+    def test_respuesta_que_no_se_puede_codificar_es_del_anfitrion(self):
+        class ConfigConDecimal(ContextoDePrueba):
+            def config_vigente(self):
+                return {"umbral": Decimal("1.5")}
+
+        ctx = ConfigConDecimal(cargar_manifiesto(CASOS / "config"))
+        with self.assertRaises(TypeError):
+            correr("config", ctx=ctx)
+        self.assertEqual((ctx.alertas, ctx.mediciones), ([], []))
+
     @unittest.skipIf(os.geteuid() == 0, "como root sí puede cambiar de usuario")
     def test_sin_permisos_para_cambiar_de_usuario(self):
         r, ctx, _ = correr("guarda", popen={"user": 65534})
         self.assertEqual(r.motivo, "conector_fallo")
         self.assertIn("(sin_permisos)", ctx.alertas[0].mensaje)
+
+
+def _termina(pid, espera_s=3.0):
+    """True si el proceso deja de existir (o queda zombi) antes de espera_s."""
+    limite = time.monotonic() + espera_s
+    while time.monotonic() < limite:
+        try:
+            estado = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+        except (FileNotFoundError, ProcessLookupError):
+            return True
+        if estado == "Z":
+            return True
+        time.sleep(0.05)
+    return False
 
 
 if __name__ == "__main__":

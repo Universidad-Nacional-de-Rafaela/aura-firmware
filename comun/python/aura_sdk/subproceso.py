@@ -37,7 +37,6 @@ import os
 import selectors
 import signal
 import subprocess
-import tempfile
 import time
 import traceback
 from dataclasses import dataclass
@@ -62,6 +61,7 @@ class Limites:
     mem_mb: int = 256      # RLIMIT_AS
     cpu_s: int = 5         # RLIMIT_CPU
     archivos: int = 64     # RLIMIT_NOFILE
+    procesos: Optional[int] = None   # RLIMIT_NPROC (cuenta todos los procesos del usuario; None: no se pone)
 
 
 # ----- protocolo -----
@@ -97,9 +97,12 @@ def decodificar(linea: str) -> dict:
 def poner_limites(limites: Limites) -> None:
     """soft = hard: el conector no los puede volver a subir. Si el hard actual es menor, queda ese."""
     import resource
-    for recurso, valor in ((resource.RLIMIT_AS, limites.mem_mb * 1024 * 1024),
-                           (resource.RLIMIT_CPU, limites.cpu_s),
-                           (resource.RLIMIT_NOFILE, limites.archivos)):
+    pedidos = [(resource.RLIMIT_AS, limites.mem_mb * 1024 * 1024),
+               (resource.RLIMIT_CPU, limites.cpu_s),
+               (resource.RLIMIT_NOFILE, limites.archivos)]
+    if limites.procesos is not None:
+        pedidos.append((resource.RLIMIT_NPROC, limites.procesos))
+    for recurso, valor in pedidos:
         _, duro = resource.getrlimit(recurso)
         if duro != resource.RLIM_INFINITY:
             valor = min(valor, duro)
@@ -180,12 +183,13 @@ def main(argv=None) -> int:
     ap.add_argument("--mem-mb", type=int, default=Limites.mem_mb)
     ap.add_argument("--cpu-s", type=int, default=Limites.cpu_s)
     ap.add_argument("--archivos", type=int, default=Limites.archivos)
+    ap.add_argument("--procesos", type=int, default=None)
     args = ap.parse_args(argv)
     # El stdout real es del protocolo: un print() del conector va a stderr.
     salida = sys.stdout
     sys.stdout = sys.stderr
     logging.basicConfig(stream=sys.stderr, level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
-    return hijo(sys.stdin, salida, Limites(args.mem_mb, args.cpu_s, args.archivos))
+    return hijo(sys.stdin, salida, Limites(args.mem_mb, args.cpu_s, args.archivos, args.procesos))
 
 
 # ----- el padre -----
@@ -195,18 +199,22 @@ class _Vencido(Exception):
 
 
 class _Sesion:
-    """Una muestra: el hijo, su stdout con un buffer y la fecha límite."""
+    """Una muestra: el hijo, su stdout con un buffer, el final de su stderr y la fecha límite.
+
+    stdout y stderr se leen en el mismo bucle: el hijo nunca se traba escribiendo en stderr, y del
+    stderr solo se guardan los últimos MAX_STDERR bytes (nada va a disco)."""
 
     def __init__(self, proc, limite):
         self.proc = proc
         self.limite = limite
         self.buffer = bytearray()
-        self.lectura = selectors.DefaultSelector()
-        self.lectura.register(proc.stdout, selectors.EVENT_READ)
-        self.escritura = selectors.DefaultSelector()
-        self.escritura.register(proc.stdin, selectors.EVENT_WRITE)
-        os.set_blocking(proc.stdout.fileno(), False)
-        os.set_blocking(proc.stdin.fileno(), False)
+        self.cola_stderr = bytearray()
+        self.stdout_cerrado = False
+        for f in (proc.stdin, proc.stdout, proc.stderr):
+            os.set_blocking(f.fileno(), False)
+        self.selector = selectors.DefaultSelector()
+        self.selector.register(proc.stdout, selectors.EVENT_READ)
+        self.selector.register(proc.stderr, selectors.EVENT_READ)
 
     def _restante(self):
         restante = self.limite - time.monotonic()
@@ -214,19 +222,57 @@ class _Sesion:
             raise _Vencido
         return restante
 
-    def enviar(self, obj):
-        """Escribe sin bloquear más allá de la fecha límite. False si el hijo ya cerró su stdin."""
-        datos = memoryview((codificar(obj) + "\n").encode("ascii"))
-        fd = self.proc.stdin.fileno()
-        while datos:
-            if not self.escritura.select(self._restante()):
-                continue
-            try:
-                n = os.write(fd, datos)
-            except BrokenPipeError:
-                return False
-            datos = datos[n:]
+    def _leer_stderr(self):
+        """Lee lo que haya en stderr. False si se cerró."""
+        datos = os.read(self.proc.stderr.fileno(), 65536)
+        if not datos:
+            return False
+        self.cola_stderr += datos
+        del self.cola_stderr[:-MAX_STDERR]
         return True
+
+    def _esperar(self, quiero):
+        """Espera hasta que stdin (quiero=proc.stdin) o stdout esté listo, atendiendo stderr mientras tanto."""
+        while True:
+            for clave, _ in self.selector.select(self._restante()):
+                if clave.fileobj is self.proc.stderr:
+                    self._atender_stderr()
+                elif clave.fileobj is quiero:
+                    return
+
+    def _atender_stderr(self):
+        try:
+            abierto = self._leer_stderr()
+        except BlockingIOError:
+            return
+        if not abierto:
+            self.selector.unregister(self.proc.stderr)
+
+    def esperar_fin(self):
+        """Espera a que el hijo termine, atendiendo stderr. _Vencido si no termina a tiempo."""
+        while self.proc.poll() is None:
+            for clave, _ in self.selector.select(min(self._restante(), 0.05)):
+                if clave.fileobj is self.proc.stderr:
+                    self._atender_stderr()
+
+    def enviar(self, linea: str):
+        """Escribe una línea sin bloquear más allá de la fecha límite. False si el hijo cerró su stdin."""
+        datos = memoryview((linea + "\n").encode("ascii"))
+        fd = self.proc.stdin.fileno()
+        self.selector.register(self.proc.stdin, selectors.EVENT_WRITE)
+        try:
+            while datos:
+                self._esperar(self.proc.stdin)
+                try:
+                    n = os.write(fd, datos)
+                except BlockingIOError:
+                    continue
+                except BrokenPipeError:
+                    return False
+                datos = datos[n:]
+            return True
+        finally:
+            self.selector.unregister(self.proc.stdin)
 
     def linea(self):
         """La próxima línea del hijo (bytes, sin el \\n), o None si cerró su stdout."""
@@ -234,19 +280,35 @@ class _Sesion:
         while b"\n" not in self.buffer:
             if len(self.buffer) > MAX_LINEA:
                 raise FalloDelConector("protocolo", f"una línea de más de {MAX_LINEA} bytes")
-            if not self.lectura.select(self._restante()):
+            if self.stdout_cerrado:
+                return None
+            self._esperar(self.proc.stdout)
+            try:
+                datos = os.read(fd, 65536)
+            except BlockingIOError:
                 continue
-            datos = os.read(fd, 65536)
             if not datos:
+                self.stdout_cerrado = True
+                self.selector.unregister(self.proc.stdout)
                 return None
             self.buffer += datos
         linea, _, resto = bytes(self.buffer).partition(b"\n")
         self.buffer = bytearray(resto)
         return linea
 
+    def stderr(self):
+        """Lo último del stderr. Antes lee, sin esperar, lo que quedó en el pipe (se llama con el
+        grupo del hijo ya muerto; el tope de lecturas es por si algo escapó del grupo y sigue escribiendo)."""
+        for _ in range(256):
+            try:
+                if not self._leer_stderr():
+                    break
+            except (BlockingIOError, OSError):
+                break
+        return bytes(self.cola_stderr).decode("utf-8", errors="replace")
+
     def cerrar(self):
-        self.lectura.close()
-        self.escritura.close()
+        self.selector.close()
 
 
 def _ultima_linea(texto):
@@ -278,46 +340,53 @@ class ConectorEnSubproceso:
         self.stderr = ""
 
     def comando(self) -> list:
-        return [self.python, "-I", str(Path(self.sdk_dir) / "aura_sdk" / "subproceso.py"),
-                "--mem-mb", str(self.limites.mem_mb), "--cpu-s", str(self.limites.cpu_s),
-                "--archivos", str(self.limites.archivos)]
+        comando = [self.python, "-I", str(Path(self.sdk_dir) / "aura_sdk" / "subproceso.py"),
+                   "--mem-mb", str(self.limites.mem_mb), "--cpu-s", str(self.limites.cpu_s),
+                   "--archivos", str(self.limites.archivos)]
+        if self.limites.procesos is not None:
+            comando += ["--procesos", str(self.limites.procesos)]
+        return comando
 
     def al_recibir_datos(self, msg: Mensaje, ctx: Contexto) -> None:
         inicio = time.monotonic()
         self.stderr = ""
-        with tempfile.TemporaryFile() as err:
+        # Grupo de procesos propio (sin preexec_fn): al terminar se mata el grupo entero, también
+        # lo que el conector haya lanzado.
+        opciones = {**self.popen, "process_group": 0}
+        try:
+            proc = subprocess.Popen(self.comando(), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE, **opciones)
+        except PermissionError as e:
+            raise FalloDelConector("sin_permisos", f"no se pudo lanzar el subproceso: {e}") from None
+        except OSError as e:
+            raise FalloDelConector("murio", f"no se pudo lanzar el subproceso: {e}") from None
+        sesion = _Sesion(proc, inicio + self.timeout_s)
+        try:
+            self._conversar(sesion, msg, ctx, inicio)
+        except _Vencido:
+            raise FalloDelConector("timeout", f"no terminó en {self.timeout_s} s") from None
+        finally:
             try:
-                proc = subprocess.Popen(self.comando(), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                        stderr=err, **self.popen)
-            except PermissionError as e:
-                raise FalloDelConector("sin_permisos", f"no se pudo lanzar el subproceso: {e}") from None
-            except OSError as e:
-                raise FalloDelConector("murio", f"no se pudo lanzar el subproceso: {e}") from None
-            sesion = _Sesion(proc, inicio + self.timeout_s)
-            try:
-                self._conversar(sesion, msg, ctx, inicio)
-            except _Vencido:
-                raise FalloDelConector("timeout", f"no terminó en {self.timeout_s} s") from None
-            finally:
-                if proc.poll() is None:
-                    proc.kill()
-                proc.wait()
-                sesion.cerrar()
-                proc.stdin.close()
-                proc.stdout.close()
-                self.stderr = self._leer(err)
+                os.killpg(proc.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+            proc.wait()
+            self.stderr = sesion.stderr()
+            sesion.cerrar()
+            for f in (proc.stdin, proc.stdout, proc.stderr):
+                f.close()
 
     def _conversar(self, sesion, msg, ctx, inicio):
-        sesion.enviar({"tipo": "inicio", "carpeta": self.carpeta, "mensaje": {
+        sesion.enviar(codificar({"tipo": "inicio", "carpeta": self.carpeta, "mensaje": {
             "hw_id": msg.hw_id, "values": msg.values, "ts": msg.ts,
-            "ingest_id": msg.ingest_id, "adaptador": msg.adaptador}})
+            "ingest_id": msg.ingest_id, "adaptador": msg.adaptador}}))
         while True:
             linea = sesion.linea()
             if linea is None:
                 raise self._murio(sesion, inicio)
             try:
                 m = decodificar(linea.decode("utf-8"))
-            except ValueError:
+            except (ValueError, RecursionError):   # RecursionError: JSON anidado a propósito
                 raise FalloDelConector("protocolo", f"una línea que no es JSON: {linea[:200]!r}") from None
             tipo = m.get("tipo")
             if tipo == "fin":
@@ -330,37 +399,33 @@ class ConectorEnSubproceso:
             sesion.enviar(self._atender(ctx, m["metodo"], m["args"]))
 
     @staticmethod
-    def _atender(ctx, metodo, args):
+    def _atender(ctx, metodo, args) -> str:
+        """Llama al Contexto y devuelve la respuesta ya codificada."""
         try:
             valor = getattr(ctx, metodo)(**args)
         except tuple(ERRORES.values()) as e:
             nombre = next(n for n, t in ERRORES.items() if isinstance(e, t))   # una subclase cruza como su base
             detalle = e.args[0] if isinstance(e, KeyError) and e.args else e   # str(KeyError) agrega comillas
-            return {"tipo": "respuesta", "ok": False, "error": nombre, "detalle": str(detalle)}
+            return codificar({"tipo": "respuesta", "ok": False, "error": nombre, "detalle": str(detalle)})
         except Exception as e:
             # Falla de AURA (por ejemplo, la base): no se le pasa al conector. Lo mata el finally.
             raise ErrorDelAnfitrion(e) from e
-        return {"tipo": "respuesta", "ok": True, "valor": valor}
+        try:
+            return codificar({"tipo": "respuesta", "ok": True, "valor": valor})
+        except (TypeError, ValueError, RecursionError) as e:
+            # El Contexto devolvió algo que no es JSON (un Decimal, por ejemplo): bug de AURA.
+            raise ErrorDelAnfitrion(e) from e
 
     def _murio(self, sesion, inicio):
         """Cerró su stdout sin mandar fin: por qué."""
-        try:
-            codigo = sesion.proc.wait(timeout=max(0.1, sesion.limite - time.monotonic()))
-        except subprocess.TimeoutExpired:   # cerró stdout pero sigue vivo: se cuenta como colgado
-            return FalloDelConector("timeout", f"cerró su salida sin mandar fin y no terminó en {self.timeout_s} s")
+        sesion.esperar_fin()   # si cerró stdout pero sigue vivo, vence y cuenta como timeout
+        codigo = sesion.proc.returncode
         if codigo < 0:
             senal = signal.Signals(-codigo).name if -codigo in signal.valid_signals() else str(-codigo)
             if -codigo in (signal.SIGKILL, signal.SIGXCPU) and time.monotonic() - inicio >= self.limites.cpu_s:
                 return FalloDelConector("timeout", f"superó el límite de CPU ({self.limites.cpu_s} s): señal {senal}")
             return FalloDelConector("murio", f"terminó con la señal {senal} sin mandar fin")
         return FalloDelConector("murio", f"terminó con código {codigo} sin mandar fin")
-
-    @staticmethod
-    def _leer(err):
-        err.seek(0, os.SEEK_END)
-        tam = err.tell()
-        err.seek(max(0, tam - MAX_STDERR))
-        return err.read().decode("utf-8", errors="replace")
 
 
 if __name__ == "__main__":   # python -m aura_sdk.subproceso

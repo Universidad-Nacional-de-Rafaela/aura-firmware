@@ -67,6 +67,9 @@ class Corrida:
             return None
         alertas_antes = len(self.ctx.alertas)
         r = procesar(self.conector, self.ctx, msg)
+        if self.subproceso and self.conector.stderr:   # prints y log del hijo: a stderr, como en el banco
+            sys.stderr.write(self.conector.stderr if self.conector.stderr.endswith("\n") else self.conector.stderr + "\n")
+            sys.stderr.flush()
         extra = f" ({r.motivo})" if r.motivo else ""
         quitados = f", quitados {r.quitados}" if r.quitados else ""
         self.salida(f"{msg.values} -> {r.resultado}{extra}{quitados}")

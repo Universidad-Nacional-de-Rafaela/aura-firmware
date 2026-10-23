@@ -90,6 +90,18 @@ class Subproceso(unittest.TestCase):
         self.assertIn("persistido: 2", sin.stdout.splitlines()[-1])
         self.assertEqual(con.stdout, sin.stdout)
 
+    def test_con_subproceso_muestra_el_stderr_del_conector(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".jsonl") as f:
+            f.write('{"values": {"temp_c": 20}, "ingest_id": "a"}\n')
+            f.flush()
+            r = subprocess.run([sys.executable, str(RAIZ / "herramientas" / "correr_conector.py"),
+                                str(RAIZ / "comun" / "python" / "tests" / "conectores" / "con_print"),
+                                "--archivo", f.name, "--subproceso"], capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("-> persistido", r.stdout)
+        self.assertEqual(r.stderr.count("hola"), 2)
+        self.assertNotIn("hola", r.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
