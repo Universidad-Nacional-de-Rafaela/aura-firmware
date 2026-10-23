@@ -1,5 +1,10 @@
 # <CÓDIGO> — <qué es, en palabras>
 
+> **Desde el 2026-10-20, esta plantilla en Arduino es solo para dispositivos LoRaWAN.** Los de
+> la mesh (interior) se programan en ESP-IDF a partir de
+> [`Mesh_Red_Completa/Mesh3_Hoja/`](../../Mesh_Red_Completa/Mesh3_Hoja/): ver `CONTRIBUTING.md`.
+> La ficha (este `README.md`) sirve para los dos.
+
 > Plantilla: copiar esta carpeta como `dispositivos/<CÓDIGO>/`, renombrar el `.ino` igual que
 > la carpeta, reemplazar lo que está entre `< >` y borrar esta línea. El código se arma con el
 > mapa de [`dispositivos/README.md`](../../dispositivos/README.md).

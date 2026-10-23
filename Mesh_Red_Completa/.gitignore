@@ -1,0 +1,12 @@
+# Proyectos ESP-IDF: lo que se genera al compilar
+build/
+managed_components/
+sdkconfig
+sdkconfig.old
+.vscode/
+.clangd
+
+# Configuración local (config_local.h y credenciales.h ya están en el .gitignore de la raíz)
+
+# Broker de prueba
+mensajes.log

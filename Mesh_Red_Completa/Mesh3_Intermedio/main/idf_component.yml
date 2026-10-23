@@ -1,0 +1,4 @@
+## Componentes externos (se descargan del registro de Espressif en el primer build)
+dependencies:
+  espressif/led_strip: "^3"
+  espressif/cjson: "*"
