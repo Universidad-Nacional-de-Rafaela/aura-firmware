@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.16)
+# Componentes comunes de la mesh de AURA (trama y biblioteca de la hoja)
+set(EXTRA_COMPONENT_DIRS "${CMAKE_CURRENT_LIST_DIR}/../componentes")
+include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+project(mesh_hoja)

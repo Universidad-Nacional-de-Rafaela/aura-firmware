@@ -1,5 +1,11 @@
 # Estado de banco — mesh ESP-WIFI-MESH
 
+> **Registro de la versión en Arduino, cerrado el 2026-10-20.** La mesh pasó a ESP-IDF
+> ([ADR-007](../adr/ADR-007-mesh-en-esp-idf-con-concentrador-por-aula.md)); sus pruebas en placa
+> están en [`Mesh_Red_Completa/Broker_MQTT/LEEME.md`](../../Mesh_Red_Completa/Broker_MQTT/LEEME.md).
+> Lo de acá queda como antecedente: varios defectos (el SSID obligatorio, los canales 12 y 13, la
+> cola en flash) no aplican a la versión ESP-IDF.
+
 **Primera prueba en placa: 2026-10-09**, con tres **ESP32-C3 SuperMini** (la placa de la mesh; la
 XIAO ESP32S3 queda para LoRaWAN), FQBN `esp32:esp32:nologo_esp32c3_super_mini`, el hotspot de un
 celular como router (canal 1) y el broker de aura-app en la notebook. Lo que sigue es el protocolo

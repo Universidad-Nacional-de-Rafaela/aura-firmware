@@ -1,0 +1,6 @@
+# ESP32-C3 SuperMini (4 MB) - Hoja
+CONFIG_IDF_TARGET="esp32c3"
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+# Tabla propia: app + partición "cola" (respaldo de mediciones sin confirmar tras un corte)
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
