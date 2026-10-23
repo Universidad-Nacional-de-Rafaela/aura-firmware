@@ -17,9 +17,10 @@ from aura_sdk import Conector
 
 # Medidas de cada tanque: distancia del sensor al agua con el tanque vacío y lleno, y capacidad.
 # El volumen supone sección constante (tanque cilíndrico o de paredes rectas).
+# Vacío = el alto del tanque (el sensor está en la tapa); lleno = medido en la terraza.
 TANQUES = {
-    1: {"vacio_cm": 170, "lleno_cm": 20, "capacidad_l": 1000},
-    2: {"vacio_cm": 200, "lleno_cm": 20, "capacidad_l": 1500},
+    1: {"vacio_cm": 137, "lleno_cm": 40, "capacidad_l": 1000},     # Eternit tricapa 1000 L
+    2: {"vacio_cm": 152.5, "lleno_cm": 25, "capacidad_l": 500},    # Rotoplas Slim 500 L, 1,50 a 1,55 m
 }
 
 UMBRAL_PCT = 20        # por debajo de este nivel, el tanque merece un aviso

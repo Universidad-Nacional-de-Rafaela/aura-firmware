@@ -22,7 +22,7 @@ def msg(values, minuto=0):
 
 def dist(n, pct):
     """La distancia que corresponde a un nivel, con las medidas de TANQUES de conector.py."""
-    vacio, lleno = {1: (170, 20), 2: (200, 20)}[n]
+    vacio, lleno = {1: (137, 40), 2: (152.5, 25)}[n]
     return vacio - pct / 100 * (vacio - lleno)
 
 
@@ -40,13 +40,13 @@ class ConectorTanques(unittest.TestCase):
         return self.ctx.serie(campo)[-1][1]
 
     def test_calcula_nivel_y_volumen_de_los_dos_tanques(self):
-        r = procesar(self.conector, self.ctx, msg({"dist_t1_cm": 50.0, "dist_t2_cm": 110.0}))
+        r = procesar(self.conector, self.ctx, msg({"dist_t1_cm": 59.4, "dist_t2_cm": 88.75}))
         self.assertEqual(r.resultado, "persistido")
-        self.assertEqual(self.ctx.serie("dist_t1_cm"), [(T0, 50.0)])
-        self.assertEqual(self.ctx.serie("nivel_t1_pct"), [(T0, 80.0)])   # (170-50)/(170-20)
+        self.assertEqual(self.ctx.serie("dist_t1_cm"), [(T0, 59.4)])
+        self.assertEqual(self.ctx.serie("nivel_t1_pct"), [(T0, 80.0)])   # (137-59.4)/(137-40)
         self.assertEqual(self.ctx.serie("vol_t1_l"), [(T0, 800)])
-        self.assertEqual(self.ctx.serie("nivel_t2_pct"), [(T0, 50.0)])   # (200-110)/(200-20)
-        self.assertEqual(self.ctx.serie("vol_t2_l"), [(T0, 750)])
+        self.assertEqual(self.ctx.serie("nivel_t2_pct"), [(T0, 50.0)])   # (152.5-88.75)/(152.5-25)
+        self.assertEqual(self.ctx.serie("vol_t2_l"), [(T0, 250)])
 
     def test_fuera_de_vacio_lleno_se_acota(self):
         procesar(self.conector, self.ctx, msg({"dist_t1_cm": 15.0, "dist_t2_cm": 210.0}))
@@ -55,14 +55,14 @@ class ConectorTanques(unittest.TestCase):
 
     def test_un_sensor_que_falla_no_aparece_y_el_resto_se_guarda(self):
         # codec.js omite la distancia sin lectura: llega solo el tanque 2
-        r = procesar(self.conector, self.ctx, msg({"dist_t2_cm": 110.0}))
+        r = procesar(self.conector, self.ctx, msg({"dist_t2_cm": 88.75}))
         self.assertEqual(r.resultado, "persistido")
         self.assertEqual(self.ctx.serie("nivel_t1_pct"), [])
         self.assertEqual(self.ctx.serie("vol_t1_l"), [])
         self.assertEqual(self.ctx.serie("nivel_t2_pct"), [(T0, 50.0)])
 
     def test_distancia_fuera_de_rango_no_calcula_nada(self):
-        r = procesar(self.conector, self.ctx, msg({"dist_t1_cm": 700.0, "dist_t2_cm": 110.0}))
+        r = procesar(self.conector, self.ctx, msg({"dist_t1_cm": 700.0, "dist_t2_cm": 88.75}))
         self.assertEqual(r.resultado, "persistido")
         self.assertIn("dist_t1_cm", r.quitados)
         self.assertEqual(self.ctx.serie("nivel_t1_pct"), [])
@@ -74,7 +74,7 @@ class ConectorTanques(unittest.TestCase):
 
     def test_nivel_y_volumen_del_mensaje_se_ignoran(self):
         # los calcula el conector: si llegan en values (un codec viejo), no se usan
-        procesar(self.conector, self.ctx, msg({"dist_t1_cm": 50.0, "nivel_t1_pct": 5, "vol_t1_l": 50}))
+        procesar(self.conector, self.ctx, msg({"dist_t1_cm": 59.4, "nivel_t1_pct": 5, "vol_t1_l": 50}))
         self.assertEqual(self.ctx.serie("nivel_t1_pct"), [(T0, 80.0)])
         self.assertEqual(self.ctx.serie("vol_t1_l"), [(T0, 800)])
 
@@ -107,7 +107,7 @@ class ConectorTanques(unittest.TestCase):
         self.assertIn("Tanque 1 lleno, al 95.0 %", self.ctx.alertas[0].mensaje)
 
     def test_zona_ciega_avisa_rebalse_o_sensor_obstruido(self):
-        # menos de 20 cm: el agua sobre la marca de lleno, o condensacion en el sensor
+        # mas cerca que la marca de lleno (40 cm): el agua por encima, o condensacion en el sensor
         procesar(self.conector, self.ctx, msg({"dist_t1_cm": 12.0, "dist_t2_cm": 110.0}))
         self.assertEqual(self.ctx.serie("nivel_t1_pct"), [(T0, 100.0)])
         self.assertEqual([(a.tipo, a.severidad) for a in self.ctx.alertas], [("nivel_alto", "warning")])

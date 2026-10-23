@@ -4,8 +4,8 @@
 |---|---|
 | **Ubicación** | Edificio 1, azotea, terraza (al aire libre) |
 | **Responsable** | losHijosDelStackOverFlow, Ingeniería en Computación IV 2026 (@FerChaparro27, @romerof7) |
-| **Estado** | en banco |
-| **Instalado** | todavía no |
+| **Estado** | instalado |
+| **Instalado** | 2026-10-21 |
 | **Transporte** | LoRaWAN (exterior), según [ADR-003](../../docs/adr/ADR-003-dos-transportes-mesh-interior-lorawan-exterior.md) y [ADR-006](../../docs/adr/ADR-006-esp-wifi-mesh-reemplaza-a-esp-now-en-interior.md) |
 | **Contrato que implementa** | [`CONTRATO_MQTT.md`](../../docs/CONTRATO_MQTT.md) v4.0 |
 | **Basado en** | ninguno |
@@ -26,10 +26,13 @@ litros los calcula el conector en AURA con las medidas de cada tanque.
 | Sensor de nivel, tanque 1 | JSN-SR04T 2.0 (ultrasónico, sumergible, 5 V) | Trig D1, Echo D2 |
 | Sensor de nivel, tanque 2 | JSN-SR04T 2.0 (ultrasónico, sumergible, 5 V) | Trig D5, Echo D4 |
 
-| Tanque | Capacidad | Distancia del sensor, vacío | Distancia del sensor, lleno |
-|---|---|---|---|
-| 1 | 1000 L | 170 cm | 20 cm |
-| 2 | 1500 L | 200 cm | 20 cm |
+| Tanque | Modelo | Alto × diámetro | Capacidad | Distancia del sensor, vacío | Distancia del sensor, lleno |
+|---|---|---|---|---|---|
+| 1 | Eternit tricapa, vertical | 1,37 × 1,05 m | 1000 L | 137 cm | 40 cm |
+| 2 | Rotoplas Slim (boca de 0,49 m) | 1,50 a 1,55 × 0,68 a 0,70 m | 500 L | 152,5 cm | 25 cm |
+
+El sensor está en la tapa: la distancia con el tanque vacío es el alto del tanque (en el 2, el
+medio del rango del fabricante). La de lleno es el nivel máximo del agua, medido en la terraza.
 
 Estas medidas no están en el firmware: están en `TANQUES`, en
 [`conector.py`](../../conectores/E1-AZ-TERR-TAN01/conector.py). Si cambian, o el nodo se usa en otro
@@ -47,14 +50,15 @@ son los del manifiesto del conector, [`conector.toml`](../../conectores/E1-AZ-TE
 | `dist_t1_cm`, `dist_t2_cm` | cm | 0 a 600 | `intervalo_s` (60 s de fábrica), del nodo |
 | `nivel_t1_pct`, `nivel_t2_pct` | % | 0 a 100 | con cada medición, calculado por el conector |
 | `vol_t1_l` | L | 0 a 1000 | con cada medición, calculado por el conector |
-| `vol_t2_l` | L | 0 a 1500 | con cada medición, calculado por el conector |
+| `vol_t2_l` | L | 0 a 500 | con cada medición, calculado por el conector |
 
 Alertas: el nodo no emite alertas propias. El conector avisa, una vez por cruce y por tanque:
 
 - `nivel_bajo` cuando un tanque baja del 20 % y cuando se recupera.
-- `nivel_alto` cuando un tanque llega al 95 % y cuando baja. Una distancia menor a 20 cm (la zona
-  ciega del JSN-SR04T, que coincide con la marca de lleno) se manda igual y se guarda como 100 %:
-  es el agua por encima de la marca o el sensor obstruido por condensación, y el aviso lo dice.
+- `nivel_alto` cuando un tanque llega al 95 % y cuando baja. Una distancia menor que la de lleno
+  (40 cm en el tanque 1, 25 cm en el 2) se guarda como 100 %: es el agua por encima de la marca o
+  el sensor obstruido por condensación, y el aviso lo dice. Por debajo de 20 cm (la zona ciega del
+  JSN-SR04T) el nodo la manda igual.
 
 ## Codec
 
@@ -110,7 +114,8 @@ Se cambia con `set_config` (contrato §3.3):
 |---|---|---|---|
 | `intervalo_s` | 60 a 43200 s | 60 s | NVS (`Preferences`, espacio `config`, clave `intervalo_s`) |
 
-Al arrancar, el nodo lee `intervalo_s` de la NVS; si falta o no valida, usa 60 s.
+Al arrancar, el nodo lee `intervalo_s` de la NVS; si falta o no valida, usa 60 s. El nodo de la
+terraza está en 300 s, por un `set_config` desde AURA.
 
 Las credenciales OTAA (DevEUI, JoinEUI, AppKey) no van en este repo: las da la cátedra y van en
 `config_local.h`.

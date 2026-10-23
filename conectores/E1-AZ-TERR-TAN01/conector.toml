@@ -37,4 +37,4 @@ max = 1000
 [campos.vol_t2_l]
 unidad = "L"
 min = 0
-max = 1500
+max = 500
