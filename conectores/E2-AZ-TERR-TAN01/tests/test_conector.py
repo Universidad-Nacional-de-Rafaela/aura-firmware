@@ -36,29 +36,29 @@ class ConectorTanques(unittest.TestCase):
     def alertas(self, tipo):
         return [a for a in self.ctx.alertas if a.tipo == tipo]
 
-    def enviar(self, values, paso=20):
-        """Un mensaje cada `paso` segundos, como los turnos del nodo con intervalo_s = 60."""
+    def enviar(self, values, paso=60):
+        """Un mensaje cada `paso` segundos, como los ciclos del nodo con intervalo_s = 60."""
         r = procesar(self.conector, self.ctx, msg(values, self.t))
         self.t += paso
         return r
 
-    def ciclos(self, n, d1=150, d2=200, d3=300, niveles=(None, None, None), sin=()):
-        """n ciclos normales: un mensaje por tanque, salvo los tanques de `sin`."""
+    def ciclos(self, n, d1=150, d2=200, d3=300, niveles=(None, None, None), sin=(), paso=60):
+        """n ciclos normales: un mensaje con los tres tanques, salvo los de `sin`."""
         for _ in range(n):
+            valores = {}
             for numero, d in ((1, d1), (2, d2), (3, d3)):
-                if numero in sin:
-                    self.t += 20
-                    continue
-                self.enviar(tanque(numero, d, niveles[numero - 1]))
+                if numero not in sin:
+                    valores.update(tanque(numero, d, niveles[numero - 1]))
+            self.enviar(valores, paso)
 
     # --- guardar ---
 
-    def test_un_turno_guarda_su_tanque(self):
-        r = self.enviar(tanque(2, 244.5))
+    def test_un_ciclo_guarda_los_tres(self):
+        r = self.enviar({**tanque(1, 245.3), **tanque(2, 243), **tanque(3, 244.3)})
         self.assertEqual(r.resultado, "persistido")
-        self.assertEqual(self.ctx.serie("distancia_tanque2_cm"), [(T0, 244.5)])
+        self.assertEqual(self.ctx.serie("distancia_tanque2_cm"), [(T0, 243)])
 
-    def test_medir_ahora_guarda_los_tres_con_nivel(self):
+    def test_guarda_los_tres_con_nivel(self):
         valores = {**tanque(1, 150, 50.0), **tanque(2, 200, 30.5), **tanque(3, 25, 100.0)}
         r = self.enviar(valores)
         self.assertEqual(r.resultado, "persistido")
@@ -117,7 +117,9 @@ class ConectorTanques(unittest.TestCase):
 
     def test_un_sensor_que_deja_de_medir_alerta_una_vez_y_avisa_cuando_vuelve(self):
         self.ciclos(2)
-        self.ciclos(6, sin=(2,))
+        self.ciclos(2, sin=(2,))
+        self.assertEqual(self.alertas("sensor"), [])   # 2 ciclos: todavía no
+        self.ciclos(4, sin=(2,))
         alertas = [(a.severidad, a.mensaje[:9]) for a in self.alertas("sensor")]
         self.assertEqual(alertas, [("warning", "Tanque 2:")])
         self.ciclos(2)
@@ -133,18 +135,16 @@ class ConectorTanques(unittest.TestCase):
     def test_un_sensor_que_nunca_midio_alerta_una_sola_vez(self):
         self.ciclos(8, sin=(3,))
         self.assertEqual([a.severidad for a in self.alertas("sensor")], ["warning"])
+        self.assertIn("Tanque 3", self.alertas("sensor")[0].mensaje)
 
     def test_no_depende_del_intervalo(self):
-        # Con intervalo_s = 12 h los turnos quedan a 4 h: los avisos tienen que ser los mismos.
-        paso = 4 * 3600
-        for _ in range(2):
-            for n in (1, 2, 3):
-                self.enviar(tanque(n, 100), paso)
-        for _ in range(6):
-            for n in (1, 3):
-                self.enviar(tanque(n, 100), paso)
-            self.t += paso
+        # Con intervalo_s = 12 h los avisos tienen que ser los mismos que con 60 s.
+        paso = 12 * 3600
+        self.ciclos(2, paso=paso)
+        self.ciclos(4, sin=(2,), paso=paso)
         self.assertEqual([a.severidad for a in self.alertas("sensor")], ["warning"])
+        self.ciclos(1, paso=paso)
+        self.assertEqual([a.severidad for a in self.alertas("sensor")], ["warning", "info"])
 
     def test_si_fallan_los_tres_no_hay_alerta_de_sensor(self):
         self.ciclos(2)

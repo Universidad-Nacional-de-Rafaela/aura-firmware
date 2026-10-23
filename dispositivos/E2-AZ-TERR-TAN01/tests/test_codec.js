@@ -20,18 +20,18 @@ function reporte(ref, res, intervalo, ceros, llenos) {
 }
 
 // ---------- subida: medicion (fPort 1) ----------
-caso("un turno: un tanque sin calibrar trae solo la distancia en cm", () => {
+caso("un tanque sin calibrar trae solo la distancia en cm", () => {
   const r = decodeUplink({ fPort: 1, bytes: [0x02, ...be(2445, SC)] });
   assert.deepStrictEqual(r.data, { distancia_tanque2_cm: 244.5 });
   assert.strictEqual(r.errors, undefined);
 });
 
-caso("un turno: un tanque calibrado trae distancia y nivel", () => {
+caso("un tanque calibrado trae distancia y nivel", () => {
   const r = decodeUplink({ fPort: 1, bytes: [0x01, ...be(1007, 734)] });
   assert.deepStrictEqual(r.data, { distancia_tanque1_cm: 100.7, nivel_tanque1_pct: 73.4 });
 });
 
-caso("medir_ahora: los tres tanques en un mensaje", () => {
+caso("un ciclo: los tres tanques en un mensaje", () => {
   const r = decodeUplink({ fPort: 1, bytes: [0x07, ...be(2462, SC, 1500, 500, 300, 1000)] });
   assert.deepStrictEqual(r.data, {
     distancia_tanque1_cm: 246.2,
@@ -113,9 +113,15 @@ caso("medir_ahora", () => {
     { bytes: [0x01, 5] });
 });
 
-caso("set_config intervalo_s 300", () => {
+caso("set_config solo intervalo_s: forma corta de 4 bytes", () => {
   const r = encodeDownlink({ data: { command: "set_config", params: { intervalo_s: 300 }, ref: 7 } });
-  assert.deepStrictEqual(r, { bytes: [0x02, 7, 0x01, 0x01, 0x2c] });
+  assert.deepStrictEqual(r, { bytes: [0x02, 7, 0x01, 0x2c] });
+});
+
+caso("set_config intervalo_s con calibracion: entradas id hi lo", () => {
+  const r = encodeDownlink({ data: { command: "set_config", ref: 7,
+    params: { intervalo_s: 300, cero_tanque1_cm: 160 } } });
+  assert.deepStrictEqual(r, { bytes: [0x02, 7, 0x01, 0x01, 0x2c, 0x11, ...be(1600)] });
 });
 
 caso("set_config cero y lleno de un tanque, en cm con un decimal", () => {
@@ -133,7 +139,9 @@ caso("set_config con todo junto (7 parametros, 23 bytes)", () => {
 
 caso("set_config en los bordes", () => {
   assert.deepStrictEqual(encodeDownlink({ data: { command: "set_config", params: { intervalo_s: 43200 }, ref: 255 } }).bytes,
-    [2, 255, 1, 0xa8, 0xc0]);
+    [2, 255, 0xa8, 0xc0]);
+  assert.deepStrictEqual(encodeDownlink({ data: { command: "set_config", params: { intervalo_s: 60 }, ref: 1 } }).bytes,
+    [2, 1, 0, 60]);
   assert.deepStrictEqual(encodeDownlink({ data: { command: "set_config", params: { cero_tanque3_cm: 600 }, ref: 1 } }).bytes,
     [2, 1, 0x13, ...be(6000)]);
   assert.deepStrictEqual(encodeDownlink({ data: { command: "set_config", params: { lleno_tanque1_cm: 25 }, ref: 1 } }).bytes,

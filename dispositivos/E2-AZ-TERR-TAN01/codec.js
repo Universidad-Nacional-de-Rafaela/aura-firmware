@@ -9,7 +9,8 @@
 // fPort 1, medicion: [0] mascara de tanques (bit0 = tanque 1 ... bit2 = tanque 3) y, por cada
 //   tanque de la mascara, en orden: distancia en mm = cm x 10 (uint16) + nivel en decimas de %
 //   (uint16, 0..1000; 0xFFFF = tanque sin calibrar). Big endian.
-//   Cada turno manda un tanque (5 bytes); medir_ahora manda los tres (13 bytes).
+//   Cada ciclo (y medir_ahora) manda los tres tanques: 13 bytes. Un tanque cuyo sensor no midio
+//   no va en la mascara.
 //   values: distancia_tanqueN_cm (cm, un decimal) y, si el tanque esta calibrado,
 //   nivel_tanqueN_pct (%, un decimal).
 //   0xFFFE = el agua esta dentro de la zona ciega del sensor (tanque lleno). No es una falla:
@@ -24,14 +25,15 @@
 //
 // BAJADA (fPort 10). El lorawan-bridge pasa {command, params, ref}:
 //   medir_ahora -> 01 ref
-//   set_config  -> 02 ref y una entrada (id hi lo) por parametro:
+//   set_config solo con intervalo_s -> 02 ref hi lo (4 bytes: entra en un profile con
+//   aura_max_downlink_bytes = 4)
+//   set_config con calibracion -> 02 ref y una entrada (id hi lo) por parametro:
 //     intervalo_s        (60..43200 s, entero)      id 0x01, en s
 //     cero_tanqueN_cm    (25..600 cm, un decimal)   id 0x10 + N, en mm
 //     lleno_tanqueN_cm   (25..600 cm, un decimal)   id 0x20 + N, en mm
 //   cero = distancia del sensor al agua con el tanque vacio (0 %); lleno = con el tanque
 //   lleno (100 %). El cero tiene que quedar al menos 10 cm mas lejos que el lleno.
-//   intervalo_s es cada cuanto se miden los tres tanques: cada turno (intervalo_s / 3) mide un
-//   tanque y lo manda.
+//   intervalo_s es cada cuanto se miden los tres tanques y se manda la medicion.
 
 var N_TANQUES = 3;
 var DIST_MIN_MM = 250;            // iguales al sketch; en values: 25 a 600 cm (conector.toml)
@@ -158,6 +160,10 @@ function encodeDownlink(input) {
     } else {
       return { errors: ["set_config: parametro desconocido '" + k + "' (intervalo_s, cero_tanqueN_cm, lleno_tanqueN_cm)"] };
     }
+  }
+  // Solo el intervalo: la forma corta de 4 bytes (02 ref hi lo).
+  if (claves.length === 1 && claves[0] === "intervalo_s") {
+    return { bytes: [0x02, ref, bytes[3], bytes[4]] };
   }
   // Si vienen los dos de un tanque, se controla aca; si viene uno solo, lo controla el nodo
   // contra el que tiene guardado.

@@ -1,15 +1,15 @@
 """Conector de E2-AZ-TERR-TAN01 — nivel de 3 tanques de agua (terraza del Edificio 2).
 
-El nodo mide un tanque por turno y lo manda enseguida: cada mensaje trae un tanque (o los tres,
-después de un `medir_ahora`). Por tanque llegan `distancia_tanqueN_cm` y, si el tanque está
-calibrado (cero y lleno, por `set_config` desde AURA), `nivel_tanqueN_pct`.
+El nodo mide los tres tanques juntos cada `intervalo_s` y los manda en un mensaje. Por tanque
+llegan `distancia_tanqueN_cm` y, si el tanque está calibrado (cero y lleno, por `set_config`
+desde AURA), `nivel_tanqueN_pct`.
 
 Alertas:
 - `tanque_bajo`: el nivel bajó del mínimo (20 %) y, con un margen, cuando se recupera. Necesita
   el tanque calibrado: sin nivel no hay con qué comparar. El nodo solo mide; la bomba la maneja
   un control externo, y este aviso sirve para saber que no llenó a tiempo.
 - `sensor`: un tanque dejó de llegar mientras los otros siguen llegando. El nodo no manda un
-  tanque cuyo sensor no midió, así que la falla se nota porque falta.
+  tanque cuyo sensor no midió, así que la falla se nota porque falta en los mensajes.
 
 `25` cm de distancia llega cuando el agua está en la zona ciega del sensor (tanque lleno): no es
 una falla. Lo que está fuera de los rangos de conector.toml lo quita AURA al guardar.
@@ -32,10 +32,10 @@ class ConectorTanques(Conector):
     # El aviso de que se recuperó sale recién cuando el nivel sube este margen sobre el mínimo:
     # así no se repiten avisos si el nivel queda justo en el borde.
     HISTERESIS_PCT = 5
-    # Mensajes de los otros tanques sin noticias de uno antes de dar su sensor por caído. En un
-    # ciclo normal llegan 2 (uno de cada otro tanque): 6 son unos 3 ciclos, sea cual sea el
-    # intervalo, y no avisa por una medición perdida.
-    MENSAJES_SIN_DATOS = 6
+    # Mensajes con otros tanques y sin noticias de uno antes de dar su sensor por caído. Llega
+    # un mensaje por ciclo: 3 son 3 ciclos seguidos, sea cual sea el intervalo, y no avisa por
+    # una medición perdida.
+    MENSAJES_SIN_DATOS = 3
     # Hasta dónde mira hacia atrás: primero poco (lo normal) y, si no alcanza, más.
     VENTANAS = (timedelta(hours=2), timedelta(days=3))
 

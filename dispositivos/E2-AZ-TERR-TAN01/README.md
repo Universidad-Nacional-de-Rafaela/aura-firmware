@@ -36,16 +36,15 @@ Cada medición es un campo de `values` (contrato §3.1).
 
 | Campo | Unidad | Rango válido | Cuándo |
 |---|---|---|---|
-| `distancia_tanqueN_cm` (N = 1, 2, 3) | cm, con un decimal | 25 a 600 | en el turno de ese tanque; los tres juntos al pedir `medir_ahora` |
+| `distancia_tanqueN_cm` (N = 1, 2, 3) | cm, con un decimal | 25 a 600 | cada `intervalo_s` (60 s por defecto), los tres juntos; y al pedir `medir_ahora` |
 | `nivel_tanqueN_pct` | %, con un decimal | 0 a 100 | junto con la distancia, solo si el tanque está calibrado |
 
-**Mide y manda.** Cada `intervalo_s` se miden los tres tanques, en turnos repartidos cada
-`intervalo_s / 3`: con 60 s, el 1 en el segundo 0, el 2 en el 20 y el 3 en el 40 (el segundo 0
-es el arranque de la placa); con 300 s, cada 100 s. Cada turno mide su tanque y lo manda
-enseguida, en su propio uplink. La red y `medir_ahora` usan los huecos entre turnos.
+**Mide los tres y manda.** Cada `intervalo_s` se miden los tres tanques, uno detrás del otro
+(menos de 2 s), y enseguida sale un mensaje con los tres. Los ciclos se cuentan desde el primero,
+sin deriva.
 
 La distancia de cada tanque es la mediana de 5 lecturas. Si el sensor no responde o mide más
-lejos que el rango, ese turno **no manda nada**: es una falla, y el conector avisa `sensor`
+lejos que el rango, ese tanque **no va en el mensaje**: es una falla, y el conector avisa `sensor`
 cuando el tanque deja de llegar mientras los otros siguen llegando.
 
 **Tanque lleno.** El sensor va en la tapa y el AJ-SR04M no mide a menos de unos 25 cm (zona
@@ -59,7 +58,7 @@ o menos". No dispara la alerta `sensor` ni `tanque_bajo`.
 distancia.
 
 Alertas (contrato §3.5). El nodo LoRaWAN no publica alertas propias: las genera el conector.
-- `sensor`: un tanque no llega en 6 mensajes seguidos de los otros (unos 3 ciclos, sea cual sea
+- `sensor`: un tanque falta en 3 mensajes seguidos que traen a los otros (3 ciclos, sea cual sea
   el intervalo); `info` cuando vuelve.
 - `tanque_bajo`: `warning` cuando el nivel baja del 20 % e `info` cuando vuelve a 25 % o más.
   Necesita el tanque calibrado. La bomba la maneja un control externo: el aviso sirve para saber
@@ -73,12 +72,13 @@ configuración vigente: el bridge lo publica como `aplicado` o `rechazado` (§3.
 
 | Comando | Bytes | Qué hace |
 |---|---|---|
-| `medir_ahora` | `01 ref` | mide los tres tanques en el próximo hueco entre turnos (sin mover el ciclo) y los manda juntos, enseguida del reporte |
-| `set_config` | `02 ref` + una entrada `id hi lo` por parámetro | cambia los parámetros de abajo |
+| `medir_ahora` | `01 ref` | mide los tres tanques ya (sin mover el ciclo) y los manda, enseguida del reporte |
+| `set_config` solo con `intervalo_s` | `02 ref hi lo` | cambia el intervalo (4 bytes: entra con `aura_max_downlink_bytes = 4`) |
+| `set_config` con calibración | `02 ref` + una entrada `id hi lo` por parámetro | cambia los parámetros de abajo |
 
 | Parámetro de `set_config` | Rango | Qué es | Valor en esta placa |
 |---|---|---|---|
-| `intervalo_s` | 60 a 43200 s, entero | cada cuánto se miden los tres tanques; los turnos se recalculan solos (`intervalo_s / 3`) y el ciclo arranca de nuevo por el tanque 1 | 60 |
+| `intervalo_s` | 60 a 43200 s, entero | cada cuánto se miden los tres tanques y se manda; el ciclo arranca de nuevo con el intervalo nuevo | 60 |
 | `cero_tanqueN_cm` | 25 a 600 cm, un decimal | distancia del sensor al agua con el tanque **vacío** (0 %) | sin calibrar |
 | `lleno_tanqueN_cm` | 25 a 600 cm, un decimal | distancia del sensor al agua con el tanque **lleno** (100 %) | sin calibrar |
 
@@ -90,8 +90,8 @@ Para calibrar un tanque: con el tanque vacío (o en el nivel que se quiera tomar
 `medir_ahora` y anotar `distancia_tanqueN_cm`; lo mismo lleno. Después, por ejemplo,
 `set_config {"cero_tanque1_cm": 160, "lleno_tanque1_cm": 30}`.
 
-**Clase A**: el nodo solo escucha después de transmitir. Como manda en cada turno, un comando
-llega en `intervalo_s / 3` como mucho (20 s con 60 s; 4 h con el máximo).
+**Clase A**: el nodo solo escucha después de transmitir, así que un comando llega con el próximo
+mensaje: hasta `intervalo_s` después de encolarlo (1 min con 60 s; 12 h con el máximo).
 
 ## La red
 
@@ -114,7 +114,7 @@ firmware y el codec a la vez. Los tests están en [`tests/`](tests/) (`make -C t
 
 | fPort | Bytes | Qué es |
 |---|---|---|
-| 1 | 5 (un turno) o 13 (`medir_ahora`) | Medición: máscara de tanques (bit 0 = tanque 1) y, por cada uno, distancia en mm (cm × 10) y nivel en décimas de % (`0xFFFF` = sin calibrar), uint16 big endian. Distancia `0xFFFE` (zona ciega, tanque lleno) = 25 cm |
+| 1 | 13 con los 3 tanques (9 o 5 si falta alguno) | Medición: máscara de tanques (bit 0 = tanque 1) y, por cada uno, distancia en mm (cm × 10) y nivel en décimas de % (`0xFFFF` = sin calibrar), uint16 big endian. Distancia `0xFFFE` (zona ciega, tanque lleno) = 25 cm |
 | 2 | 16 | Reporte de un comando: `ref`, resultado (0 aplicado, 1 fuera de rango, 2 comando desconocido, 3 calibración inválida), `intervalo_s`, cero y lleno de cada tanque en mm (`0xFFFF` = sin calibrar) |
 
 ### Bajada (fPort 10)
@@ -122,7 +122,8 @@ firmware y el codec a la vez. Los tests están en [`tests/`](tests/) (`make -C t
 | Comando | Bytes |
 |---|---|
 | `medir_ahora` | `01 ref` |
-| `set_config` | `02 ref`, y por parámetro: `01 hi lo` (`intervalo_s`, s), `1N hi lo` (cero del tanque N, mm), `2N hi lo` (lleno del tanque N, mm) |
+| `set_config` solo con `intervalo_s` | `02 ref hi lo` (s) |
+| `set_config` con calibración | `02 ref`, y por parámetro: `01 hi lo` (`intervalo_s`, s), `1N hi lo` (cero del tanque N, mm), `2N hi lo` (lleno del tanque N, mm) |
 
 ### Device profile
 
@@ -132,7 +133,7 @@ firmware y el codec a la vez. Los tests están en [`tests/`](tests/) (`make -C t
 | Codec | el contenido de [`codec.js`](codec.js) |
 | Región, versión | AU915 subbanda 2, LoRaWAN 1.0.x, OTAA, clase A |
 | *Uplink interval* | 43200 s, el máximo de `set_config` (el bridge infiere `offline` a 3 × ese valor) |
-| Tag `aura_max_downlink_bytes` | `23` (un `set_config` con los 7 parámetros) |
+| Tag `aura_max_downlink_bytes` | `23` (un `set_config` con los 7 parámetros). Con `4` anda el intervalo y `medir_ahora`, pero no la calibración |
 
 ## Compilar y probar
 

@@ -6,9 +6,9 @@ Va por LoRaWAN (`hw_id` `eui-<DevEUI>`).
 
 | Qué | Cómo |
 |---|---|
-| Guardar | `distancia_tanqueN_cm` (cm con un decimal, de 25 a 600) y, si el tanque está calibrado, `nivel_tanqueN_pct` (0 a 100 %). Cada mensaje trae un tanque (el de ese turno) o los tres (después de `medir_ahora`). Lo que está fuera de rango lo quita AURA. `25` cm significa "25 cm o menos": el agua en la zona ciega del sensor, tanque lleno |
+| Guardar | `distancia_tanqueN_cm` (cm con un decimal, de 25 a 600) y, si el tanque está calibrado, `nivel_tanqueN_pct` (0 a 100 %). Cada mensaje trae los tres tanques (salvo uno cuyo sensor no midió). Lo que está fuera de rango lo quita AURA. `25` cm significa "25 cm o menos": el agua en la zona ciega del sensor, tanque lleno |
 | Alertar | `tanque_bajo`: `warning` cuando el nivel baja de `NIVEL_MINIMO_PCT` (20 %) e `info` cuando vuelve a superar el mínimo + `HISTERESIS_PCT` (25 %), una vez por cruce y por tanque. Necesita el tanque calibrado (cero y lleno, por `set_config` desde AURA) |
-| Alertar | `sensor`: `warning` cuando un tanque no llega en `MENSAJES_SIN_DATOS` (6) mensajes seguidos de los otros tanques (el nodo no manda un tanque cuyo sensor no midió) e `info` cuando vuelve. No depende del intervalo |
+| Alertar | `sensor`: `warning` cuando un tanque falta en `MENSAJES_SIN_DATOS` (3) mensajes seguidos que traen a los otros (el nodo no manda un tanque cuyo sensor no midió) e `info` cuando vuelve. No depende del intervalo |
 | Predecir | todavía no |
 
 El dispositivo solo mide: la bomba la maneja un control externo, y `tanque_bajo` avisa si no llenó
