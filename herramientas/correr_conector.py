@@ -2,7 +2,7 @@
 """Corre un conector en el banco, sin AURA, como lo va a correr AURA.
 
 Lee los mensajes de una placa y los pasa por el conector con ContextoDePrueba (todo en
-memoria). Muestra qué contestaría AURA a cada uno (persistido, descartado, sin ack), qué
+memoria). Muestra qué contestaría AURA a cada uno (persistido, descartado), qué
 campos se quitaron, las alertas y las predicciones. No publica nada: el ack lo da AURA, o en el
 banco herramientas/ack_falso.py.
 
@@ -18,6 +18,12 @@ Dos fuentes:
 Si el manifiesto tiene [prediccion], llama a predecir() cada "cada"; con --predecir, además,
 una vez al final (útil con --archivo).
 
+Con --subproceso, el conector corre como en AURA: cada mensaje en un proceso aparte, con
+límites de memoria (256 MB), CPU (5 s) y archivos, y 10 s por mensaje (aura_sdk.subproceso).
+Así se ve si algo que anda en el banco falla en AURA (un import pesado, un print() que se
+esperaba ver, una muestra que tarda). Lo que imprime el conector va a stderr. predecir() no
+corre en el subproceso: AURA todavía no lo llama.
+
 Usa mosquitto_sub (del sistema o, con --docker, del contenedor del broker). Solo biblioteca estándar.
 """
 import argparse
@@ -28,14 +34,23 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "comun" / "python"))
-from aura_sdk import ContextoDePrueba, ManifiestoInvalido, Mensaje, cargar_conector, procesar  # noqa: E402
+from aura_sdk import (  # noqa: E402
+    ConectorEnSubproceso, ContextoDePrueba, ManifiestoInvalido, Mensaje, cargar_conector, cargar_manifiesto, procesar,
+)
+
+SDK_DIR = Path(__file__).resolve().parent.parent / "comun" / "python"
 
 
 class Corrida:
     """Estado de una corrida: el conector, su contexto y lo ya mostrado."""
 
-    def __init__(self, carpeta, hw_id, salida=print, reloj=time.monotonic):
-        self.manifiesto, self.conector = cargar_conector(carpeta)
+    def __init__(self, carpeta, hw_id, salida=print, reloj=time.monotonic, subproceso=False):
+        self.subproceso = subproceso
+        if subproceso:   # como en AURA: el manifiesto acá, la clase recién en el hijo
+            self.manifiesto = cargar_manifiesto(carpeta)
+            self.conector = ConectorEnSubproceso(carpeta, SDK_DIR)
+        else:
+            self.manifiesto, self.conector = cargar_conector(carpeta)
         self.ctx = ContextoDePrueba(self.manifiesto)
         self.hw_id = hw_id
         self.salida = salida
@@ -52,16 +67,17 @@ class Corrida:
             return None
         alertas_antes = len(self.ctx.alertas)
         r = procesar(self.conector, self.ctx, msg)
-        if r.resultado is None:
-            self.salida(f"{msg.values} -> SIN ACK: el conector lanzó una excepción (el nodo reenviaría)")
+        if self.subproceso and self.conector.stderr:   # prints y log del hijo: a stderr, como en el banco
+            sys.stderr.write(self.conector.stderr if self.conector.stderr.endswith("\n") else self.conector.stderr + "\n")
+            sys.stderr.flush()
+        extra = f" ({r.motivo})" if r.motivo else ""
+        quitados = f", quitados {r.quitados}" if r.quitados else ""
+        self.salida(f"{msg.values} -> {r.resultado}{extra}{quitados}")
+        if r.error:
             self.salida("   " + r.error.strip().splitlines()[-1])
-        else:
-            extra = f" ({r.motivo})" if r.motivo else ""
-            quitados = f", quitados {r.quitados}" if r.quitados else ""
-            self.salida(f"{msg.values} -> {r.resultado}{extra}{quitados}")
         for a in self.ctx.alertas[alertas_antes:]:
             self.salida(f"   alerta {a.tipo} [{a.severidad}] {a.mensaje}")
-        self._contar(r.resultado or "sin_ack")
+        self._contar(r.resultado)
         self.quizas_predecir()
         return r
 
@@ -76,6 +92,9 @@ class Corrida:
         if not forzar and (p is None or self.reloj() - self.ultima_prediccion < p.cada_s):
             return
         self.ultima_prediccion = self.reloj()
+        if self.subproceso:
+            self.salida("   predecir() no corre en el subproceso: AURA todavía no lo llama")
+            return
         antes = len(self.ctx.predicciones)
         try:
             self.conector.predecir(self.ctx)
@@ -137,6 +156,8 @@ def main():
     ap.add_argument("--hw-id", default="mac-000000000000", help="la placa (mac-…); obligatorio con el broker")
     ap.add_argument("--archivo", help="mensajes de un archivo, uno por línea, en vez del broker")
     ap.add_argument("--predecir", action="store_true", help="llamar a predecir() al final")
+    ap.add_argument("--subproceso", action="store_true",
+                    help="correr el conector como en AURA: en un proceso aparte, con límites")
     ap.add_argument("--config", help='configuración vigente, en JSON: \'{"intervalo_s": 60}\'')
     ap.add_argument("--host", default="localhost")
     ap.add_argument("--puerto", type=int, default=1883)
@@ -144,7 +165,7 @@ def main():
     args = ap.parse_args()
 
     try:
-        corrida = Corrida(args.carpeta, args.hw_id)
+        corrida = Corrida(args.carpeta, args.hw_id, subproceso=args.subproceso)
     except ManifiestoInvalido as e:
         sys.exit(f"el conector no carga: {e}")
     if args.config:

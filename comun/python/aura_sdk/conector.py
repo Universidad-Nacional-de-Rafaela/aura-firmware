@@ -17,7 +17,8 @@ class Conector:
         """Obligatorio. Recibe un Mensaje y decide: ctx.guardar_medicion(...) o ctx.descartar(...).
 
         Si no llama a ninguno, la muestra se descarta ("sin_accion"). Si lanza una excepción,
-        no se guarda nada y AURA no confirma: el dispositivo la va a reenviar.
+        se guarda la muestra cruda (los campos dentro de rango) con una alerta conector_fallo y
+        AURA confirma: el dispositivo no la reenvía.
         """
         raise NotImplementedError
 

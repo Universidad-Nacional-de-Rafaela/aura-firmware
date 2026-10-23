@@ -106,12 +106,20 @@ código que tu dispositivo (ver [`conectores/README.md`](conectores/README.md)).
    ```bash
    herramientas/correr_conector.py conectores/<CÓDIGO> --hw-id mac-<MAC de tu placa> --docker aura-mosquitto
    ```
+6. **Probalo como corre en AURA.** AURA no importa tu conector en su proceso: lo corre en un
+   proceso aparte, sin credenciales, con 256 MB de memoria, 5 s de CPU, 64 archivos abiertos y
+   10 s por muestra. Con `--subproceso`, `correr_conector.py` hace lo mismo:
+   ```bash
+   herramientas/correr_conector.py conectores/<CÓDIGO> --archivo mensajes.jsonl --subproceso
+   ```
+   Si algo anda sin `--subproceso` y falla con él (un import pesado, una muestra que tarda), en
+   AURA va a fallar igual. Lo que imprimas con `print()` va al log, no a la salida.
 
 Lo que puede usar un conector es solo el `Contexto`: `guardar_medicion`, `descartar`, `serie`,
 `guardar_prediccion`, `alertar`, `config_vigente` y `log`. No tiene acceso a la base, a la red ni
 a archivos, y AURA puede recrearlo en cualquier momento: lo que tenga que recordar lo lee con
-`ctx.serie()`. Si lanza una excepción, no se guarda nada y el dispositivo reenvía la muestra más
-tarde. Python 3.11 o posterior, sin bibliotecas externas por ahora.
+`ctx.serie()`. Si lanza una excepción, se guarda la muestra cruda (los campos dentro de rango) con una alerta
+`conector_fallo`, y el dispositivo no reenvía. Python 3.11 o posterior, sin bibliotecas externas por ahora.
 
 ## 4. Lo que no se negocia
 
