@@ -87,6 +87,9 @@ main/main.c
 - **Secretos fuera del código** (repo público `aura-firmware`): `MESH_ID_BYTES` y `MESH_AP_PASS` en `main/config_local.h` de cada proyecto (en `.gitignore`; plantilla `config_local.ejemplo.h`); el gateway tiene además `credenciales.h` (plantilla `credenciales.ejemplo.h`). Publicado en `aura-firmware`, rama `feature/mesh-red-completa-idf`, carpeta `Mesh_Red_Completa/`.
 - `Broker_MQTT/broker.py`: broker de banco con retenidos, LWT, keepalive y **AURA falsa** (ack; modo ok/sin_ack/cuarentena/rechazado/apagada) + tablero por `hw_id` en http://localhost:8080 (LED, asignar aula, intervalo). `led_blink.py <hw_id>`.
 - Decisiones pendientes: prioridades y reglas locales del concentrador (Milton avisa); Sparkplug B para después.
+- **Actualización por la malla (OTA, rama `feature/mesh-ota`, PR #24 que depende del #23; ADR-008, contrato 4.3 propuesta):** `componentes/aura_ota` (receptor de hoja y concentrador, tipo/versión, vuelta atrás) + `Mesh3_Gateway/main/ota_gateway.c` + `Broker_MQTT/ota.py`. **Tipo** = `project(aura-<uso>)` (uno por uso: `aura-gateway`, `aura-concentrador`, `aura-hoja-ejemplo`) y **versión** = `set(PROJECT_VER "x.y.z")`, grabados en la imagen; cada placa los informa en `status.details.firmware`. Comando `ota` (`params.url`, `sha256`, `forzar_tipo`) a cualquier `hw_id`, incluido el gateway; el gateway descarga una vez (partición `imagen` 4 MB, cache por SHA-256), reparte **una placa por vez** (ventanas de 4 × 1400 B que pide el nodo; 1 MB en ~10 s) y se actualiza último (15 s de gracia). Controles: chip, tipo, misma versión → `aplicado` `sin_cambios`, SHA-256, imagen válida. **Vuelta atrás:** la versión nueva queda si habló con el gateway (trama OTA `CONFIRMADA`, sin depender del broker) **y** anduvo 60 s; si no, en 10 min o al reiniciarse antes, vuelve sola a la anterior (`rechazado` `volvio_a_la_version_anterior`); antes respalda la cola. Particiones: `ota_0`/`ota_1` (hoja 1,75 MB c/u + `cola`; S3 3 MB c/u) + `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`. **La primera vez, USB.** `python ota.py imagen.bin --hw mac-…` o `--todas [--aula aulaX]`; reintenta lo que no terminó si el gateway se reinicia o se corta el broker. Pruebas y resultados: `PRUEBAS_OTA_Y_CORTES.md`.
+- **Reconexión (2026-10-22):** el concentrador, al perder el padre, lo elige de nuevo (`esp_mesh_set_self_organized(true,true)`): tras reiniciar el gateway vuelve en ~2 s (antes, bucle de `handshake timeout` hasta isla, >60 s). PMF apagado en el AP de la malla (en `MESH_EVENT_STARTED`). La hoja guarda en NVS el canal del último padre y lo escanea primero: vuelve en ~4 s tras reiniciarse. `seq` al azar al arrancar en los tres. Margen de 60 s al arrancar también para `sin_tramas`.
+- **Prueba larga (2026-10-22, 6 h 11 min sin tocar nada):** 0 reinicios, 0 desconexiones; 2232 mediciones, 2232 confirmadas, 2232 `ingest_id` distintos; cola máxima 1.
 - Compilar: `. C:\Espressif\tools\Microsoft.v6.1.PowerShell_profile.ps1` y `idf.py -p COMx build flash`. La C3 no se reinicia por RTS: usar `esptool.py --port COM9 --after hard-reset read-mac`.
 
 ## Errores resueltos (y solución)
@@ -110,6 +113,9 @@ main/main.c
 | El ESP32 no ve el WiFi de la PC | La PC está en 5 GHz | El router también emite en 2,4 GHz; el gateway escanea y fija ese BSSID |
 | El LED RGB de la placa S3 no prende | Waveshare ESP32-S3-DEV-KIT: el WS2812 está en GPIO38 (no 48) y usa orden R-G-B | `PIN_LED_RGB 38` y `LED_STRIP_COLOR_COMPONENT_FMT_RGB` |
 | El gateway no llega al broker de la PC (timeout) | Regla del firewall de Windows que bloquea python.exe (Privada) | Permitir Python en el firewall en redes privadas (ya hecho en la PC de Milton) |
+| El reporte de una placa recién reiniciada no se publica (AURA queda con el status viejo) | `seq` arrancaba en 0 y coincidía con la del último evento de antes: la raíz lo tomaba por repetido | `seq` al azar al arrancar |
+| Tras reiniciar el gateway, el concentrador entra y sale cada ~10 s (`handshake timeout`, reason 204/15) hasta pasar a isla | La pila reintenta el padre de antes y el saludo WPA falla | El concentrador elige padre de nuevo al perderlo (`esp_mesh_set_self_organized(true,true)`); PMF apagado en el AP de la malla |
+| Una versión nueva que se cuelga a los pocos segundos queda confirmada y la placa se reinicia en bucle | Se confirmaba apenas hablaba con la raíz | Confirmar solo si además anda 60 s (`AURA_FW_ESTABLE_S`); recuperar por USB |
 
 **Regla general**: corregir el archivo, guardarlo (Auto Save activado), borrar `build` y recompilar.
 
@@ -119,11 +125,11 @@ main/main.c
   - **Pendiente opcional**: generalizar también COM7/COM9 en la tabla "Placas usadas en la prueba" y en los títulos "Salida esperada… (COM7/COM9)".
 
 ## Próximos pasos posibles
-- Guardar y reenviar: HECHO (cola en flash + confirmación de AURA). Botón local probado (solo actúa sobre hojas de su aula). Falta una prueba larga (horas).
+- Guardar y reenviar: HECHO (cola en flash + confirmación de AURA). Botón local probado (solo actúa sobre hojas de su aula). Prueba larga de 6 h hecha (2026-10-22); falta una de días y con varias hojas.
 - Formato Sparkplug B: queda para después (hoy contrato v4.0).
 - Prioridades y reglas locales: Milton avisa cuando estén definidas.
 - Raíz con Ethernet + cliente MQTT, publicando en formato Sparkplug B (BIRTH/DATA con alias).
 - Concentrador S3 por aula como padre fijo con plan B, y nodos de piso auto-organizados.
 - Sensores y actuadores reales en el nodo C3, en lugar de los datos simulados.
 - Gateway LoRa → Ethernet para los dispositivos externos.
-- OTA manual.
+- OTA: HECHA por la malla (PR #24). Falta: que AURA la implemente (contrato, pendiente 22) e imágenes firmadas (pendiente 23).

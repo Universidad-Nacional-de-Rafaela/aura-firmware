@@ -7,7 +7,7 @@
 > (`docs/superpowers/…`) son de `aura-app`.
 
 **Estado**: normativo en `aura-app`. Ante una discrepancia con cualquier otro documento, manda el contrato; ante una discrepancia entre esta copia y la de `aura-app`, manda la de `aura-app`.
-**Versión del contrato**: 4.2 (propuesta) · **Última actualización**: 2026-10-21
+**Versión del contrato**: 4.3 (propuesta) · **Última actualización**: 2026-10-22
 **Alcance**: mensajería entre los dispositivos IoT y la plataforma (backend FastAPI). Hay **dos
 transportes**, cada uno con su adaptador
 ([ADR-003](adr/ADR-003-dos-transportes-mesh-interior-lorawan-exterior.md)):
@@ -348,17 +348,21 @@ unirse a la mesh, al volver después de perderla y después de aplicar una confi
 | `en_flash` | muestras de la cola respaldadas en flash (§5); solo si hay alguna — v4.1 |
 | `eventos_perdidos` | resultados, reportes o alertas que no entraron en la cola de eventos; solo si hay alguno — v4.1 |
 | `rssi`, `capa` | cómo recibe la hoja a su padre y en qué capa de la mesh está — v4.1 |
+| `firmware` | `{"tipo": "aura-acceso", "version": "1.3.0"}`: el firmware de la placa (§3.3, actualización por la malla) — v4.3 |
 
 En `config` va siempre `aula` (`null` si no tiene).
 
 Qué pone el raíz en **su propio** `status`, cada 60 s: `rol: "raiz"`, `transporte: "mesh"`, `mac`,
 `canal`, `nodos_en_mesh`, contadores (`publicadas`, `confirmadas`, `acks_ignorados`,
 `values_invalidos`, `repetidas`, `ajenos`, `sin_lugar`, `version_distinta`, `invalidas`,
-`desbordes_radio`), `hora_valida` y `uptime_s`. `values_invalidos` cuenta las TELEMETRIA cuyo
-`values` no era un objeto (§3.1).
+`desbordes_radio`), `hora_valida`, `uptime_s` y `firmware` (v4.3). `values_invalidos` cuenta las
+TELEMETRIA cuyo `values` no era un objeto (§3.1). Mientras actualiza placas (§3.3) agrega
+`ota: {"en_cola", "esperando_vuelta", "actual", "progreso", "imagen"}` y publica su `status` en cada
+cuarto del avance.
 
 El **concentrador** publica su propio `status` como cualquier placa de la mesh, con
-`rol: "concentrador"` y su `config` (incluida `aula`). Sin aula no anuncia nada a las hojas.
+`rol: "concentrador"`, su `config` (incluida `aula`) y su `firmware`. Sin aula no anuncia nada a las
+hojas.
 
 El contador de la cola y la alimentación van acá y **no** en `values`, por la misma razón que
 `pend` y `desc` en la v1.x.
@@ -464,10 +468,55 @@ límite es el **payload de la trama, 180 B**. El raíz publica `rechazado` con `
 | `json_invalido` | el payload no es JSON o no trae `command` |
 | `comando_muy_grande` | el JSON no entra en 180 B (no se trunca: llegaría otro comando) |
 | `nodo_no_alcanzable` | la mesh no acepta el envío: la hoja no está en la mesh |
-| `el_raiz_no_acepta_comandos` | el `hw_id` es el del propio raíz |
+| `el_raiz_no_acepta_comandos` | el `hw_id` es el del propio raíz y el comando no es `ota` |
 
 El raíz **no** valida qué comandos acepta cada hoja: la hoja rechaza los que no conoce
 (`comando_desconocido`). **Ningún comando se descarta sin respuesta.**
+
+**Actualización por la malla (mesh, v4.3,
+[ADR-008](adr/ADR-008-actualizacion-por-la-malla-y-tipo-de-firmware.md)).** El comando `ota` cambia el
+firmware de una placa de la mesh —hoja, concentrador o el propio raíz— sin USB:
+
+```json
+{ "command": "ota", "command_id": "c-2026-0042",
+  "params": { "url": "https://aura.example/firmware/aura-acceso-1.3.0.bin",
+              "sha256": "<64 hex del .bin>", "forzar_tipo": false } }
+```
+
+| Campo | Obligatorio | Notas |
+|---|---|---|
+| `params.url` | **sí** | `http://` o `https://`, hasta 159 caracteres. El raíz la descarga **una vez** aunque se la pidan varias placas. |
+| `params.sha256` | **sí** | del `.bin` completo: el raíz no instala nada que no coincida. |
+| `params.forzar_tipo` | no | `true` = instalarla aunque la placa sea de **otro tipo** (cambio de uso a propósito). Default `false`. |
+
+Lo atiende el raíz y **no** se reenvía como COMANDO, así que el límite de 180 B no aplica. El
+**tipo** del firmware es el nombre del proyecto y la **versión**, su `PROJECT_VER`: los dos están
+dentro de la imagen y cada placa los informa en `status.details.firmware` (§3.2). Regla del tipo:
+`aura-<uso>` con `a-z`, `0-9` y `-`, hasta 31 caracteres; **todas las placas de un mismo uso llevan
+el mismo tipo**. **"Todas las de un tipo"** es AURA mandando el comando a cada `hw_id` cuyo
+`details.firmware.tipo` sea el de la imagen (y, si se quiere, cuya `config.aula` sea una dada).
+
+El raíz atiende **una placa por vez** (las demás esperan en su cola, hasta 32) y deja **la suya para
+el final**. Motivos de `rechazado` propios de `ota`:
+
+| `motivo` | Cuándo |
+|---|---|
+| `url_invalida`, `sha256_invalido`, `params_invalidos` | el comando está mal armado |
+| `descarga_fallida`, `imagen_muy_grande` | no se pudo bajar la imagen (servidor caído, HTTP ≠ 200, corte) o no entra |
+| `sha256_distinto` | lo descargado, o lo que recibió el nodo, no coincide con `params.sha256` |
+| `imagen_invalida`, `imagen_sin_tipo_o_version` | no es una imagen de ESP-IDF válida, o su tipo o versión no cumplen la regla |
+| `tipo_distinto` | la placa es de otro tipo y no vino `forzar_tipo` (`details.firmware` dice qué tiene) |
+| `chip_distinto` | la imagen es para otro chip (por ejemplo, de ESP32-S3 para una ESP32-C3) |
+| `nodo_no_alcanzable`, `nodo_no_responde` | la placa no está en la mesh, o no contesta (por ejemplo, un firmware anterior a la v4.3, que no sabe actualizarse) |
+| `transferencia_cortada` | la placa dejó de pedir bloques: se reintenta desde cero dos veces antes de rechazar |
+| `version_actual_sin_confirmar` | la placa todavía está probando una versión recién instalada: queda confirmada cuando habla con el raíz y anda 60 s, y si no lo logra vuelve a la anterior a los 10 min |
+| `volvio_a_la_version_anterior` | la versión nueva se instaló pero no anduvo, y la placa volvió sola a la anterior (`details.firmware` dice cuál quedó) |
+| `no_volvio` | la placa no volvió a la mesh en 15 min después de reiniciarse |
+| `actualizacion_en_curso`, `reemplazado_por_otro_pedido`, `cola_ota_llena` | ya se la está actualizando; un pedido nuevo para la misma placa reemplaza al que esperaba; más de 32 en espera |
+
+Si el raíz se reinicia, **olvida su cola**: quien pidió la actualización vuelve a mandar lo que no
+terminó. Es idempotente: una placa que ya tiene esa versión contesta `aplicado` con
+`details.sin_cambios: true`.
 
 **Latencia.** En la mesh la hoja escucha todo el tiempo: el comando llega en menos de un
 segundo. En LoRaWAN, un dispositivo **clase A** solo abre la ventana de recepción después de
@@ -492,6 +541,12 @@ que tienen que ejecutar un comando en segundos (actuadores de iluminación, cerr
 | `rechazado` | no salió, el nodo no lo acusó, o el nodo no lo aplicó | error de la API, tamaño excedido (§3.3), `acknowledged: false`, o reporte del nodo con rechazo | los motivos de §3.3, resultado de la hoja con rechazo, o `sin_resultado_del_nodo` (30 s sin resultado) |
 
 El motivo de un `rechazado` va en `details.motivo`.
+
+**En `ota` (mesh, v4.3)** los estados significan: `transmitido` = el raíz le ofreció la imagen a la
+placa; `recibido` = la placa la recibió entera, la verificó y se reinicia con ella; `aplicado` = la
+placa **volvió con la versión nueva y anduvo 60 s sin colgarse** (`details.firmware`, y
+`details.sin_cambios` si ya la tenía); `rechazado` = los motivos de §3.3. Entre `recibido` y
+`aplicado` pasan ~1 min; una placa que no anda vuelve sola a su versión anterior.
 
 **`aplicado` es el único estado que confirma ejecución.** Lo publica el adaptador **solo** cuando
 el firmware lo informa explícitamente (en la mesh con el `command_id`; en LoRaWAN con el `ref`). Junto con `aplicado`, `details.config`
@@ -786,6 +841,7 @@ MAC del medidor. Mientras no se decida, sus mensajes se descartan:
 
 | Versión | Fecha | Cambio |
 |---|---|---|
+| 4.3 | 2026-10-22 | **Propuesta. Actualización por la malla** ([ADR-008](adr/ADR-008-actualizacion-por-la-malla-y-tipo-de-firmware.md), `aura-firmware` #24). Compatible: nada cambia de forma. Nuevos: el comando **`ota`** para cualquier placa de la mesh, incluido el raíz, que solo acepta ese comando para sí mismo (§3.3), con sus motivos de `rechazado` y el significado de cada estado (§3.4); **`details.firmware`** (`tipo` y `versión`) en el `status` de hojas, concentradores y raíz, y `details.ota` en el del raíz mientras actualiza (§3.2). Regla del tipo de firmware: `aura-<uso>`, uno por uso. Pendientes 22 y 23. |
 | 4.2 | 2026-10-21 | **Propuesta.** Nuevo motivo de `offline` en la mesh: `fuera_de_la_malla` (§3.2), además de `sin_tramas`. Compatible si el backend no valida el motivo. Sin otros cambios de formato: el modo isla del concentrador, la trama interna `ESTADO` y las hojas ausentes en la pantalla del aula son internos de la mesh (`aura-firmware/Mesh_Red_Completa/`). |
 | 4.1 | 2026-10-20 | **Mesh en ESP-IDF con concentrador por aula** ([ADR-007](adr/ADR-007-mesh-en-esp-idf-con-concentrador-por-aula.md), `aura-firmware` #21). Compatible: el árbol de tópicos y los payloads no cambian. Nuevos: el **concentrador del aula** (§1, §2.3, transparente para AURA), el parámetro reservado **`aula`** de `set_config` con los motivos `aula_invalida` y `sin_parametros` (§3.3), y en el `status` de la hoja `modo`, `en_flash`, `eventos_perdidos`, `rssi`, `capa` y `config.aula` (§3.2). La cola de la hoja pasa a **híbrida**: RAM, y flash solo para lo que pasa 5 min sin confirmar (§5). En las hojas ya no hace falta el SSID del WiFi del edificio: solo el raíz se conecta al router. Pendiente 20. |
 | 4.0 | 2026-10-14 | El raíz de la mesh conecta con sesión persistente (pendiente 7); §1 y el pendiente 11 decían que no mandaba usuario y clave, y lo hace desde `aura-firmware` #9. |
@@ -879,6 +935,15 @@ citan.
 21. **El CI de `aura-firmware` no compila los proyectos ESP-IDF** (`Mesh_Red_Completa/`): solo los
     sketches de Arduino. Falta un job con la imagen `espressif/idf` que haga `idf.py build` de los
     tres proyectos y de cada hoja de `dispositivos/`.
+22. **Actualización por la malla desde AURA** (v4.3, §3.3). En el banco la hace
+    `aura-firmware/Mesh_Red_Completa/Broker_MQTT/ota.py`. Falta que AURA: guarde y sirva los `.bin`
+    por HTTPS (con su SHA-256), muestre `details.firmware` de cada placa, mande `ota` a una placa o a
+    todas las de un tipo (y aula), siga las `response` y vuelva a pedir lo que no terminó si el raíz
+    se reinicia (su `status` vuelve con `uptime_s` menor) o si se cortó el broker.
+23. **Imágenes firmadas** ([ADR-008](adr/ADR-008-actualizacion-por-la-malla-y-tipo-de-firmware.md)).
+    El SHA-256 asegura que llega la imagen pedida, no quién la pidió: hasta firmarlas, la protección es
+    el usuario, la clave y la ACL de `hw/+/command` en el broker (pendiente 11, falta TLS) y la custodia
+    de esas credenciales (pendiente 15). Firmarlas es Secure Boot v2 (una vez por placa, por USB).
 
 De la v1.x quedan resueltos el destino de los diagnósticos del gateway (van a `status.details`) y
 `pend`/`desc` (pasan a `pendientes`/`descartadas` en `status`). `lux_sim` sigue sin objeto.

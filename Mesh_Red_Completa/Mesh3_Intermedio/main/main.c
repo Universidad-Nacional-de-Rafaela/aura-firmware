@@ -29,6 +29,7 @@
  * - Cada INTERVALO_REPORTE_S manda su propio reporte (y cuando la raíz lo pide al volver el
  *   broker): la raíz lo publica en hw/mac-<concentrador>/status. El resultado de un comando
  *   propio se reintenta hasta que la raíz confirma que lo publicó.
+ * - Se actualiza por la malla como una hoja (componentes/aura_ota): tipo aura-concentrador.
  *
  * MESH_ID y MESH_AP_PASS (config_local.h) deben coincidir con el gateway y las hojas.
  */
@@ -45,6 +46,7 @@
 #include "esp_attr.h"
 #include "esp_system.h"
 #include "esp_mac.h"
+#include "esp_random.h"
 #include "esp_event.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
@@ -56,6 +58,9 @@
 #include "cJSON.h"
 #include "aura_trama.h"
 #include "aura_util.h"
+#include "aura_ota.h"
+#include "aura_fw.h"
+#include "aura_ota_receptor.h"
 
 #if __has_include("config_local.h")
 #include "config_local.h"
@@ -559,6 +564,10 @@ static void tarea_recepcion(void *arg)
             vTaskDelay(pdMS_TO_TICKS(100));
             continue;
         }
+        if (aura_es_ota(buf, d.size)) {                /* actualización de este concentrador */
+            aura_ota_recibir(buf, d.size);
+            continue;
+        }
         if (aura_trama_validar(buf, d.size) != AURA_TRAMA_OK) {
             ESP_LOGW(TAG, "Trama inválida de " MACSTR " (%u bytes)", MAC2STR(de.addr), d.size);
             continue;
@@ -584,6 +593,7 @@ static void tarea_recepcion(void *arg)
             continue;
         }
         if (t.tipo == AURA_TIPO_EVENTO_OK) {
+            aura_fw_confirmar();                       /* habla con la raíz: la versión anda */
             if (t.largo == 2 && hay_resultado_pendiente &&
                 resultado_pendiente.seq == (uint16_t)(t.payload[0] | t.payload[1] << 8)) {
                 hay_resultado_pendiente = false;
@@ -667,6 +677,9 @@ static void describir(cJSON *config)
 static void reportar(void)
 {
     cJSON *d = cJSON_CreateObject();
+    char fw[2 * AURA_OTA_TEXTO];
+    aura_fw_texto(fw, sizeof(fw));
+    cJSON_AddStringToObject(d, "fw", fw);
     describir(cJSON_AddObjectToObject(d, "config"));
     cJSON_AddStringToObject(d, "rol", "concentrador");
     cJSON_AddNumberToObject(d, "capa", esp_mesh_get_layer());
@@ -942,6 +955,11 @@ static void manejador_mesh(void *arg, esp_event_base_t base, int32_t id, void *d
 {
     switch (id) {
     case MESH_EVENT_STARTED:
+        /* Sin PMF (802.11w) en el AP de la malla. Con PMF, cuando el padre se reinicia el hijo tarda
+           ~17 s en enterarse (SA query) y la radio muestra "MIC mismatch" en los beacons; sin PMF, el
+           AP nuevo lo desconecta en el acto. Tiene que ir acá: antes de esp_mesh_start() la malla lo
+           vuelve a activar (probado 2026-10-22). */
+        esp_wifi_disable_pmf_config(WIFI_IF_AP);
         if (isla) {
             esp_mesh_set_self_organized(false, false);   /* raíz de isla: no busca router */
         }
@@ -970,6 +988,13 @@ static void manejador_mesh(void *arg, esp_event_base_t base, int32_t id, void *d
         }
         conectado = false;
         ESP_LOGW(TAG, "Desconectado del padre, buscando...");
+        if (!isla) {
+            /* Elegir padre de nuevo, con un escaneo, como al arrancar. Si la pila reintenta sola el padre
+               de antes y ese padre era el gateway que se reinició, el saludo WPA falla una y otra vez
+               (handshake timeout cada ~10 s) hasta que el concentrador se reinicia: el aula quedaba
+               más de 60 s afuera y pasaba a isla. Así vuelve en ~1 s (probado 2026-10-22). */
+            esp_mesh_set_self_organized(true, true);
+        }
         break;
     case MESH_EVENT_NO_PARENT_FOUND:
         ESP_LOGW(TAG, "No se encontró padre (¿gateway encendido? ¿mismo MESH_ID?)");
@@ -1007,8 +1032,19 @@ static void manejador_mesh(void *arg, esp_event_base_t base, int32_t id, void *d
     }
 }
 
+/* Antes de reiniciarse con una versión nueva: el resultado pendiente y el lote salen primero
+   (lo de las hojas no se pierde igual: cada hoja lo reintenta hasta que AURA lo confirma) */
+static void antes_de_reiniciar(void)
+{
+    lote_mandar();
+    for (int i = 0; i < 50 && hay_resultado_pendiente; i++) {
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+}
+
 void app_main(void)
 {
+    aura_fw_iniciar();
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
@@ -1038,6 +1074,10 @@ void app_main(void)
     ESP_LOGI(TAG, "Concentrador %s, aula %s%s", hw, aula[0] ? aula : "(sin asignar: la asigna AURA)",
              isla ? " — MODO ISLA (sin gateway)" : "");
 
+    /* seq arranca al azar: si arrancara siempre en 0, el primer evento tras un reinicio podría
+       llevar la misma seq que el último de antes y el que lo recibe lo tomaría por repetido
+       (pasaba con el reporte tras reiniciarse: la raíz lo confirmaba sin publicarlo) */
+    seq = (uint16_t)esp_random();
     lock_envio = xSemaphoreCreateMutex();
     lock_hojas = xSemaphoreCreateRecursiveMutex();
     lock_lote = xSemaphoreCreateMutex();
@@ -1087,6 +1127,9 @@ void app_main(void)
     xTaskCreate(tarea_lote, "lote", 3072, NULL, 5, NULL);
     xTaskCreate(tarea_estado, "estado", 4096, NULL, 4, NULL);
     xTaskCreate(tarea_boton, "boton", 3072, NULL, 4, NULL);
+    aura_ota_receptor_cfg_t ota = {.antes_de_reiniciar = antes_de_reiniciar};
+    aura_ota_receptor_iniciar(&ota);
+    aura_fw_antes_de_volver(antes_de_reiniciar);
     if (isla) {
         xTaskCreate(tarea_isla, "isla", 3072, NULL, 3, NULL);
     } else {

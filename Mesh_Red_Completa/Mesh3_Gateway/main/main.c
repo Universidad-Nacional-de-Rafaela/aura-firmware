@@ -26,6 +26,10 @@
  * ("sin_tramas"). Recuerda los nodos en NVS: tras reiniciarse, también marca offline a los que
  * no vuelven. Publica su propio status cada 60 s, con LWT.
  *
+ * Actualización por la malla (ota_gateway.c): comando "ota" a cualquier placa de la mesh,
+ * incluido este gateway (es el único comando que acepta para sí mismo). Tipo y versión de cada
+ * placa: el "fw" de su reporte, publicado como details.firmware.
+ *
  * Red y broker:
  * - Conoce una LISTA de redes (REDES_WIFI en credenciales.h): al arrancar usa la primera
  *   de la lista que esté al alcance. Si se queda sin router REINICIO_SIN_ROUTER_MS, se
@@ -51,6 +55,7 @@
 #include "esp_attr.h"
 #include "esp_system.h"
 #include "esp_mac.h"
+#include "esp_random.h"
 #include "esp_timer.h"
 #include "esp_event.h"
 #include "esp_netif.h"
@@ -63,6 +68,10 @@
 #include "lwip/sockets.h"
 #include "aura_trama.h"
 #include "aura_util.h"
+#include "aura_ota.h"
+#include "aura_fw.h"
+#include "gateway.h"
+#include "ota_gateway.h"
 #include "credenciales.h"
 
 #if __has_include("config_local.h")
@@ -142,6 +151,7 @@ typedef struct {
     uint32_t hora_dada_ms;             /* última vez que se le mandó la hora */
     uint32_t fuera_desde_ms;           /* 0 = está en la tabla de ruteo */
     char details[DETAILS_MAX];         /* del último reporte: para volver a online con ellos */
+    char fw[2 * AURA_OTA_TEXTO];       /* "tipo@versión" del último reporte; "" = no lo informó */
 } nodo_t;
 static nodo_t nodos[NODOS_CAP];
 
@@ -247,9 +257,9 @@ static bool publicar_json(const uint8_t mac[6], const char *sufijo, const cJSON 
     return ok;
 }
 
-/* response (§3.4) */
-static bool publicar_respuesta(const uint8_t mac[6], const char *status, const char *command_id,
-                               const char *motivo, const cJSON *config)
+/* response (§3.4). extra: campos que se agregan a details */
+bool gw_responder(const uint8_t mac[6], const char *status, const char *command_id, const char *motivo,
+                  const cJSON *extra)
 {
     cJSON *d = cJSON_CreateObject();
     cJSON_AddStringToObject(d, "status", status);
@@ -260,12 +270,52 @@ static bool publicar_respuesta(const uint8_t mac[6], const char *status, const c
     if (motivo && motivo[0]) {
         cJSON_AddStringToObject(det, "motivo", motivo);
     }
-    if (config) {
-        cJSON_AddItemToObject(det, "config", cJSON_Duplicate(config, true));
+    const cJSON *x;
+    cJSON_ArrayForEach(x, extra) {
+        cJSON_AddItemToObject(det, x->string, cJSON_Duplicate(x, true));
     }
     bool ok = publicar_json(mac, "response", d, false);
     cJSON_Delete(d);
     return ok;
+}
+
+static bool publicar_respuesta(const uint8_t mac[6], const char *status, const char *command_id,
+                               const char *motivo, const cJSON *config)
+{
+    cJSON *x = NULL;
+    if (config) {
+        x = cJSON_CreateObject();
+        cJSON_AddItemToObject(x, "config", cJSON_Duplicate(config, true));
+    }
+    bool ok = gw_responder(mac, status, command_id, motivo, x);
+    cJSON_Delete(x);
+    return ok;
+}
+
+bool gw_mqtt_conectado(void)
+{
+    return mqtt_conectado;
+}
+
+const uint8_t *gw_mi_mac(void)
+{
+    return mi_mac;
+}
+
+/* {"tipo":..., "version":...} a partir de "tipo@versión" */
+static void agregar_firmware(cJSON *det, const char *fw)
+{
+    const char *arroba = strchr(fw, '@');
+    if (arroba == NULL) {
+        return;
+    }
+    char tipo[AURA_OTA_TEXTO];
+    size_t n = (size_t)(arroba - fw) < sizeof(tipo) ? (size_t)(arroba - fw) : sizeof(tipo) - 1;
+    memcpy(tipo, fw, n);
+    tipo[n] = '\0';
+    cJSON *f = cJSON_AddObjectToObject(det, "firmware");
+    cJSON_AddStringToObject(f, "tipo", tipo);
+    cJSON_AddStringToObject(f, "version", arroba + 1);
 }
 
 static void publicar_status_propio(void)
@@ -280,6 +330,9 @@ static void publicar_status_propio(void)
     esp_wifi_get_channel(&canal, &sec);
     cJSON_AddStringToObject(det, "transporte", "mesh");
     cJSON_AddStringToObject(det, "rol", "raiz");
+    char fw[2 * AURA_OTA_TEXTO];
+    aura_fw_texto(fw, sizeof(fw));
+    agregar_firmware(det, fw);
     cJSON_AddStringToObject(det, "mac", m);
     cJSON_AddStringToObject(det, "red", red_actual >= 0 ? REDES[red_actual].ssid : "");
     cJSON_AddNumberToObject(det, "canal", canal);
@@ -296,8 +349,16 @@ static void publicar_status_propio(void)
     cJSON_AddNumberToObject(det, "lotes", lotes);
     cJSON_AddBoolToObject(det, "hora_valida", ahora_epoca() != 0);
     cJSON_AddNumberToObject(det, "uptime_s", ahora_ms32() / 1000);
+    ota_gw_estado(det);
     publicar_json(mi_mac, "status", d, true);
     cJSON_Delete(d);
+}
+
+void gw_publicar_status(void)
+{
+    if (mqtt_conectado) {
+        publicar_status_propio();
+    }
 }
 
 /* ================================================================== */
@@ -412,8 +473,9 @@ static void nodos_cargar(void)
     nvs_close(h);
 }
 
-/* Volvió un nodo marcado offline: online con los últimos details conocidos */
-static void marcar_visto(const uint8_t mac[6])
+/* Volvió un nodo marcado offline: online con los últimos details conocidos. Si lo que llegó es un
+   reporte, no: el reporte trae los details nuevos (por ejemplo, otra versión de firmware). */
+static void marcar_visto(const uint8_t mac[6], bool con_details_viejos)
 {
     char cuerpo[DETAILS_MAX + 48] = "";
     xSemaphoreTake(lock, portMAX_DELAY);
@@ -421,7 +483,7 @@ static void marcar_visto(const uint8_t mac[6])
     if (n) {
         n->ultimo_ms = ahora_ms32();
         n->fuera_desde_ms = 0;
-        if (n->offline) {
+        if (n->offline && con_details_viejos) {
             n->offline = false;
             snprintf(cuerpo, sizeof(cuerpo), "{\"status\":\"online\",\"details\":%s}", n->details[0] ? n->details : "{}");
         }
@@ -516,6 +578,14 @@ static bool publicar_reporte(const uint8_t mac[6], cJSON *r)
     cJSON *d = cJSON_CreateObject();
     cJSON_AddStringToObject(d, "status", "online");
     cJSON *det = cJSON_Duplicate(r, true);
+    /* "fw":"tipo@versión" (corto, por los 180 B de la trama) -> "firmware":{"tipo","version"} */
+    char fw[2 * AURA_OTA_TEXTO] = "";
+    const cJSON *f = cJSON_GetObjectItemCaseSensitive(r, "fw");
+    if (cJSON_IsString(f) && strlen(f->valuestring) < sizeof(fw)) {
+        strcpy(fw, f->valuestring);
+        agregar_firmware(det, fw);
+    }
+    cJSON_DeleteItemFromObject(det, "fw");
     cJSON_AddStringToObject(det, "evento", "reporte");
     cJSON_AddStringToObject(det, "transporte", "mesh");
     if (!cJSON_HasObjectItem(det, "alimentacion")) {
@@ -537,12 +607,32 @@ static bool publicar_reporte(const uint8_t mac[6], cJSON *r)
         if (txt && strlen(txt) < sizeof(n->details)) {
             strcpy(n->details, txt);
         }
+        if (fw[0]) {
+            strcpy(n->fw, fw);
+        }
     }
     xSemaphoreGive(lock);
     cJSON_free(txt);
     bool ok = publicar_json(mac, "status", d, true);
     cJSON_Delete(d);
+    if (fw[0]) {
+        ota_gw_reporte(mac, fw);                       /* ¿volvió de una actualización? (con broker o sin) */
+    }
     return ok;
+}
+
+bool gw_fw_de_nodo(const uint8_t mac[6], char *fw, size_t tam)
+{
+    bool hay = false;
+    xSemaphoreTake(lock, portMAX_DELAY);
+    for (int i = 0; i < NODOS_CAP && !hay; i++) {
+        if (nodos[i].usado && memcmp(nodos[i].mac, mac, 6) == 0 && nodos[i].fw[0]) {
+            strlcpy(fw, nodos[i].fw, tam);
+            hay = true;
+        }
+    }
+    xSemaphoreGive(lock);
+    return hay;
 }
 
 static void quitar_en_curso(const uint8_t mac[6], const char *command_id)
@@ -639,7 +729,7 @@ static void procesar(const uint8_t mac[6], const uint8_t *datos, size_t largo)
         t.tipo != AURA_TIPO_RESULTADO && t.tipo != AURA_TIPO_ALERTA) {
         return;
     }
-    marcar_visto(mac);
+    marcar_visto(mac, t.tipo != AURA_TIPO_REPORTE);
     if (t.tipo == AURA_TIPO_TELEMETRIA) {              /* cada reintento se publica: AURA deduplica */
         subir_telemetria(mac, &t);
         return;
@@ -680,7 +770,9 @@ static void tarea_recepcion(void *arg)
             vTaskDelay(pdMS_TO_TICKS(100));
             continue;
         }
-        if (aura_es_lote(rx_buf, data.size)) {
+        if (aura_es_ota(rx_buf, data.size)) {         /* un nodo que se está actualizando */
+            ota_gw_trama(origen.addr, rx_buf, data.size);
+        } else if (aura_es_lote(rx_buf, data.size)) {
             /* Del concentrador: cada trama con la MAC de la hoja que la generó */
             lotes++;
             size_t pos = 0, largo;
@@ -735,9 +827,14 @@ static void procesar_comando(const uint8_t mac[6], const char *msg, int largo)
         strlcpy(command_id, ci->valuestring, sizeof(command_id));
     }
     bool valido = cJSON_IsObject(d) && cJSON_IsString(c);
+    bool ota = valido && strcmp(c->valuestring, "ota") == 0;
     cJSON_Delete(d);
     if (!valido) {
         publicar_respuesta(mac, "rechazado", command_id, "json_invalido", NULL);
+        return;
+    }
+    if (ota) {                                         /* lo atiende el gateway (también para sí mismo) */
+        ota_gw_pedido(mac, msg);
         return;
     }
     if (memcmp(mac, mi_mac, 6) == 0) {
@@ -863,7 +960,9 @@ static void tarea_vigilancia(void *arg)
             if (revisar_ruteo && !esta && ahora - n->fuera_desde_ms >= FUERA_DE_MALLA_MS) {
                 motivo[no] = "fuera_de_la_malla";
                 memcpy(offline[no++], n->mac, 6);
-            } else if (aura_debe_marcar_offline(ahora, n->ultimo_ms, n->intervalo_s, false)) {
+            } else if (revisar_ruteo && aura_debe_marcar_offline(ahora, n->ultimo_ms, n->intervalo_s, false)) {
+                /* También con margen al arrancar: los nodos recordados en NVS tardan en volver a colgarse
+                   (con el gateway recién encendido se publicaba un offline falso por 1 s, 2026-10-22) */
                 motivo[no] = "sin_tramas";
                 memcpy(offline[no++], n->mac, 6);
             }
@@ -948,12 +1047,14 @@ static void manejador_mqtt(void *arg, esp_event_base_t base, int32_t id, void *e
         fallos_mqtt = 0;
         buscar_broker = false;
         ESP_LOGI(TAG, "MQTT conectado como %s", mi_hw);
+        aura_fw_confirmar();                           /* llega al broker: la versión anda */
         if (BROKER_URI[0] == '\0') {
             broker_guardado_escribir(uri_broker);
         }
         esp_mqtt_client_subscribe(mqtt, "hw/+/ack", 1);
         esp_mqtt_client_subscribe(mqtt, "hw/+/command", 1);
         publicar_status_propio();
+        ota_gw_broker_conectado();                     /* si se acaba de actualizar a sí mismo */
         pedir_reportes = true;                         /* que los nodos actualicen su estado */
         break;
     case MQTT_EVENT_DATA:
@@ -1092,6 +1193,11 @@ static void manejador_eventos_mesh(void *arg, esp_event_base_t base, int32_t id,
 {
     switch (id) {
     case MESH_EVENT_STARTED: {
+        /* Sin PMF (802.11w) en el AP de la malla. Con PMF, cuando el padre se reinicia el hijo tarda
+           ~17 s en enterarse (SA query) y la radio muestra "MIC mismatch" en los beacons; sin PMF, el
+           AP nuevo lo desconecta en el acto. Tiene que ir acá: antes de esp_mesh_start() la malla lo
+           vuelve a activar (probado 2026-10-22). */
+        esp_wifi_disable_pmf_config(WIFI_IF_AP);
         ESP_LOGI(TAG, "Malla iniciada. Raíz: %s, capa %d", esp_mesh_is_root() ? "sí" : "no", esp_mesh_get_layer());
         /* "Soy el gateway" en el beacon: así un concentrador en isla no confunde con el gateway a otro
            concentrador en isla (también raíz de capa 1 con el mismo MESH_ID). No depende de cómo se
@@ -1227,6 +1333,7 @@ static int buscar_router(uint8_t *canal, uint8_t bssid[6])
 
 void app_main(void)
 {
+    aura_fw_iniciar();
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
@@ -1237,6 +1344,10 @@ void app_main(void)
     esp_read_mac(mi_mac, ESP_MAC_WIFI_STA);
     aura_hw_id_de_mac(mi_mac, mi_hw);
     aura_topico(topico_lwt, sizeof(topico_lwt), mi_mac, "status");
+    /* seq arranca al azar: si arrancara siempre en 0, el primer comando tras un reinicio podría
+       llevar la misma seq que el último de antes y el que lo recibe lo tomaría por repetido
+       (la hoja no lo ejecutaría) */
+    seq = (uint16_t)esp_random();
     lock = xSemaphoreCreateMutex();
     nodos_cargar();
     cola_mqtt = xQueueCreate(8, sizeof(mensaje_mqtt_t));
@@ -1301,5 +1412,6 @@ void app_main(void)
     xTaskCreate(tarea_vigilancia, "vigilancia", 4096, NULL, 4, NULL);
     xTaskCreate(tarea_broker, "broker", 4096, NULL, 4, NULL);
     xTaskCreate(tarea_router, "router", 2048, NULL, 3, NULL);
+    ota_gw_iniciar();
     ESP_LOGI(TAG, "Gateway %s listo en canal %d. Esperando nodos...", mi_hw, canal);
 }

@@ -144,6 +144,13 @@ function dibujar(hw) {
     if (d.hojas_aula !== undefined) html += `<span>hojas <b>${d.hojas_aula}</b></span><span>capa <b>${d.capa}</b></span>`;
   }
   html += `</div>`;
+  if (d.firmware || d.ota) {
+    html += `<div class="meta">`;
+    if (d.firmware) html += `<span>firmware <b>${d.firmware.tipo} ${d.firmware.version}</b></span>`;
+    if (d.ota) html += `<span>OTA <b>${d.ota.actual ? d.ota.actual + " " + d.ota.progreso + " %" : "–"}</b></span>
+                        <span>en cola <b>${d.ota.en_cola}</b></span><span>esperando vuelta <b>${d.ota.esperando_vuelta}</b></span>`;
+    html += `</div>`;
+  }
   if (p.values) {
     html += `<div class="valores">` + Object.entries(p.values).map(([k, v]) =>
       k === "led" ? `<div class="valor"><b><span class="led ${v ? "on" : ""}"></span></b><span>led</span></div>`
