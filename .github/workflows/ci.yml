@@ -19,7 +19,7 @@ jobs:
     name: Sin secretos
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - name: Ningún archivo de configuración local versionado
@@ -40,7 +40,7 @@ jobs:
     name: Códigos de dispositivos
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: dispositivos/ respeta el mapa
         run: python3 herramientas/validar_dispositivos.py
 
@@ -48,7 +48,7 @@ jobs:
     name: Tests de host
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Tests de comun/, de infraestructura/, de herramientas/ y de cada dispositivo que los tenga
         run: |
           for mk in comun/tests/Makefile infraestructura/*/tests/Makefile herramientas/tests/Makefile dispositivos/*/tests/Makefile; do
@@ -61,7 +61,7 @@ jobs:
     name: Conectores
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.11"
@@ -81,7 +81,7 @@ jobs:
     name: Compilar sketches
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: autocontenido/ está al día
         run: |
           herramientas/generar_autocontenidos.sh
