@@ -35,8 +35,7 @@ Según [ADR-003](docs/adr/ADR-003-dos-transportes-mesh-interior-lorawan-exterior
 | [`conectores/`](conectores/) | **Un conector por dispositivo**: el código que procesa sus datos dentro de AURA (valida, guarda, alerta, predice), en Python | cada grupo |
 | [`dispositivos/`](dispositivos/) | **Una carpeta por dispositivo, con todo adentro** (firmware, ficha, bibliotecas, tests), nombrada con su código de ubicación (`E1-PB-LECA-HFR01`); y el mapa de códigos | cada grupo |
 | [`ejemplos/`](ejemplos/) | Firmware: `plantilla_dispositivo/`, `sensor_ejemplo/` (una medición) y `actuador_ejemplo/` (un comando). Conectores: `plantilla_conector/` y `conector_ejemplo/` | cátedra |
-| [`herramientas/`](herramientas/) | `broker.sh`, `ack_falso.py`, `correr_conector.py`, `leer_mac/`, `generar_autocontenidos.sh`, validadores | cátedra |
-| [`autocontenido/`](autocontenido/) | Copia de cada sketch con los headers de `comun/` al lado, para abrir en el IDE. **Se genera, no se edita** | — |
+| [`herramientas/`](herramientas/) | `broker.sh`, `ack_falso.py`, `correr_conector.py`, `leer_mac/`, validadores | cátedra |
 | [`docs/`](docs/) | Copia publicada del contrato, ADRs, el diseño de la mesh ([`mesh-wifi/`](docs/mesh-wifi/)) y el [histórico](docs/historico/) de la mesh ESP-NOW | cátedra |
 
 ## Estado
@@ -98,7 +97,7 @@ Un sketch que va en otra placa (por ejemplo, el firmware LoRaWAN de un dispositi
 ESP32S3) lleva en su carpeta un `fqbn.txt` con su FQBN, que el CI usa en lugar del de la mesh.
 
 Los sketches incluyen `comun/` con rutas relativas (`../../comun/…`), y así compilan tanto en
-`arduino-cli` como en el IDE 2. Si preferís abrir una carpeta suelta, usá la de `autocontenido/`.
+`arduino-cli` como en el IDE 2.
 
 Bibliotecas: las de cada `bibliotecas.txt` (ArduinoJson para todo lo que usa la mesh).
 Cada sketch lee su configuración (mesh, red, MAC esperada) de un `config_local.h` que no se
