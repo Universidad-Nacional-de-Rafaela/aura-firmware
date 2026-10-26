@@ -1,5 +1,7 @@
 """Tests de herramientas/correr_conector.py con el conector de ejemplo (sin broker)."""
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -47,6 +49,15 @@ class CorridaDeEjemplo(unittest.TestCase):
         self.c.data({"values": {"temp_chip_c": 31}, "ingest_id": "b"})
         self.assertTrue(any("predecir() no guardó" in l for l in self.lineas))   # pocos puntos
 
+    def test_falla_del_conector_muestra_conector_fallo(self):
+        def lanza(msg, ctx):
+            raise ValueError("bug del grupo")
+        self.c.conector.al_recibir_datos = lanza
+        self.c.data({"values": {"temp_chip_c": 35.2}, "ingest_id": "a"})
+        self.assertTrue(any("-> persistido (conector_fallo)" in l for l in self.lineas))
+        self.assertTrue(any("ValueError: bug del grupo" in l for l in self.lineas))
+        self.assertTrue(any("alerta conector_fallo" in l for l in self.lineas))
+
     def test_status_actualiza_la_config(self):
         self.c.status({"status": "online", "details": {"config": {"intervalo_s": 30}}})
         self.assertEqual(self.c.ctx.config_vigente(), {"intervalo_s": 30})
@@ -57,6 +68,39 @@ class CorridaDeEjemplo(unittest.TestCase):
         self.c.resumen()
         self.assertIn("descartado: 1", self.lineas[-1])
         self.assertIn("persistido: 1", self.lineas[-1])
+
+
+class Subproceso(unittest.TestCase):
+    def test_con_subproceso_da_lo_mismo(self):
+        mensajes = "\n".join([
+            '{"values": {"temp_chip_c": 35.2}, "ingest_id": "a", "ts": "2026-10-07T12:00:00Z"}',
+            '{"values": {"temp_chip_c": 900}, "ingest_id": "b"}',
+            '{"values": {"temp_chip_c": 70}, "ingest_id": "c"}',
+            '{"values": {"temp_chip_c": 70}, "ingest_id": "c"}',
+        ])
+        with tempfile.NamedTemporaryFile("w", suffix=".jsonl") as f:
+            f.write(mensajes)
+            f.flush()
+            base = [sys.executable, str(RAIZ / "herramientas" / "correr_conector.py"),
+                    str(RAIZ / "ejemplos" / "conector_ejemplo"), "--archivo", f.name]
+            sin = subprocess.run(base, capture_output=True, text=True, timeout=60)
+            con = subprocess.run(base + ["--subproceso"], capture_output=True, text=True, timeout=60)
+        self.assertEqual(sin.returncode, 0, sin.stderr)
+        self.assertEqual(con.returncode, 0, con.stderr)
+        self.assertIn("persistido: 2", sin.stdout.splitlines()[-1])
+        self.assertEqual(con.stdout, sin.stdout)
+
+    def test_con_subproceso_muestra_el_stderr_del_conector(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".jsonl") as f:
+            f.write('{"values": {"temp_c": 20}, "ingest_id": "a"}\n')
+            f.flush()
+            r = subprocess.run([sys.executable, str(RAIZ / "herramientas" / "correr_conector.py"),
+                                str(RAIZ / "comun" / "python" / "tests" / "conectores" / "con_print"),
+                                "--archivo", f.name, "--subproceso"], capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("-> persistido", r.stdout)
+        self.assertEqual(r.stderr.count("hola"), 2)
+        self.assertNotIn("hola", r.stdout)
 
 
 if __name__ == "__main__":

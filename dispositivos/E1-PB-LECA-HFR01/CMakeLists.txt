@@ -1,4 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 set(EXTRA_COMPONENT_DIRS "${CMAKE_CURRENT_LIST_DIR}/../../Mesh_Red_Completa/componentes")
+# Identidad del firmware por uso, independiente del codigo de la instalacion.
+set(PROJECT_VER "1.0.0")
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-project(e1_pb_leca_hfr01)
+project(aura-heladera-freezer)

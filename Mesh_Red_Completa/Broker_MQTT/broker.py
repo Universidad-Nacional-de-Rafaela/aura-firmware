@@ -3,7 +3,9 @@ Broker MQTT mínimo para el banco de pruebas del Proyecto AURA (sin dependencias
 
 - MQTT 3.1.1: CONNECT, PUBLISH (QoS 0/1/2), SUBSCRIBE, UNSUBSCRIBE, PING, DISCONNECT.
 - Mensajes retenidos (el status de cada placa es retenido, contrato §3.2) y Last Will
-  (el gateway registra "offline" en su status).
+  (el gateway registra "offline" en su status). Controla el keepalive como un broker real: si un
+  cliente pasa 1,5 x su keepalive sin mandar nada (se colgó o se apagó sin cerrar), se lo da
+  por caído y se publica su Last Will.
 - Imprime cada mensaje publicado (tópico + payload) y lo guarda en mensajes.log.
 - Reenvía los mensajes a los clientes suscriptos (QoS 0).
 
@@ -177,14 +179,21 @@ async def atender(reader, writer):
     ip = writer.get_extra_info("peername")[0]
     cliente = ip
     voluntad = None          # (tópico, payload, retener) del Last Will
+    espera = None            # 1,5 x keepalive; None = sin límite
     try:
         while True:
-            cab, cuerpo = await leer_paquete(reader)
+            try:
+                cab, cuerpo = await asyncio.wait_for(leer_paquete(reader), espera)
+            except asyncio.TimeoutError:
+                print(f"{ahora()}  ! {cliente}: venció el keepalive", flush=True)
+                break
             tipo = cab >> 4
 
             if tipo == 1:  # CONNECT
                 _, i = leer_str(cuerpo, 0)          # "MQTT"
                 flags = cuerpo[i + 1]
+                keepalive = int.from_bytes(cuerpo[i + 2:i + 4], "big")
+                espera = keepalive * 1.5 if keepalive else None
                 i += 1 + 1 + 2                      # nivel, flags, keepalive
                 client_id, i = leer_str(cuerpo, i)
                 cliente = f"{client_id.decode('utf-8', 'replace') or '?'}@{ip}"

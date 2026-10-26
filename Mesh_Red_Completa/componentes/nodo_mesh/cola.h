@@ -41,8 +41,9 @@ bool cola_guardar(const cola_muestra_t *m);
 bool cola_mirar(cola_muestra_t *m);            /* la más vieja, sin sacarla */
 bool cola_sacar(void);                          /* saca la más vieja (confirmada) */
 /* Cada pocos segundos: fecha las que se midieron sin hora (si ahora hay hora; epoca 0 = no hay)
-   y copia a la flash las que pasaron COLA_A_FLASH_S sin confirmar */
-void cola_respaldar(uint32_t uptime_ahora, uint32_t epoca_ahora);
+   y copia a la flash las que pasaron COLA_A_FLASH_S sin confirmar. todas = copia todas las que
+   están solo en RAM (antes de un reinicio a propósito, como el de una actualización). */
+void cola_respaldar(uint32_t uptime_ahora, uint32_t epoca_ahora, bool todas);
 uint32_t cola_cantidad(void);
 uint32_t cola_descartadas(void);
 uint32_t cola_en_flash(void);

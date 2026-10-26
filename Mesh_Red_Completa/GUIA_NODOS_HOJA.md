@@ -5,8 +5,8 @@ ESP-WIFI-MESH de AURA. Todo es **ESP-IDF nativo** (sin Arduino) y cumple el **co
 (`docs/CONTRATO_MQTT.md` del repositorio `aura-firmware`).
 
 Una hoja se programa sobre la biblioteca **`nodo_mesh`** (`componentes/nodo_mesh`): el grupo escribe **qué mide,
-qué parámetros tiene y qué comandos acepta**. La conexión, el aula, la cola, la confirmación de AURA, los eventos
-y la hora ya están resueltos en la biblioteca. El ejemplo de referencia es `Mesh3_Hoja/main/main.c` (ESP32-C3 SuperMini):
+qué parámetros tiene y qué comandos acepta**. La conexión, el aula, la cola, la confirmación de AURA, los eventos,
+la hora y la **actualización por la malla** ya están resueltos en la biblioteca. El ejemplo de referencia es `Mesh3_Hoja/main/main.c` (ESP32-C3 SuperMini):
 para una hoja nueva conviene **copiar ese proyecto** y cambiar solo lo que se indica acá.
 
 ---
@@ -89,7 +89,31 @@ mano (no por señal) para que un sensor del aula 2 no termine en el concentrador
 - Así AURA termina con el **estado real** después de cualquier corte: por ejemplo, si el LED cambia con el broker caído,
   la medición con el `led` nuevo sale en cuanto vuelve, con la hora del cambio.
 
-### 1.4 Hora
+### 1.4 El aula funciona sin red arriba
+
+La cola guarda el **historial** para AURA; el concentrador necesita el **último valor** y en el acto:
+
+- Cuando una medición no va a pasar enseguida por el concentrador (hay cola atrás porque AURA, el broker o el gateway
+  no contestan), la hoja le manda además un **`ESTADO`** con el último valor. El concentrador lo muestra y **no lo
+  reenvía** (AURA lo recibe por la cola). Con la cola al día no se manda: la medición normal pasa en el acto.
+- Al colgarse de su concentrador (al arrancar, viniendo de plan B o tras un reinicio del concentrador), la hoja le manda
+  su `ESTADO`: el concentrador queda sincronizado aunque se haya conectado más tarde.
+- El concentrador muestra **solo lo último**: lo que llega más viejo que lo que ya muestra (el historial que se vacía
+  cuando vuelve AURA) se reenvía pero no se muestra.
+- El **botón** del concentrador manda el comando directo a la hoja, sin gateway ni MQTT: el aula tiene mando aunque no
+  haya red arriba, y la pantalla se entera por el `ESTADO`.
+- **Modo isla:** sin raíz, ESP-WIFI-MESH no acepta conexiones nuevas (una hoja que se reinicia quedaría afuera). Por eso,
+  si el concentrador pasa **60 s sin raíz**, se reinicia como **raíz de la isla de su aula**, en el último canal. Las
+  hojas de su aula se cuelgan de él como siempre; el botón y la pantalla funcionan, y las mediciones quedan en la cola de
+  cada hoja. Cada 30 s (y cada 5 min en todos los canales) busca al gateway; cuando lo ve, se reinicia en modo normal y
+  las hojas lo siguen. "Ver al gateway" es ver una raíz que anuncia en su beacon **la marca de gateway**
+  (`AURA_IE_GATEWAY`): otro concentrador en isla también es raíz, y sin la marca dos aulas en isla se verían una a la
+  otra y se reiniciarían sin fin. No depende de cómo se conecte el gateway (WiFi o Ethernet), y un gateway reemplazado
+  por otro con el mismo firmware se reconoce igual.
+- Si la hoja reinicia un actuador al arrancar (el LED del ejemplo arranca apagado), el `ESTADO` lo informa. Si un
+  actuador real tiene que recuperar su posición tras un corte, el firmware del dispositivo lo guarda en NVS.
+
+### 1.5 Hora
 
 La raíz toma la hora de internet (SNTP). La hoja la pide al conectarse (`HORA`; si el concentrador la tiene, contesta
 él) y la ajusta con cada confirmación. Cada medición sale con su `ts`. Una medición tomada **antes** de tener hora se
@@ -168,7 +192,7 @@ void app_main(void)
 |---|---|---|
 | `hw/<hw_id>/data` | Cada medición (los reintentos traen el mismo `ingest_id`) | `{"values":{"temp_c":24.5,"led":0},"ingest_id":"9f75…","ts":"2026-10-20T04:18:21Z","adaptador":"mac-90e5b1d64a94"}` |
 | `hw/<hw_id>/status` (retenido) | Al conectarse, tras un `set_config` y al volver | `{"status":"online","details":{"config":{"aula":"aula1","intervalo_s":10},"pendientes":0,"descartadas":0,"alimentacion":"red","modo":"aula","rssi":-19,"capa":3,"evento":"reporte","transporte":"mesh"}}` |
-| `hw/<hw_id>/status` (retenido) | 3 intervalos sin datos | `{"status":"offline","details":{"motivo":"sin_tramas"}}` |
+| `hw/<hw_id>/status` (retenido) | Salió de la malla hace más de 20 s, o 3 intervalos sin datos | `{"status":"offline","details":{"motivo":"fuera_de_la_malla"}}` o `"sin_tramas"` |
 | `hw/<hw_id>/response` | Cada comando: `transmitido`, `recibido`, `aplicado`/`rechazado` | `{"status":"aplicado","details":{"command_id":"c-1","config":{…}}}` |
 | `hw/<hw_id>/alerts/<tipo>` | Alertas de la hoja | `{"severity":"high","message":"Sonda temp_c con falla","details":{"campo":"temp_c","motivo":"sin_respuesta"}}` |
 
@@ -205,19 +229,80 @@ static bool ejecutar_comando(const char *comando, const cJSON *params, bool loca
 **Seguridades en la propia hoja** (fines de carrera, tiempo máximo de motor, posición segura si pierde la
 comunicación mucho tiempo): no dependen de AURA ni del concentrador.
 
+### 2.7 Tipo y versión del firmware
+
+Cada firmware lleva grabados su **tipo** y su **versión** ([ADR-008](../docs/adr/ADR-008-actualizacion-por-la-malla-y-tipo-de-firmware.md)).
+No hay que escribir código: son dos líneas del `CMakeLists.txt` de la carpeta del proyecto, y ESP-IDF los guarda
+en la imagen (`esp_app_desc_t`).
+
+```cmake
+set(PROJECT_VER "1.3.0")        # versión: mayor.menor.parche, se sube en CADA entrega
+include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+project(aura-acceso)            # tipo: aura-<uso>
+```
+
+| | Regla | Ejemplos |
+|---|---|---|
+| **Tipo** | `aura-` y después `a-z`, `0-9` y `-`, hasta 31 caracteres en total. **Todas las placas de un mismo uso llevan el mismo tipo y el mismo binario**; dos usos distintos son dos tipos distintos, aunque usen la misma placa. | `aura-acceso`, `aura-temp-heladera`, `aura-iluminacion` |
+| **Versión** | `mayor.menor.parche`, solo números. Subir el **parche** en una corrección, el **menor** si se agrega algo, el **mayor** si cambia lo que AURA recibe o manda. | `1.0.0`, `1.3.2` |
+
+- El **tipo** identifica el firmware; el **código del dispositivo** (`dispositivos/E1-AZ-TERR-TAN01`) identifica una
+  instalación. Muchas instalaciones comparten un tipo.
+- La placa informa los dos en su status: `details.firmware: {"tipo":"aura-acceso","version":"1.3.0"}`. Con eso AURA
+  sabe a qué placas mandarle cada actualización.
+- Al arrancar, la placa avisa por serie si el tipo o la versión no cumplen la regla. `ota.py` y el gateway rechazan
+  una imagen que no la cumple (`imagen_sin_tipo_o_version`).
+- Los de la cátedra: `aura-gateway`, `aura-concentrador` y `aura-hoja-ejemplo` (la hoja de ejemplo: **cambiarlo** al
+  copiarla).
+
+### 2.8 Actualización por la malla (OTA)
+
+Una vez grabada por USB con este firmware, la placa se actualiza **desde AURA, sin cables**. No hay que escribir
+nada: lo hace la biblioteca. Lo que tiene que **mantener** el proyecto:
+
+- `partitions.csv` con **dos lugares** para el firmware (`ota_0` y `ota_1`, de 1,75 MB en una placa de 4 MB),
+  `otadata` y la partición `cola` (copiar el de `Mesh3_Hoja`). El firmware tiene que entrar en 1,75 MB: `idf.py
+  build` lo dice al final ("Smallest app partition is…").
+- `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y` en `sdkconfig.defaults` (vuelta atrás, ver abajo).
+- Que `app_main` no se trabe: la actualización llega mientras la hoja mide y contesta comandos, y al final la hoja
+  se reinicia sola (antes respalda su cola en flash: no se pierde nada).
+
+Cómo funciona:
+
+1. AURA (o `Broker_MQTT/ota.py` en el banco) pide la actualización de una placa, o de todas las de un tipo, con el
+   comando `ota` (contrato §3.3).
+2. El gateway descarga la imagen **una vez** y verifica su SHA-256. Se la pasa a **una placa por vez**, en bloques que
+   la placa pide; 1 MB tarda ~10 s. El gateway se actualiza último.
+3. Antes de instalar se controla que sea para ese chip, **del mismo tipo** (salvo `forzar_tipo`) y de otra versión
+   (si es la misma, `aplicado` sin cambios).
+4. La placa la escribe en su otro lugar, la verifica y se reinicia con ella.
+5. **Vuelta atrás:** la versión nueva queda solo si vuelve a hablar con el gateway **y anda 60 s sin colgarse**. Si se
+   cuelga, se reinicia antes o en 10 min no habla con el gateway, el bootloader vuelve **solo** a la versión anterior
+   y AURA recibe `rechazado` con `volvio_a_la_version_anterior`. Una placa no queda muerta por una mala entrega.
+
+```
+python ota.py ../Mesh3_Hoja/build/aura-hoja-ejemplo.bin --hw mac-907069add964     # una placa
+python ota.py build/aura-acceso.bin --todas                                        # todas las de ese tipo
+python ota.py build/aura-acceso.bin --todas --aula aula11                          # las de ese tipo en un aula
+```
+
 ---
 
 ## 3. Checklist para una hoja nueva
 
 - [ ] Copié `Mesh3_Hoja` como `dispositivos/<CÓDIGO>/` y en su `CMakeLists.txt` apunté `EXTRA_COMPONENT_DIRS` a `../../Mesh_Red_Completa/componentes` (ver `CONTRIBUTING.md`). Ruta sin espacios ni tildes, fuera de Google Drive/OneDrive.
-- [ ] Cambié el nombre en `project(...)` del `CMakeLists.txt` raíz.
+- [ ] En el `CMakeLists.txt` de la carpeta del proyecto: `project(aura-<uso>)` con el tipo de mi dispositivo y
+      `set(PROJECT_VER "1.0.0")` (sección 2.7). Subo la versión en cada entrega.
 - [ ] Copié `main/config_local.ejemplo.h` como `main/config_local.h` y completé el ID y la clave de la mesh (los da la cátedra; **no se sube**).
-- [ ] Ajusté `sdkconfig.defaults` a la placa (target, flash), mantuve `partitions.csv` con la partición `cola` y borré `sdkconfig` y `build`.
+- [ ] Ajusté `sdkconfig.defaults` a la placa (target, flash) sin sacar `BOOTLOADER_APP_ROLLBACK_ENABLE`, mantuve
+      `partitions.csv` con `ota_0`, `ota_1`, `otadata` y `cola`, y borré `sdkconfig` y `build`.
 - [ ] Escribí la medición, `aplicar_config`, `describir_config` (con `intervalo_s`) y `ejecutar_comando`.
 - [ ] Ajusté pines y `potencia_tx` a la placa.
 - [ ] Probé con el broker de banco (`Broker_MQTT/broker.py`): la placa aparece **pendiente** en el tablero, le asigné el aula, se pasó a `modo: aula` y llegan los `data` con `ts`.
 - [ ] Probé un `set_config` inválido: `rechazado` con motivo, y la configuración no cambió.
 - [ ] Probé el plan B apagando el concentrador: pasa a `directo`, no pierde datos y vuelve sola a `aula`.
+- [ ] Probé una actualización por la malla con `ota.py` (subiendo la versión): `aplicado`, y en el tablero se ve la
+      versión nueva.
 
 ---
 
@@ -240,7 +325,7 @@ Después de cambiar un parámetro hay que **recompilar y grabar todos los firmwa
 | `MESH_MAX_CAPAS` | `6` | G, C, NM | Profundidad máxima del árbol. |
 | `ROUTER_FICTICIO` | `aura-sin-router` | C, NM | La API exige un SSID de router, pero estos nodos **nunca** se conectan al router. Fijo: **no se cambia al mudar la red**. |
 | Vendor IE (`AURA_OUI_0..2`, `AURA_IE_CONCENTRADOR`) | `02:A5:52`, tipo `1` | AM (`aura_util.h`) | Es como la hoja reconoce a los concentradores. |
-| Trama (`AURA_PROTO_VERSION`, tipos, `AURA_PAYLOAD_MAX`) | v3, 180 B | AM (`aura_trama.h`) | Igual a `comun/protocolo_aura.h` más los tipos internos HORA (9), LOTE (10), EVENTO_OK (11) y REPORTAR (12). Los tipos **no se renumeran**, solo se agregan. Una trama de otra versión se descarta y se cuenta (`version_distinta`). |
+| Trama (`AURA_PROTO_VERSION`, tipos, `AURA_PAYLOAD_MAX`) | v3, 180 B | AM (`aura_trama.h`) | Igual a `comun/protocolo_aura.h` más los tipos internos HORA (9), LOTE (10), EVENTO_OK (11), REPORTAR (12), ESTADO (13) y OTA (14, con su propia cabecera: `aura_ota.h`). Los tipos **no se renumeran**, solo se agregan. Una trama de otra versión se descarta y se cuenta (`version_distinta`). |
 | País | `AR` (canales 1–13) | G, C, NM | Sin esto, con el router en el canal 12 o 13 la malla no arranca. |
 
 ### 4.2 Solo en el gateway
@@ -255,10 +340,17 @@ Después de cambiar un parámetro hay que **recompilar y grabar todos los firmwa
 | `MQTT_USUARIO`, `MQTT_CLAVE` | vacíos (anónimo) | Gc | El broker de aura-app no acepta anónimos: usuario `raiz` y la clave de su `.env`. |
 | `PUERTO_DESCUBRIMIENTO` | `18830` (UDP) | G **y** PC | Tiene que coincidir con `broker.py`. |
 | `ESPERA_RESULTADO_MS` | `30000` | G | Comando sin resultado del nodo → `rechazado` `sin_resultado_del_nodo`. |
+| `FUERA_DE_MALLA_MS`, `GRACIA_ARRANQUE_MS` | `20000`, `60000` | G | Un nodo fuera de la tabla de ruteo tanto tiempo → `offline` `fuera_de_la_malla`; al arrancar, margen para que la malla se arme. Los nodos conocidos se guardan en NVS (`gw_nodos`): tras reiniciarse, el gateway también marca offline a los que no vuelven. |
+| keepalive MQTT | `30` s | G | El broker da por caído al gateway a los ~45 s sin noticias y publica su LWT. |
 | `INTERVALO_STATUS_MS` | `60000` | G | Cada cuánto publica su propio status. |
-| `NODOS_CAP` | `64` | G | Nodos que sigue para offline y repetidos. |
+| `NODOS_CAP` | `64` | G | Nodos que sigue para offline y repetidos. **Pendiente:** la lista en NVS (`gw_nodos`) no se achica: una placa dada de baja ocupa su lugar para siempre. |
+| `VER_TRAMAS` | `1` | G, C | Consola: una línea `TRAMA <hw_id> <tipo> seq=<n> <contenido>` por cada trama que llega de la malla, y `NODO NUEVO <hw_id>` en el gateway. Sirve para ver las hojas de los grupos y lo que mandan; `0` la apaga. |
 | `CANAL_SIN_ROUTER` | `6` | G | Canal si no ve ninguna red (la malla anda, sin MQTT). |
 | `SERVIDOR_NTP`, `ZONA_HORARIA` | `pool.ntp.org`, UTC-3 | G | La zona solo afecta los logs: `ts` siempre en UTC. |
+| `TRABAJOS_CAP`, `REINTENTOS_MAX` | `32`, `2` | G (`ota_gateway.c`) | Actualizaciones en espera; transferencias cortadas que se vuelven a empezar antes de rechazar. |
+| `GRACIA_PROPIO_MS` | `15000` | G (`ota_gateway.c`) | Su propia actualización espera tanto sin otros pedidos: que entre toda la tanda antes de reiniciarse. |
+| `ESPERA_VUELTA_MS`, `SONDEO_MS` | 15 min, `8000` | G (`ota_gateway.c`) | Cuánto espera que la placa vuelva tras reiniciarse; sin pedidos tanto, le reenvía la última ventana (una placa reiniciada contesta y se vuelve a empezar enseguida). |
+| Partición `imagen` | 4 MB | `partitions.csv` | La imagen que reparte (se descarga una vez; sobrevive a un reinicio y se verifica antes de usarla). |
 
 ### 4.3 Solo en el concentrador
 
@@ -268,8 +360,11 @@ Después de cambiar un parámetro hay que **recompilar y grabar todos los firmwa
 | `ESPERA_LOTE_MS` | `50` | C | Cuánto junta datos de sus hojas antes de mandarlos en un LOTE. Más alto = menos paquetes, más demora. |
 | `INTERVALO_REPORTE_S` | `60` | C | Su propio status (offline a los 3 intervalos). |
 | `filtrar()` | deja pasar todo | C | Lógica local del aula. Ojo: una telemetría que no sigue nunca se confirma y la hoja la reintenta. |
+| `HOJA_AUSENTE_MS`, `GRACIA_ARRANQUE_MS` | `20000`, `60000` | C | Hoja desconectada tanto → **ausente** (LED rojo); al arrancar, margen antes de marcar ausentes. También es ausente si pasa 3 intervalos sin datos. Las hojas del aula se recuerdan en NVS. |
+| `ISLA_TRAS_S`, `ISLA_REVISAR_S`, `ISLA_REVISAR_TODO_S` | `60`, `30`, `300` | C | Sin raíz tanto tiempo → modo isla; en isla, cada cuánto busca al gateway en su canal y en todos. |
 | `MESH_MAX_HIJOS` | `6` | C | Hojas directas del aula (máximo 10). |
 | `PIN_LED_RGB`, `BRILLO_LED`, `PIN_BOTON` | `38`, `150`, `0` | C | Waveshare ESP32-S3-DEV-KIT: WS2812 en GPIO38, orden **R-G-B**. |
+| Reconexión al padre | elegir de nuevo | C | Al perder el padre, el concentrador lo elige de nuevo con un escaneo (`esp_mesh_set_self_organized(true, true)`), en lugar de reintentar el mismo: tras un reinicio del gateway el reintento fallaba (`handshake timeout`) hasta que el concentrador se reiniciaba. |
 
 ### 4.4 Solo en las hojas
 
@@ -288,16 +383,21 @@ Después de cambiar un parámetro hay que **recompilar y grabar todos los firmwa
 | `EVENTO_ESPERA_MIN_MS`, `EVENTO_ESPERA_MAX_MS` | `2000`, `30000` | NM | Reintento de eventos sin `EVENTO_OK`. |
 | `potencia_tx` | `60` (15 dBm) | H | Pasos de 0,25 dBm. Ver la sección 6. |
 | `PIN_LED`, `LED_ACTIVO_BAJO` | `8`, `1` | H | LED de la C3 SuperMini (activo en bajo). |
+| Canal del último padre | NVS (`nodo_mesh/canal`) | NM | Al arrancar y al perder el padre, la hoja escanea primero ese canal (`ESCUCHA_CANAL_MS` = 1500 ms): vuelve en ~4 s en lugar de 10 a 27 s. Se escribe solo si cambia. |
+| `AURA_OTA_BLOQUE`, `AURA_OTA_VENTANA` | `1400` B, `4` | AM (`aura_ota.h`) | Bloques por pedido en la actualización por la malla. |
+| `AURA_OTA_ESPERA_MS`, `AURA_OTA_PEDIDOS_MAX`, `AURA_OTA_CORTE_MS` | `3000`, `10`, `30000` | AM (`aura_ota.h`) | La placa vuelve a pedir tras 3 s sin datos y abandona tras 10 pedidos sin respuesta; el gateway da la transferencia por cortada tras 30 s sin pedidos. |
+| `AURA_FW_ESTABLE_S`, `AURA_FW_VERIFICAR_S` | `60`, `600` | `componentes/aura_ota` (`aura_fw.h`) | Una versión nueva queda si habló con el gateway y anduvo 60 s; si no lo logra en 10 min, vuelve a la anterior. |
 
 ### 4.5 Por placa (`sdkconfig.defaults` de cada proyecto)
 
 | Placa | Ajustes |
 |---|---|
-| ESP32-C3 SuperMini (hoja) | `FLASHSIZE_4MB`, `PARTITION_TABLE_CUSTOM` con `partitions.csv` (app 1,5 MB + `cola` 256 KB) |
-| Waveshare S3, módulo WROOM-1 N16R8 (concentrador) | flash quad 16 MB (`FLASHMODE_DIO`, `FLASHSIZE_16MB`), app grande |
-| Waveshare S3, módulo WROOM-2 N32R16V (gateway) | flash **octal** 32 MB (`OCT_FLASH`, `FLASHMODE_OPI`, `FLASHSIZE_32MB`), app grande |
+| ESP32-C3 SuperMini (hoja) | `FLASHSIZE_4MB`, `PARTITION_TABLE_CUSTOM` con `partitions.csv` (`ota_0` y `ota_1` de 1,75 MB + `cola` 256 KB), `BOOTLOADER_APP_ROLLBACK_ENABLE` |
+| Waveshare S3, módulo WROOM-1 N16R8 (concentrador) | flash quad 16 MB (`FLASHMODE_DIO`, `FLASHSIZE_16MB`), `partitions.csv` (`ota_0` y `ota_1` de 3 MB), `BOOTLOADER_APP_ROLLBACK_ENABLE` |
+| Waveshare S3, módulo WROOM-2 N32R16V (gateway) | flash **octal** 32 MB (`OCT_FLASH`, `FLASHMODE_OPI`, `FLASHSIZE_32MB`), `partitions.csv` (`ota_0` y `ota_1` de 3 MB + `imagen` de 4 MB), `BOOTLOADER_APP_ROLLBACK_ENABLE` |
 
-Si se cambia `sdkconfig.defaults`, borrar `sdkconfig` y `build` antes de compilar.
+Si se cambia `sdkconfig.defaults`, borrar `sdkconfig` y `build` antes de compilar. **La tabla de particiones con OTA
+se graba una vez por USB** (`idf.py -p COMx flash`): después, todo por la malla.
 
 ### 4.6 Por qué la hoja no es `MESH_LEAF`
 
@@ -326,6 +426,11 @@ una vez (por si otra versión de IDF lo acepta) y, si no, se une como `MESH_NODE
 | `[WND-RX] … timeout` repetido | Control de flujo trabado tras un reinicio rápido del padre | El vigilante lo resuelve solo en ~20 s |
 | El gateway dice `No encuentro el broker` | `broker.py` apagado, PC en otra red, o firewall | Misma red, Windows con la red como *Privada*, o `BROKER_URI` fijo |
 | La C3 conecta y se cae enseguida | Antena de la SuperMini mal adaptada | Sección 6 |
+| `ota`: `rechazado` `nodo_no_responde` | La placa tiene un firmware anterior a la actualización por la malla | Grabarla una vez por USB con este firmware |
+| `ota`: `rechazado` `tipo_distinto` | La imagen es de otro uso (`details.firmware.tipo` dice cuál tiene) | Elegir la imagen correcta; `forzar_tipo` solo para cambiarle el uso a propósito |
+| `ota`: `aplicado` con `sin_cambios` | La placa ya tenía esa versión | Subir `PROJECT_VER` en cada entrega |
+| `ota`: `rechazado` `volvio_a_la_version_anterior` | La versión nueva se colgó o no logró hablar con el gateway, y la placa volvió sola a la anterior | El serie de la placa con la versión nueva (probarla por USB antes) |
+| `ota`: `rechazado` `descarga_fallida` | El gateway no pudo bajar la imagen | Que la URL se abra desde la red del gateway (firewall de la PC: Python en redes privadas) |
 
 ---
 

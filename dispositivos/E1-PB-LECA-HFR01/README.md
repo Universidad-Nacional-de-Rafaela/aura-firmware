@@ -7,8 +7,9 @@
 | **Estado** | Firmware portado a ESP-IDF; pendiente la validación física con la C3. |
 | **Instalado** | Todavía no. |
 | **Transporte** | Interior: hoja ESP-WIFI-MESH; no reenvía tráfico de otras placas. |
-| **Contrato** | [MQTT v4.1](../../docs/CONTRATO_MQTT.md), [ADR-007](../../docs/adr/ADR-007-mesh-en-esp-idf-con-concentrador-por-aula.md). |
+| **Contrato** | [Copia MQTT v4.3 (propuesta)](../../docs/CONTRATO_MQTT.md), [ADR-007](../../docs/adr/ADR-007-mesh-en-esp-idf-con-concentrador-por-aula.md) y [ADR-008](../../docs/adr/ADR-008-actualizacion-por-la-malla-y-tipo-de-firmware.md). |
 | **Basado en** | [Mesh3_Hoja](../../Mesh_Red_Completa/Mesh3_Hoja/) y su biblioteca pública `nodo_mesh`. |
+| **Firmware** | Tipo `aura-heladera-freezer`, versión `1.0.0`; mismo binario para las placas del mismo uso. |
 | **Códigos anteriores** | Ninguno confirmado. |
 
 ## Qué hace
@@ -28,7 +29,7 @@ valida y guarda mediciones, y genera alertas al cruzar umbrales.
 
 | Archivo o carpeta | Responsabilidad |
 |---|---|
-| `CMakeLists.txt`, `sdkconfig.defaults`, `partitions.csv` | Proyecto ESP-IDF 6.1, C3 y partición de cola de 256 KiB. |
+| `CMakeLists.txt`, `sdkconfig.defaults`, `partitions.csv` | Proyecto ESP-IDF 6.1, C3, tipo/versión, dos particiones OTA, rollback y cola de 256 KiB. |
 | `main/main.c` | Arranque y tarea de medición; intervalos independientes y API de AURA. |
 | `main/hardware.h` | Propuesta de GPIO y opciones de pantalla, RTC y entrada de alimentación. |
 | `main/config_local.ejemplo.h` | Plantilla del ID y la clave privados de la mesh. |
@@ -146,7 +147,7 @@ la hora incluso si ambas sondas faltan, y se completa con la primera conversión
 Solo se activa al configurar y conectar la entrada de alimentación. Si no hay
 hora válida, conserva `utc = 0` y no afirma conocer la hora exacta.
 
-La API publicada el 20/10 todavía no ofrece todas las capacidades del dispositivo:
+La API compartida todavía no ofrece todas las capacidades del dispositivo:
 
 - **Primera captura:** la cola oficial no permite fijar un registro contra
   overflow ni recibir un ACK correlacionado para retirarlo. El corte local no
@@ -162,13 +163,15 @@ La API publicada el 20/10 todavía no ofrece todas las capacidades del dispositi
   Se declara `desconocida` en status y los cambios viajan como alertas `energia`;
   falta un setter público para actualizar también el status. No se modifica
   el estado interno de la biblioteca.
-- **Tamaño del reporte:** el reporte oficial agrega aula, cola, modo, señal y
-  alimentación a los seis ajustes. Por ejemplo, sin aula, con los ajustes
-  iniciales, RSSI -60 y capa 3, ocupa **185 bytes**. Excede los **180 bytes** y la biblioteca
-  descarta ese evento; un resultado de comando grande puede salir sin `config`.
-  Es necesario que la cátedra amplíe o fragmente ese reporte para garantizar la
-  configuración vigente completa. No se ocultan ajustes ni se inventa otro
-  tópico para sortear el límite. Verificar `status.details.config` en el banco.
+- **Tamaño del reporte:** la biblioteca actual conserva `fw` y la configuración
+  completa y, si supera los **180 bytes**, retira primero diagnósticos accesorios.
+  Esto reemplaza el comportamiento anterior, que descartaba directamente el
+  reporte de los ajustes iniciales. El límite sigue existiendo: si ni quitando
+  accesorios entran todos los campos, el evento no se envía; un resultado de
+  comando grande también puede salir sin `config`. Verificar
+  `status.details.config` en el banco, especialmente con nombres de aula largos,
+  parámetros extremos y diagnósticos de flash/eventos pendientes. El dispositivo
+  no oculta ajustes ni inventa otro tópico para sortear el límite.
 
 ## Compilar y cargar
 
@@ -197,10 +200,42 @@ La API publicada el 20/10 todavía no ofrece todas las capacidades del dispositi
    Sin datos de mesh válidos o sin NVS, el programa conserva diagnóstico local,
    pero no promete guardar mediciones en la cola: revisar los errores del monitor.
 
-El proyecto usa la partición `cola` de la plantilla oficial. La distribución de
-flash cambia respecto de Arduino; no se migran colas ni ajustes experimentales
-anteriores, porque ninguna versión previa llegó a instalarse. No usar `erase-flash`
-como paso rutinario: borra ajustes, corte protegido y datos pendientes.
+La tabla es la de `Mesh3_Hoja`: `otadata`, dos aplicaciones `ota_0`/`ota_1` de
+1,75 MiB y `cola` de 256 KiB, en una flash de 4 MiB. La distribución cambia
+respecto de Arduino y de la primera versión ESP-IDF sin OTA; no se migran colas
+experimentales anteriores, porque ninguna versión previa llegó a instalarse.
+No usar `erase-flash` como paso rutinario: borra ajustes, corte protegido y datos
+pendientes.
+
+Si ya se compiló con los ajustes anteriores, regenerar la configuración y los
+resultados locales antes de compilar: `sdkconfig` y `build/` son generados e
+ignorados por Git. No borrar `main/config_local.h`. No alcanza con reemplazar
+`sdkconfig.defaults` y reutilizar un `sdkconfig` viejo con rollback desactivado.
+
+## Actualización del firmware por la malla (OTA)
+
+La primera instalación de esta distribución de memoria se hace **por USB**,
+incluyendo bootloader y tabla de particiones (`idf.py -p COM5 flash`). Después,
+la biblioteca de la cátedra recibe las actualizaciones a través de la mesh;
+no se agrega un comando OTA propio ni se conecta la hoja al WiFi del edificio.
+
+El proyecto declara `project(aura-heladera-freezer)` y `PROJECT_VER = 1.0.0`
+en `CMakeLists.txt`. La imagen es `build/aura-heladera-freezer.bin`. El tipo
+describe el uso, no la ubicación ni una placa particular. Se informa como
+`details.firmware.tipo` y `details.firmware.version` en AURA. Antes de cada
+entrega hay que subir la versión: por ejemplo, `1.0.1` para una corrección.
+La actualización a la misma versión responde `sin_cambios`.
+
+`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y` habilita la vuelta atrás: una versión
+nueva se confirma cuando se comunica con la raíz y acumula 60 s estable. Si no
+se confirma en 10 min, o reinicia antes de confirmarse, puede volver a la
+anterior. La transferencia, comprobación de imagen, respaldo de la cola y
+confirmación los implementa la biblioteca compartida.
+
+Para el banco usar las herramientas oficiales y el procedimiento de
+[la guía de nodos hoja](../../Mesh_Red_Completa/GUIA_NODOS_HOJA.md#28-actualización-por-la-malla-ota)
+y [pruebas OTA y cortes](../../Mesh_Red_Completa/PRUEBAS_OTA_Y_CORTES.md).
+La transferencia y el rollback físicos todavía no están validados en este nodo.
 
 ## Pruebas
 
@@ -213,11 +248,19 @@ python herramientas/validar_dispositivos.py
 python herramientas/validar_conectores.py
 ```
 
-Validación de software del 20/10/2026: compilación completa con **ESP-IDF 6.1.0**
-para `esp32c3`, con parámetros de mesh ficticios y sin flashear; binario de
-1.130.128 bytes, con 28 % libre en la partición de aplicación. Pasaron los tests
-de host del nodo, los 20 del conector, los 36 del SDK y ambos validadores.
-Las copias Arduino restantes coinciden con el generador oficial.
+Validación de configuración del 26/10/2026: compilación completa con
+**ESP-IDF 6.1.0**, el `main` actualizado de la cátedra y parámetros de mesh
+ficticios, sin flashear. La imagen `aura-heladera-freezer` versión `1.0.0`,
+para `esp32c3`, ocupa **1.151.328 bytes**, con **37 % libre** en cada partición
+OTA de 1,75 MiB. El lector de imágenes de `Broker_MQTT/ota.py` acepta el tipo,
+la versión y el chip. Se comprobó rollback activado en la configuración generada.
+
+En la revisión D5 del mismo día pasaron los 20 tests del conector, los 39 del
+núcleo del SDK y ambos validadores, y el archivo de ejemplo produjo los
+resultados esperados. La lógica de medición del nodo conserva las pruebas de
+host aprobadas el 20/10: no se modificó al adaptar la configuración OTA.
+La prueba aislada en Linux/WSL y las pruebas físicas de transferencia y rollback
+quedan pendientes; compilar y leer la imagen no las reemplaza.
 
 Las pruebas C requieren un compilador (`cc`, `gcc`, `clang` o `--cc "zig cc"`).
 La primera ejecución descarga cJSON 1.7.19 oficial y comprueba SHA256. Cubren
@@ -244,6 +287,10 @@ En banco, con el raíz y el concentrador actualizados y el alta hecha por la cá
 6. Probar el cambio de concentrador y la asignación de aula desde AURA. No
    fijar el aula en el binario. Si la alimentación externa impide asociar la
    C3, repetir con USB de computadora: la cátedra informó un problema de antena.
+7. Después de la primera carga por USB, probar una actualización por la malla
+   con una versión superior y comprobar `aplicado` y `details.firmware`.
+   Seguir el protocolo de la cátedra para verificar el rollback; no darlo por
+   probado solamente porque la imagen compila.
 
 Quedan por confirmar cableado C3, circuito red/batería, datos privados de mesh,
 alta/asignación en AURA y las extensiones de API indicadas. Autonomía de batería,

@@ -120,4 +120,6 @@ make -C herramientas/tests
 rechaza cualquier PR que los versione. Si algo se filtra igual, avisá a la cátedra: borrarlo en
 un commit nuevo **no alcanza**, porque queda en la historia; hay que cambiar la clave.
 
-`main` está protegida: los cambios entran solo por pull request.
+`main` está protegida: los cambios entran solo por pull request, con la aprobación de quien
+figura en `.github/CODEOWNERS` para esa carpeta y el CI en verde. Para reportar una vulnerabilidad
+o una clave publicada, ver [`SECURITY.md`](SECURITY.md).
