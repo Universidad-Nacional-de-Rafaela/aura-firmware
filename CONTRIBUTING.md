@@ -80,10 +80,9 @@ raíz y sus datos llegan igual. Para probar sin AURA, la cátedra levanta el ban
 > ya están escritos así se portan. El CI todavía no compila los proyectos ESP-IDF: compilalos
 > vos antes de abrir el PR.
 
-Si usás código de `comun/`, incluilo con ruta relativa (`#include "../../comun/protocolo_aura.h"`)
-y corré `herramientas/generar_autocontenidos.sh` antes de commitear. Si tu lógica se puede probar
-sin placa (formato de trama, validación de rangos, cola), poné los tests en
-`dispositivos/<CÓDIGO>/tests/` con un `Makefile`: el CI los corre solo.
+Si usás código de `comun/`, incluilo con ruta relativa (`#include "../../comun/protocolo_aura.h"`).
+Si tu lógica se puede probar sin placa (formato de trama, validación de rangos, cola), poné los
+tests en `dispositivos/<CÓDIGO>/tests/` con un `Makefile`: el CI los corre solo.
 
 ## 3. Tu conector
 
@@ -148,6 +147,6 @@ Abrilo contra `main` de este repo. La plantilla del PR trae un checklist. El CI:
 | Códigos de dispositivos | Cada carpeta respeta el formato y el mapa, tiene su ficha y su `.ino` se llama igual |
 | Tests de host | `comun/tests`, `infraestructura/*/tests`, `herramientas/tests` y los `tests/` de cada dispositivo |
 | Conectores | Tests de `aura_sdk`, manifiesto y clase de cada conector, y sus `tests/` |
-| Compilar sketches | Compila cada sketch para ESP32-C3 SuperMini (o para el FQBN de su `fqbn.txt`) y verifica que `autocontenido/` esté al día |
+| Compilar sketches | Compila cada sketch para ESP32-C3 SuperMini (o para el FQBN de su `fqbn.txt`) |
 
 Con todo en verde, la cátedra revisa y mergea.
