@@ -62,14 +62,17 @@ Espressif (ESP-MDF `mupgrade`): no está en ESP-IDF 6 y el proyecto ESP-MDF est�
    `{"command":"ota","params":{"url":"…","sha256":"…"}}` (contrato §3.3, v4.3). "Todas las de un
    tipo" es AURA (o `ota.py` en el banco) mandando ese comando a cada `hw_id` cuyo
    `details.firmware.tipo` sea el de la imagen, con filtro opcional por aula.
-2. **El gateway descarga la imagen una vez** (HTTP o HTTPS) a su partición `imagen`, verifica el
+2. **El gateway descarga la imagen una vez** (HTTPS; HTTP solo en el banco) a su partición `imagen`, verifica el
    SHA-256 contra el del comando y lee tipo, versión y chip de la imagen.
 3. **Una placa por vez.** El gateway la ofrece por la malla y el nodo la pide en ventanas de
    4 × 1400 B (un nodo que pierde un bloque lo vuelve a pedir). La malla no se satura y un aula nunca
    se queda sin todos sus dispositivos a la vez. 1,1 MB tarda ~10 s en pasar.
 4. **Controles antes de instalar**, en el gateway y otra vez en el nodo:
    - mismo chip;
-   - mismo tipo, salvo `forzar_tipo`, que sirve para cambiarle el uso a una placa a propósito;
+   - mismo tipo, sin excepciones: un cambio de uso se hace por USB (`forzar_tipo` se eliminó en la
+     revisión de seguridad, 2026-10-26);
+   - **firma de la cátedra** (RSA-3072, sin eFuses): la placa rechaza una imagen sin firmar o
+     firmada con otra clave, y acepta las tramas de la actualización solo del raíz;
    - otra versión: si es la misma, contesta `aplicado` con `sin_cambios`;
    - que la imagen diga lo mismo que la oferta;
    - SHA-256 de lo recibido;
@@ -105,11 +108,9 @@ Espressif (ESP-MDF `mupgrade`): no está en ESP-IDF 6 y el proyecto ESP-MDF est�
 
 ## Lo que esta decisión NO resuelve
 
-- **Imágenes firmadas.** El SHA-256 del comando asegura que llega la imagen que AURA eligió, pero no
-  quién la eligió: cualquiera con permiso de publicar en `hw/+/command` puede mandar una
-  actualización. Hasta firmar las imágenes (Secure Boot v2), la protección es la del broker: usuario,
-  clave y ACL de `hw/+/command` (contrato, pendiente 11, falta TLS) y la custodia de esas credenciales
-  (pendiente 15). Las imágenes firmadas son el pendiente 23.
+- **Secure Boot.** Desde el 2026-10-26 las imágenes van firmadas y cada placa verifica la firma al
+  instalarlas, pero no en cada arranque: eso es Secure Boot V2, que quema eFuses y queda para las
+  placas de la instalación final. Quién custodia la clave de firma es el pendiente 15 del contrato.
 - **Volver a una versión más vieja** está permitido (útil para deshacer una entrega). Si hiciera
   falta impedirlo: anti-rollback por eFuse.
 - La actualización de los dispositivos **LoRaWAN** (FUOTA) es otro mecanismo.

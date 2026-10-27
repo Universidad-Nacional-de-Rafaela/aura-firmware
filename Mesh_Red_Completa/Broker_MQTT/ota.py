@@ -21,7 +21,6 @@ Opciones:
   --broker 127.0.0.1       dónde está el broker MQTT (puerto 1883)
   --ip 192.168.1.5         la IP de esta PC que ve el gateway (si no, se deduce)
   --puerto-http 8070       puerto del servidor de la imagen
-  --forzar-tipo            instalarla aunque la placa sea de otro tipo (cambio de uso, a propósito)
   --esperar 1800           segundos máximos de espera
 
 Si el gateway se reinicia o se corta el broker en el medio, lo que no terminó se vuelve a pedir (es
@@ -248,7 +247,6 @@ def main():
     ap.add_argument("--broker", default="127.0.0.1")
     ap.add_argument("--ip", help="IP de esta PC que ve el gateway")
     ap.add_argument("--puerto-http", type=int, default=8070)
-    ap.add_argument("--forzar-tipo", action="store_true")
     ap.add_argument("--esperar", type=float, default=1800)
     a = ap.parse_args()
     if bool(a.hw) == a.todas:
@@ -301,8 +299,9 @@ def main():
             if not re.match(r"^mac-[0-9a-f]{12}$", h):
                 sys.exit(f"hw_id inválido: {h}")
             f = fw_de(h)
-            if f and f.get("tipo") != tipo and not a.forzar_tipo:
-                log(f"Ojo: {h} es {f.get('tipo')} y la imagen es {tipo}: el gateway la va a rechazar (--forzar-tipo)")
+            if f and f.get("tipo") != tipo:
+                log(f"Ojo: {h} es {f.get('tipo')} y la imagen es {tipo}: el gateway la va a rechazar "
+                    "(un cambio de uso se hace por USB)")
     # El gateway, último en la lista (él igual lo deja para el final)
     placas.sort(key=lambda h: h in gateways)
 
@@ -316,8 +315,6 @@ def main():
         cid = f"ota-{tipo}-{version}-{int(time.time())}-{numero[0]}"
         pedido[cid] = h
         params = {"url": url, "sha256": sha}
-        if a.forzar_tipo:
-            params["forzar_tipo"] = True
         m.publicar(f"hw/{h}/command", json.dumps({"command": "ota", "command_id": cid, "params": params}))
 
     log(f"Pido la actualización a {len(placas)} placa(s): {', '.join(placas)}")

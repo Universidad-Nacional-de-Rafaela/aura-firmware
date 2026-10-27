@@ -66,6 +66,7 @@
 #include "mqtt_client.h"
 #include "cJSON.h"
 #include "lwip/sockets.h"
+#include "esp_crt_bundle.h"
 #include "aura_trama.h"
 #include "aura_util.h"
 #include "aura_ota.h"
@@ -87,6 +88,12 @@ static const uint8_t MESH_ID[6] = {MESH_ID_BYTES};
 #endif
 #ifndef MQTT_CLAVE
 #define MQTT_CLAVE          ""
+#endif
+/* Descubrir el broker por broadcast: SOLO en el banco. Cualquiera en la misma red puede contestar,
+   así que a un broker descubierto nunca se le mandan usuario y clave. En producción, BROKER_URI fija
+   (y con mqtts://, el certificado del broker verificado). */
+#ifndef DESCUBRIR_BROKER
+#define DESCUBRIR_BROKER    0
 #endif
 
 #define MESH_MAX_HIJOS      6
@@ -142,6 +149,7 @@ static char topico_lwt[AURA_TOPICO_MAX];
 /* ---------- Lo que el gateway sabe de cada nodo que le habló ---------- */
 typedef struct {
     bool usado;
+    bool concentrador;                 /* se reportó con rol concentrador: puede mandar LOTE */
     uint8_t mac[6];
     uint32_t ultimo_ms;
     uint32_t intervalo_s;              /* del último reporte; 0 = no se infiere offline */
@@ -175,6 +183,7 @@ static QueueHandle_t cola_mqtt = NULL;
 
 static uint16_t seq = 0;
 static volatile bool nodos_cambiaron = false;    /* hay que guardar la lista en NVS */
+static uint32_t lotes_rechazados;
 static uint32_t publicadas, confirmadas, acks_ignorados, ajenos, values_invalidos, repetidas,
     sin_lugar, version_distinta, invalidas, lotes;
 
@@ -347,6 +356,7 @@ static void publicar_status_propio(void)
     cJSON_AddNumberToObject(det, "version_distinta", version_distinta);
     cJSON_AddNumberToObject(det, "invalidas", invalidas);
     cJSON_AddNumberToObject(det, "lotes", lotes);
+    cJSON_AddNumberToObject(det, "lotes_rechazados", lotes_rechazados);
     cJSON_AddBoolToObject(det, "hora_valida", ahora_epoca() != 0);
     cJSON_AddNumberToObject(det, "uptime_s", ahora_ms32() / 1000);
     ota_gw_estado(det);
@@ -594,6 +604,7 @@ static bool publicar_reporte(const uint8_t mac[6], cJSON *r)
     cJSON_AddItemToObject(d, "details", det);
 
     const cJSON *iv = cJSON_GetObjectItemCaseSensitive(cJSON_GetObjectItemCaseSensitive(r, "config"), "intervalo_s");
+    const cJSON *rol = cJSON_GetObjectItemCaseSensitive(r, "rol");
     char *txt = cJSON_PrintUnformatted(det);
     xSemaphoreTake(lock, portMAX_DELAY);
     nodo_t *n = nodo(mac);
@@ -604,6 +615,7 @@ static bool publicar_reporte(const uint8_t mac[6], cJSON *r)
             nodos_cambiaron = true;
         }
         n->offline = false;
+        n->concentrador = cJSON_IsString(rol) && strcmp(rol->valuestring, "concentrador") == 0;
         if (txt && strlen(txt) < sizeof(n->details)) {
             strcpy(n->details, txt);
         }
@@ -760,6 +772,17 @@ static void procesar(const uint8_t mac[6], const uint8_t *datos, size_t largo)
     }
 }
 
+static bool es_concentrador(const uint8_t mac[6])
+{
+    bool es = false;
+    xSemaphoreTake(lock, portMAX_DELAY);
+    for (int i = 0; i < NODOS_CAP && !es; i++) {
+        es = nodos[i].usado && nodos[i].concentrador && memcmp(nodos[i].mac, mac, 6) == 0;
+    }
+    xSemaphoreGive(lock);
+    return es;
+}
+
 static void tarea_recepcion(void *arg)
 {
     while (true) {
@@ -772,6 +795,11 @@ static void tarea_recepcion(void *arg)
         }
         if (aura_es_ota(rx_buf, data.size)) {         /* un nodo que se está actualizando */
             ota_gw_trama(origen.addr, rx_buf, data.size);
+        } else if (aura_es_lote(rx_buf, data.size) && !es_concentrador(origen.addr)) {
+            /* Un LOTE trae datos a nombre de otras placas: solo se acepta de un concentrador (un nodo
+               que se reportó con ese rol). De otro nodo se descarta. */
+            lotes_rechazados++;
+            ESP_LOGW(TAG, "LOTE de " MACSTR ", que no es un concentrador: se descarta", MAC2STR(origen.addr));
         } else if (aura_es_lote(rx_buf, data.size)) {
             /* Del concentrador: cada trama con la MAC de la hoja que la generó */
             lotes++;
@@ -1146,6 +1174,11 @@ static void tarea_broker(void *arg)
         }
         if (BROKER_URI[0] != '\0') {
             strlcpy(uri, BROKER_URI, sizeof(uri_broker));
+        } else if (!DESCUBRIR_BROKER) {
+            if (++intentos % 60 == 1) {
+                ESP_LOGE(TAG, "Sin BROKER_URI en credenciales.h (el descubrimiento es solo para el banco)");
+            }
+            continue;
         } else if (probar_guardado && broker_guardado_leer(uri, sizeof(uri_broker))) {
             probar_guardado = false;
             ESP_LOGI(TAG, "Pruebo el último broker que anduvo en esta red (si no responde, lo busco)");
@@ -1165,8 +1198,15 @@ static void tarea_broker(void *arg)
             esp_mqtt_client_config_t c = {
                 .broker.address.uri = uri,
                 .credentials.client_id = mi_hw,
-                .credentials.username = MQTT_USUARIO[0] ? MQTT_USUARIO : NULL,
-                .credentials.authentication.password = MQTT_CLAVE[0] ? MQTT_CLAVE : NULL,
+                /* Usuario y clave solo a la BROKER_URI fija: nunca a un broker descubierto */
+                .credentials.username = (BROKER_URI[0] && MQTT_USUARIO[0]) ? MQTT_USUARIO : NULL,
+                .credentials.authentication.password = (BROKER_URI[0] && MQTT_CLAVE[0]) ? MQTT_CLAVE : NULL,
+                /* mqtts://: se verifica el certificado del broker (CA propia o las públicas) */
+#ifdef BROKER_CA_PEM
+                .broker.verification.certificate = BROKER_CA_PEM,
+#else
+                .broker.verification.crt_bundle_attach = esp_crt_bundle_attach,
+#endif
                 .session.disable_clean_session = true,
                 .session.keepalive = 30,           /* el broker nota la caída en ~45 s y publica el LWT */
                 .session.last_will.topic = topico_lwt,

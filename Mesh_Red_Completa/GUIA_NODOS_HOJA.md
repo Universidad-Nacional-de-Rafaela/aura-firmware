@@ -273,7 +273,8 @@ Cómo funciona:
    comando `ota` (contrato §3.3).
 2. El gateway descarga la imagen **una vez** y verifica su SHA-256. Se la pasa a **una placa por vez**, en bloques que
    la placa pide; 1 MB tarda ~10 s. El gateway se actualiza último.
-3. Antes de instalar se controla que sea para ese chip, **del mismo tipo** (salvo `forzar_tipo`) y de otra versión
+3. Antes de instalar se controla que sea para ese chip, **del mismo tipo** (un cambio de uso se hace por USB), **firmada
+   por la cátedra** y de otra versión
    (si es la misma, `aplicado` sin cambios).
 4. La placa la escribe en su otro lugar, la verifica y se reinicia con ella.
 5. **Vuelta atrás:** la versión nueva queda solo si vuelve a hablar con el gateway **y anda 60 s sin colgarse**. Si se
@@ -285,6 +286,25 @@ python ota.py ../Mesh3_Hoja/build/aura-hoja-ejemplo.bin --hw mac-907069add964   
 python ota.py build/aura-acceso.bin --todas                                        # todas las de ese tipo
 python ota.py build/aura-acceso.bin --todas --aula aula11                          # las de ese tipo en un aula
 ```
+
+### 2.9 Imágenes firmadas
+
+Para que nadie pueda instalar por la malla un firmware que no sea el de la cátedra, **cada imagen va firmada** y la placa
+verifica la firma antes de instalarla (`CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT`, RSA-3072; no quema eFuses).
+
+- La compilación firma sola con la clave privada **`Mesh_Red_Completa/claves/firma_aura.pem`**, que **nunca se sube al
+  repo** (está en el `.gitignore`).
+- **Placas de la instalación:** solo la cátedra tiene esa clave. Un grupo que quiere actualizar por la malla le pasa su
+  código (o su `.bin`) a la cátedra, que lo compila y firma.
+- **Banco y desarrollo:** cada grupo se genera su propia clave de prueba (una vez):
+  ```
+  python -m espsecure generate-signing-key --version 2 --scheme rsa3072 Mesh_Red_Completa/claves/firma_aura.pem
+  ```
+  Sus placas quedan grabadas por USB con su clave, y por la malla solo aceptan imágenes firmadas con ella.
+- Una placa grabada con una clave **no acepta** imágenes firmadas con otra (`imagen_invalida`): para cambiar de clave se
+  graba una vez por USB.
+- Por USB se graba cualquier imagen: la firma protege la actualización por la malla. Para que tampoco se pueda por USB
+  hacen falta los eFuses (Secure Boot y cifrado de flash), que van solo en las placas de la instalación final.
 
 ---
 
@@ -347,6 +367,9 @@ Después de cambiar un parámetro hay que **recompilar y grabar todos los firmwa
 | `VER_TRAMAS` | `1` | G, C | Consola: una línea `TRAMA <hw_id> <tipo> seq=<n> <contenido>` por cada trama que llega de la malla, y `NODO NUEVO <hw_id>` en el gateway. Sirve para ver las hojas de los grupos y lo que mandan; `0` la apaga. |
 | `CANAL_SIN_ROUTER` | `6` | G | Canal si no ve ninguna red (la malla anda, sin MQTT). |
 | `SERVIDOR_NTP`, `ZONA_HORARIA` | `pool.ntp.org`, UTC-3 | G | La zona solo afecta los logs: `ts` siempre en UTC. |
+| `DESCUBRIR_BROKER` | `0` | Gc | `1` = buscar el broker por broadcast: **solo en el banco** (cualquiera en la red puede contestar). A un broker descubierto nunca se le mandan usuario y clave. En producción, `BROKER_URI` fija. |
+| `BROKER_CA_PEM` | sin definir | Gc | Con `BROKER_URI` `mqtts://`: el certificado de la CA del broker, para verificarlo antes de mandar nada (sin definir, las CA públicas). |
+| `OTA_PERMITIR_HTTP` | `0` | Gc | `1` = acepta la OTA por `http://` (solo el banco, con `ota.py`). En producción, solo `https://`. |
 | `TRABAJOS_CAP`, `REINTENTOS_MAX` | `32`, `2` | G (`ota_gateway.c`) | Actualizaciones en espera; transferencias cortadas que se vuelven a empezar antes de rechazar. |
 | `GRACIA_PROPIO_MS` | `15000` | G (`ota_gateway.c`) | Su propia actualización espera tanto sin otros pedidos: que entre toda la tanda antes de reiniciarse. |
 | `ESPERA_VUELTA_MS`, `SONDEO_MS` | 15 min, `8000` | G (`ota_gateway.c`) | Cuánto espera que la placa vuelva tras reiniciarse; sin pedidos tanto, le reenvía la última ventana (una placa reiniciada contesta y se vuelve a empezar enseguida). |
@@ -427,7 +450,9 @@ una vez (por si otra versión de IDF lo acepta) y, si no, se une como `MESH_NODE
 | El gateway dice `No encuentro el broker` | `broker.py` apagado, PC en otra red, o firewall | Misma red, Windows con la red como *Privada*, o `BROKER_URI` fijo |
 | La C3 conecta y se cae enseguida | Antena de la SuperMini mal adaptada | Sección 6 |
 | `ota`: `rechazado` `nodo_no_responde` | La placa tiene un firmware anterior a la actualización por la malla | Grabarla una vez por USB con este firmware |
-| `ota`: `rechazado` `tipo_distinto` | La imagen es de otro uso (`details.firmware.tipo` dice cuál tiene) | Elegir la imagen correcta; `forzar_tipo` solo para cambiarle el uso a propósito |
+| `ota`: `rechazado` `tipo_distinto` | La imagen es de otro uso (`details.firmware.tipo` dice cuál tiene) | Elegir la imagen correcta; un cambio de uso se hace por USB |
+| `ota`: `rechazado` `imagen_invalida` | La imagen no tiene la firma de la cátedra (o está dañada) | Que la compile y firme quien tiene la clave (sección 2.9) |
+| Al compilar: `Secure Boot Signing Key ... not found` | Falta la clave de firma en `Mesh_Red_Completa/claves/firma_aura.pem` | Sección 2.9 |
 | `ota`: `aplicado` con `sin_cambios` | La placa ya tenía esa versión | Subir `PROJECT_VER` en cada entrega |
 | `ota`: `rechazado` `volvio_a_la_version_anterior` | La versión nueva se colgó o no logró hablar con el gateway, y la placa volvió sola a la anterior | El serie de la placa con la versión nueva (probarla por USB antes) |
 | `ota`: `rechazado` `descarga_fallida` | El gateway no pudo bajar la imagen | Que la URL se abra desde la red del gateway (firewall de la PC: Python en redes privadas) |

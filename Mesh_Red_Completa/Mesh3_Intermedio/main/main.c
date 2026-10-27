@@ -565,7 +565,7 @@ static void tarea_recepcion(void *arg)
             continue;
         }
         if (aura_es_ota(buf, d.size)) {                /* actualización de este concentrador */
-            aura_ota_recibir(buf, d.size);
+            aura_ota_recibir(de.addr, buf, d.size);
             continue;
         }
         if (aura_trama_validar(buf, d.size) != AURA_TRAMA_OK) {
@@ -581,7 +581,14 @@ static void tarea_recepcion(void *arg)
         printf("TRAMA %s %s seq=%u %s\n", hw_rx, aura_tipo_nombre(t.tipo), t.seq, txt_rx);
 #endif
 
-        /* Para este concentrador (de la raíz) */
+        /* Para este concentrador: solo de la raíz. Un COMANDO, HORA con hora, EVENTO_OK o REPORTAR de
+           otro nodo se descarta (con la clave de la malla, cualquiera podría mandarlos). */
+        bool para_mi = t.tipo == AURA_TIPO_COMANDO || (t.tipo == AURA_TIPO_HORA && t.largo == 8) ||
+                       t.tipo == AURA_TIPO_EVENTO_OK || t.tipo == AURA_TIPO_REPORTAR;
+        if (para_mi && !aura_es_la_raiz(de.addr)) {
+            ESP_LOGW(TAG, "Trama %u de " MACSTR " (no es la raíz): se descarta", t.tipo, MAC2STR(de.addr));
+            continue;
+        }
         if (t.tipo == AURA_TIPO_COMANDO) {
             comando_t c = {.seq = t.seq};
             aura_payload_texto(&t, c.json, sizeof(c.json));

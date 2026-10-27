@@ -95,6 +95,10 @@ PLAN B / SIN AULA     Hoja ──────────────> Raíz (u 
   **pendiente** si no tiene aula), aula, valores y botones: LED, **asignar aula** e intervalo. Si el gateway está
   offline, sus nodos se ven en gris ("sin gateway: último estado conocido"). Abajo, todos los mensajes.
 - `python led_blink.py <hw_id>`: prende y apaga el LED cada 1 s y mide el tiempo hasta `aplicado`.
+- **Solo para el banco, en una red aislada.** El tablero se abre solo desde la propia PC (`--tablero-en-red` para verlo
+  desde otras); el broker acepta anónimos salvo que se lo arranque con `--usuario u --clave c`. Nunca en la red del
+  campus: desde la misma red se puede leer todo y mandar comandos.
+- Para usarlo, el gateway del banco se compila con `DESCUBRIR_BROKER 1` y `OTA_PERMITIR_HTTP 1` en su `credenciales.h`.
 - El tablero muestra el **firmware** de cada placa y, en el gateway, el avance de una actualización.
 
 ## Actualización por la malla (`ota.py`)

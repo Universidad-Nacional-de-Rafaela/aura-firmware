@@ -24,11 +24,14 @@ Broker MQTT mínimo para el banco de pruebas del Proyecto AURA (sin dependencias
 
 - Descubrimiento: contesta en UDP 18830 a "AURA_BROKER?" con "AURA_BROKER <puerto MQTT>".
 
-Uso:   python broker.py               (MQTT en 0.0.0.0:1883, tablero en :8080)
+Uso:   python broker.py               (MQTT en 0.0.0.0:1883, tablero solo en esta PC: localhost:8080)
+       python broker.py --usuario u --clave c   (MQTT solo con ese usuario y clave)
+       python broker.py --tablero-en-red        (tablero visible desde otras PC de la red: cuidado)
        python broker.py 1884          (otro puerto MQTT)
        python broker.py --sin-aura    (sin la AURA falsa)
 
-No tiene usuarios ni TLS: es solo para el laboratorio.
+Es SOLO PARA EL BANCO, en una red aislada: no tiene TLS, y sin --usuario cualquiera en la red puede
+leer todo y mandar comandos (incluida una actualización). Nunca correrlo en la red del campus.
 """
 import asyncio
 import datetime
@@ -40,7 +43,18 @@ import sys
 import time
 from urllib.parse import parse_qs, urlparse
 
-ARGS = [a for a in sys.argv[1:] if not a.startswith("--")]
+def opcion(nombre):
+    """Valor de --nombre valor, o None"""
+    if nombre in sys.argv:
+        i = sys.argv.index(nombre)
+        if i + 1 < len(sys.argv):
+            return sys.argv[i + 1]
+    return None
+
+
+USUARIO, CLAVE = opcion("--usuario"), opcion("--clave")
+_valores = {USUARIO, CLAVE} - {None}
+ARGS = [a for a in sys.argv[1:] if not a.startswith("--") and a not in _valores]
 PUERTO = int(ARGS[0]) if ARGS else 1883
 PUERTO_WEB = 8080
 PUERTO_DESCUBRIMIENTO = 18830        # UDP; tiene que coincidir con el gateway
@@ -200,6 +214,18 @@ async def atender(reader, writer):
                 if flags & 0x04:                    # Last Will
                     w_topico, i = leer_str(cuerpo, i)
                     w_payload, i = leer_str(cuerpo, i)
+                usuario = clave = b""
+                if flags & 0x80:
+                    usuario, i = leer_str(cuerpo, i)
+                if flags & 0x40:
+                    clave, i = leer_str(cuerpo, i)
+                if USUARIO is not None and (usuario.decode("utf-8", "replace") != USUARIO or
+                                            clave.decode("utf-8", "replace") != (CLAVE or "")):
+                    print(f"{ahora()}  ! {cliente}: usuario o clave incorrectos, se rechaza", flush=True)
+                    writer.write(b"\x20\x02\x00\x05")   # CONNACK: no autorizado
+                    await writer.drain()
+                    voluntad = None
+                    break
                     voluntad = (w_topico.decode(), w_payload, bool(flags & 0x20))
                 print(f"{ahora()}  + conectado {cliente}", flush=True)
                 writer.write(b"\x20\x02\x00\x00")   # CONNACK aceptado
@@ -345,13 +371,18 @@ class Descubrimiento(asyncio.DatagramProtocol):
 
 async def main():
     servidor = await asyncio.start_server(atender, "0.0.0.0", PUERTO)
-    web = await asyncio.start_server(atender_web, "0.0.0.0", PUERTO_WEB)
+    # El tablero manda comandos a cualquier placa: por defecto solo se abre desde esta PC
+    web = await asyncio.start_server(atender_web, "0.0.0.0" if "--tablero-en-red" in sys.argv else "127.0.0.1",
+                                     PUERTO_WEB)
     await asyncio.get_running_loop().create_datagram_endpoint(
         Descubrimiento, local_addr=("0.0.0.0", PUERTO_DESCUBRIMIENTO))
     print(f"Broker MQTT de prueba escuchando en 0.0.0.0:{PUERTO}  (Ctrl+C para salir)")
     print(f"Descubrimiento: UDP {PUERTO_DESCUBRIMIENTO}")
     print(f"AURA falsa (ack): {modo_aura}")
-    print(f"Tablero: http://localhost:{PUERTO_WEB}")
+    print(f"Tablero: http://localhost:{PUERTO_WEB}" + ("  (visible desde la red)" if "--tablero-en-red" in sys.argv else ""))
+    print("MQTT: " + ("con usuario y clave" if USUARIO is not None else
+                      "ANÓNIMO: cualquiera en esta red puede leer y mandar comandos (usar --usuario y --clave)"))
+    print("Solo para el banco, en una red aislada: nunca en la red del campus.")
     print(f"Log: {LOG}", flush=True)
     async with servidor, web:
         await asyncio.gather(servidor.serve_forever(), web.serve_forever())

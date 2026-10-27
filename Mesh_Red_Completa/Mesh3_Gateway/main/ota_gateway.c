@@ -6,7 +6,10 @@
  * - La imagen se descarga UNA vez por HTTP(S) a la partición "imagen" y se verifica su SHA-256
  *   contra el del comando. Si varias placas piden la misma imagen, se usa la descargada.
  * - Antes de mandar nada se compara con lo que la placa informó en su reporte (fw): si es de otro
- *   tipo se rechaza (salvo forzar_tipo) y si ya tiene esa versión se contesta aplicado sin_cambios.
+ *   tipo se rechaza y si ya tiene esa versión se contesta aplicado sin_cambios.
+ * - Seguridad: solo HTTPS (OTA_PERMITIR_HTTP solo en el banco); sin forzar_tipo (un cambio de uso
+ *   se hace por USB); las imágenes van firmadas por la cátedra y cada placa verifica la firma al
+ *   instalarlas (esp_ota_end, CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT).
  * - Transferencia: oferta -> el nodo pide desde un byte -> se le manda una ventana de bloques. Si el
  *   nodo deja de pedir (se reinició, se cayó su padre), se reintenta desde cero hasta REINTENTOS_MAX
  *   veces. Al terminar, el nodo verifica y se reinicia; la actualización se da por aplicada recién
@@ -39,6 +42,11 @@
 #include "aura_util.h"
 #include "aura_fw.h"
 #include "gateway.h"
+#include "credenciales.h"
+
+#ifndef OTA_PERMITIR_HTTP
+#define OTA_PERMITIR_HTTP   0       /* 1 = acepta http:// (solo el banco, con ota.py) */
+#endif
 #include "ota_gateway.h"
 
 static const char *TAG = "OTA_GW";
@@ -196,15 +204,16 @@ void ota_gw_pedido(const uint8_t mac[6], const char *json)
     }
     const char *motivo = NULL;
     if (!cJSON_IsString(url) || strlen(url->valuestring) >= URL_MAX ||
-        (strncmp(url->valuestring, "http://", 7) != 0 && strncmp(url->valuestring, "https://", 8) != 0)) {
-        motivo = "url_invalida";
+        (strncmp(url->valuestring, "https://", 8) != 0 &&
+         !(OTA_PERMITIR_HTTP && strncmp(url->valuestring, "http://", 7) == 0))) {
+        motivo = "url_invalida";                       /* solo https:// (http:// solo en el banco) */
     } else if (!cJSON_IsString(sha) || !hex_a_bytes(sha->valuestring, t.sha, 32)) {
         motivo = "sha256_invalido";
-    } else if (forzar != NULL && !cJSON_IsBool(forzar)) {
-        motivo = "params_invalidos";
+    } else if (forzar != NULL && !cJSON_IsFalse(forzar)) {
+        motivo = "forzar_tipo_deshabilitado";            /* un cambio de uso se hace por USB */
     } else {
         strlcpy(t.url, url->valuestring, sizeof(t.url));
-        t.forzar = cJSON_IsTrue(forzar);
+        t.forzar = false;
     }
     cJSON_Delete(d);
     if (motivo == NULL && part_imagen == NULL) {
