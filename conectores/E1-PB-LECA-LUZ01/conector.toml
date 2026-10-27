@@ -2,7 +2,7 @@
 nombre  = "E1-PB-LECA-LUZ01"            # igual a la carpeta
 version = "0.2.0"
 sdk     = ">=1.2,<2"
-autores = ["sebapalavecino2003"]
+autores = ["sebapalavecino2003", "franciscoalemandi", "eloykirov"]
 clase   = "conector:ConectorLuz01"      # archivo:Clase
 
 # Los campos se muestran en este orden. rol: principal (tarjeta del Dashboard y gráfico),
