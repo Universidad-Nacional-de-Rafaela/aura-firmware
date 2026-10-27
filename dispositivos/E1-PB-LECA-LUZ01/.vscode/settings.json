@@ -1,0 +1,12 @@
+{
+    "idf.currentSetup": "/home/sebastian/.espressif/v5.5.6/esp-idf",
+    "idf.customExtraVars": {
+        "IDF_TARGET": "esp32c3"
+    },
+    "clangd.path": "/home/sebastian/.espressif/tools/esp-clang/esp-19.1.2_20250312/esp-clang/bin/clangd",
+    "clangd.arguments": [
+      "--background-index",
+      "--query-driver=**",
+      "--compile-commands-dir=/home/sebastian/Escritorio/AURA/aura-firmware/dispositivos/E1-PB-LECA-LUZ01/build"
+    ]
+}

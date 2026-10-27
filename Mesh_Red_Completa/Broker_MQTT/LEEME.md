@@ -5,11 +5,11 @@ Hoja C3 (COM9) ──malla──> Concentrador S3 (COM11) ──malla──> Gat
    capa 3                    capa 2 (pantalla + botón)        capa 1 (raíz)
 ```
 
-| Proyecto | Carpeta | `hw_id` | Placa | Puerto flash/monitor |
-|---|---|---|---|---|
-| Gateway | `Mesh3_Gateway` | `mac-90e5b1d64a94` | Waveshare ESP32-S3-DEV-KIT-NxRx, módulo ESP32-S3-WROOM-2 N32R16V (flash octal 32 MB) | COM12 (CH343) |
-| Concentrador | `Mesh3_Intermedio` | `mac-dcb4d92a5878` | Waveshare ESP32-S3-DEV-KIT-NxRx, módulo ESP32-S3-WROOM-1 N16R8 (flash quad 16 MB) | COM11 (CH343) |
-| Hoja | `Mesh3_Hoja` | `mac-907069add964` | ESP32-C3 SuperMini (4 MB) | COM9 |
+| Proyecto     | Carpeta              | `hw_id`            | Placa                                                                                 | Puerto flash/monitor |
+| ------------ | -------------------- | -------------------- | ------------------------------------------------------------------------------------- | -------------------- |
+| Gateway      | `Mesh3_Gateway`    | `mac-90e5b1d64a94` | Waveshare ESP32-S3-DEV-KIT-NxRx, módulo ESP32-S3-WROOM-2 N32R16V (flash octal 32 MB) | COM12 (CH343)        |
+| Concentrador | `Mesh3_Intermedio` | `mac-dcb4d92a5878` | Waveshare ESP32-S3-DEV-KIT-NxRx, módulo ESP32-S3-WROOM-1 N16R8 (flash quad 16 MB)    | COM11 (CH343)        |
+| Hoja         | `Mesh3_Hoja`       | `mac-907069add964` | ESP32-C3 SuperMini (4 MB)                                                             | COM9                 |
 
 COM13 y COM10 son el USB nativo de cada S3. El 2026-10-22 se trabajó solo con esos (flasheo y consola por el USB nativo,
 gateway en COM13 y concentrador en COM10): el número de puerto depende del conector y del cable que se use.
@@ -34,6 +34,7 @@ El botón BOOT es GPIO0. Pinout: [circuitstate.com](https://www.circuitstate.com
 
 ## Tópicos (árbol `hw/` del contrato)
 
+<<<<<<< Updated upstream
 | Sentido | Tópico | Ejemplo |
 |---|---|---|
 | Hoja → AURA | `hw/<hw_id>/data` | `{"values":{"temp_c":24.5,"hum_pct":50.5,"presencia":false,"led":0},"ingest_id":"9f75…","ts":"2026-10-20T04:18:21Z","adaptador":"mac-90e5b1d64a94"}` |
@@ -43,6 +44,16 @@ El botón BOOT es GPIO0. Pinout: [circuitstate.com](https://www.circuitstate.com
 | AURA → gateway | `hw/<hw_id>/command` | `{"command":"ota","params":{"url":"http://…/aura-hoja-ejemplo-1.0.1.bin","sha256":"…"},"command_id":"ota-1"}` (actualización por la malla; vale también para el `hw_id` del gateway) |
 | Nodo → AURA | `hw/<hw_id>/response` | `transmitido` → `recibido` → `aplicado` / `rechazado` (con `motivo`) |
 | Gateway (retenido, LWT) | `hw/mac-90e5b1d64a94/status` | red, canal, nodos, contadores (`publicadas`, `confirmadas`, `lotes`…), `hora_valida`, `uptime_s`, `firmware` y, mientras actualiza, `ota` (en cola, progreso) |
+=======
+| Sentido                 | Tópico                        | Ejemplo                                                                                                                                                                                                     |
+| ----------------------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Hoja → AURA            | `hw/<hw_id>/data`            | `{"values":{"temp_c":24.5,"hum_pct":50.5,"presencia":false,"led":0},"ingest_id":"9f75…","ts":"2026-10-20T04:18:21Z","adaptador":"mac-90e5b1d64a94"}`                                                     |
+| AURA → hoja            | `hw/<hw_id>/ack`             | `{"ingest_id":"9f75…","resultado":"persistido"}`                                                                                                                                                         |
+| Nodo → AURA (retenido) | `hw/<hw_id>/status`          | `{"status":"online","details":{"config":{"aula":"aula1","intervalo_s":10},"pendientes":0,"descartadas":0,"alimentacion":"red","modo":"aula","rssi":-19,"capa":3,"evento":"reporte","transporte":"mesh"}}` |
+| AURA → nodo            | `hw/<hw_id>/command`         | `{"command":"led","params":{"encendido":true},"command_id":"c-1"}`                                                                                                                                        |
+| Nodo → AURA            | `hw/<hw_id>/response`        | `transmitido` → `recibido` → `aplicado` / `rechazado` (con `motivo`)                                                                                                                            |
+| Gateway (retenido, LWT) | `hw/mac-90e5b1d64a94/status` | red, canal, nodos, contadores (`publicadas`, `confirmadas`, `lotes`…), `hora_valida`, `uptime_s`                                                                                                 |
+>>>>>>> Stashed changes
 
 Dentro de la malla viaja la **trama binaria v3** (`componentes/aura_mesh/include/aura_trama.h`, igual a `comun/protocolo_aura.h`),
 más dos tipos internos: **LOTE** (el concentrador junta las tramas de sus hojas, cada una con la MAC de la hoja) y **HORA**.

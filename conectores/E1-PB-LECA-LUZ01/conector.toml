@@ -1,0 +1,51 @@
+# Manifiesto del conector. Ver CONTRIBUTING.md, "Tu conector".
+nombre  = "E1-PB-LECA-LUZ01"            # igual a la carpeta
+version = "0.2.0"
+sdk     = ">=1.2,<2"
+autores = ["sebapalavecino2003", "franciscoalemandi", "eloykirov"]
+clase   = "conector:ConectorLuz01"      # archivo:Clase
+
+# Los campos se muestran en este orden. rol: principal (tarjeta del Dashboard y gráfico),
+# auxiliar (en la ficha, aparte) u oculto.
+
+[campos.presencia]
+unidad   = "0/1"
+min      = 0
+max      = 1
+etiqueta = "Presencia"
+rol      = "principal"
+
+[campos.luz_aula_lx]
+unidad   = "lx"
+min      = 0
+max      = 65535
+etiqueta = "Luz aula"
+rol      = "principal"
+
+[campos.luz_ventana_lx]
+unidad   = "lx"
+min      = 0
+max      = 65535
+etiqueta = "Luz ventana"
+rol      = "auxiliar"
+
+[campos.temp_c]
+unidad   = "°C"
+min      = -40
+max      = 85
+etiqueta = "Temperatura"
+rol      = "auxiliar"
+
+[campos.humedad_pct]
+unidad   = "%"
+min      = 0
+max      = 100
+etiqueta = "Humedad"
+rol      = "auxiliar"
+
+[campos.rele_canal1]
+unidad   = "0/1"
+min      = 0
+max      = 1
+etiqueta = "Relé luz"
+rol      = "auxiliar"
