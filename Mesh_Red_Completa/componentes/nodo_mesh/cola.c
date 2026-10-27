@@ -286,7 +286,7 @@ bool cola_sacar(void)
     return ok;
 }
 
-void cola_respaldar(uint32_t uptime_ahora, uint32_t epoca_ahora)
+void cola_respaldar(uint32_t uptime_ahora, uint32_t epoca_ahora, bool todas)
 {
     if (buf == NULL) {
         return;
@@ -306,7 +306,7 @@ void cola_respaldar(uint32_t uptime_ahora, uint32_t epoca_ahora)
         if (e->idx_flash != SIN_FLASH) {
             continue;                        /* ya respaldada (o recuperada) */
         }
-        if (e->m.otro_arranque || uptime_ahora - e->m.uptime_s < COLA_A_FLASH_S) {
+        if (!todas && (e->m.otro_arranque || uptime_ahora - e->m.uptime_s < COLA_A_FLASH_S)) {
             break;                           /* las que siguen son más nuevas */
         }
         if (!flash_escribir(e)) {
@@ -316,7 +316,10 @@ void cola_respaldar(uint32_t uptime_ahora, uint32_t epoca_ahora)
         escritas++;
     }
     xSemaphoreGive(lock);
-    if (escritas) {
+    if (escritas && todas) {
+        ESP_LOGI(TAG, "%lu mediciones sin confirmar respaldadas en flash antes de reiniciar (en flash: %lu)",
+                 (unsigned long)escritas, (unsigned long)en_flash);
+    } else if (escritas) {
         ESP_LOGI(TAG, "%lu mediciones sin confirmar hace %d s: respaldadas en flash (en flash: %lu)",
                  (unsigned long)escritas, COLA_A_FLASH_S, (unsigned long)en_flash);
     }

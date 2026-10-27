@@ -27,6 +27,7 @@ ejemplo completo es [`../ejemplos/conector_ejemplo/`](../ejemplos/conector_ejemp
 en [`CONTRIBUTING.md`](../CONTRIBUTING.md), "Tu conector", y la biblioteca en
 [`../comun/python/aura_sdk/`](../comun/python/aura_sdk/).
 
-> **Estado (2026-10-07).** El SDK, los ejemplos y `herramientas/correr_conector.py` funcionan:
-> cada grupo puede escribir y probar su conector en el banco. El **runtime** que los corre dentro
-> de AURA todavía no existe; cuando exista, corre los mismos conectores sin cambios.
+> **Estado (2026-10-25).** El SDK, los ejemplos y `herramientas/correr_conector.py` funcionan:
+> cada grupo puede escribir y probar su conector en el banco. AURA ya corre los conectores, cada
+> muestra en un subproceso aislado. Un conector nuevo corre en AURA cuando la cátedra mueve el
+> submódulo de `aura-firmware` a un commit que lo incluye y lo asigna al dispositivo desde su ficha.

@@ -12,12 +12,24 @@
  * - Lo que AURA le manda a una hoja (comandos, confirmaciones) va directo a la MAC de la
  *   hoja: la mesh lo enruta a través de este concentrador sin que tenga que hacer nada.
  * - Contesta él mismo los pedidos de hora de sus hojas, si ya tiene hora.
- * - "Pantalla": LED RGB (estado del LED de la hoja) + puerto serie.
+ * - "Pantalla": LED RGB + puerto serie. Azul = LED de la hoja prendido; ROJO = hay una hoja del
+ *   aula AUSENTE (se desconectó y no volvió en HOJA_AUSENTE_MS, o pasó 3 intervalos sin hablar).
+ *   Las hojas del aula se recuerdan en NVS: si el concentrador se reinicia y una no vuelve,
+ *   también se marca ausente.
  * - Mando local: el botón BOOT manda {"command":"led","params":{"invertir":true},"origen":"local"}
  *   a la hoja, sin pasar por el gateway ni por MQTT.
+ * - MODO ISLA: si pasa ISLA_TRAS_S sin raíz (gateway apagado), se reinicia como raíz de su
+ *   propia isla, en el último canal, para que el aula siga andando: las hojas se cuelgan de él,
+ *   la pantalla y el botón funcionan, y las mediciones quedan en la cola de cada hoja. Cada
+ *   ISLA_REVISAR_S busca al gateway; cuando lo ve, se reinicia en modo normal. (Sin raíz,
+ *   ESP-WIFI-MESH no acepta conexiones nuevas: una hoja que se desconecta quedaría afuera.)
+ *   "Ver al gateway" = una raíz que anuncia AURA_IE_GATEWAY en su beacon: otro concentrador en isla
+ *   también es raíz de capa 1 con el mismo MESH_ID, y sin esa marca dos aulas en isla se verían una
+ *   a la otra y se reiniciarían sin fin (revisión del #23).
  * - Cada INTERVALO_REPORTE_S manda su propio reporte (y cuando la raíz lo pide al volver el
  *   broker): la raíz lo publica en hw/mac-<concentrador>/status. El resultado de un comando
  *   propio se reintenta hasta que la raíz confirma que lo publicó.
+ * - Se actualiza por la malla como una hoja (componentes/aura_ota): tipo aura-concentrador.
  *
  * MESH_ID y MESH_AP_PASS (config_local.h) deben coincidir con el gateway y las hojas.
  */
@@ -31,7 +43,10 @@
 #include "freertos/semphr.h"
 #include "esp_log.h"
 #include "esp_err.h"
+#include "esp_attr.h"
+#include "esp_system.h"
 #include "esp_mac.h"
+#include "esp_random.h"
 #include "esp_event.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
@@ -43,6 +58,9 @@
 #include "cJSON.h"
 #include "aura_trama.h"
 #include "aura_util.h"
+#include "aura_ota.h"
+#include "aura_fw.h"
+#include "aura_ota_receptor.h"
 
 #if __has_include("config_local.h")
 #include "config_local.h"
@@ -62,13 +80,31 @@ static const uint8_t MESH_ID[6] = {MESH_ID_BYTES};
 #define LIMITE_ENVIO_MS         5000
 #define FALLOS_PARA_RECONECTAR  3
 
+#define HOJA_AUSENTE_MS         20000   /* desconectada del concentrador tanto -> ausente */
+#define GRACIA_ARRANQUE_MS      60000   /* al arrancar, las hojas tardan en colgarse */
+#define INTERVALO_HOJA_DEFECTO  60      /* si la hoja todavía no informó su intervalo */
+#define ISLA_TRAS_S             60      /* sin raíz tanto tiempo -> modo isla */
+#define ISLA_REVISAR_S          30      /* en isla, cada cuánto se busca al gateway en el canal */
+#define ISLA_REVISAR_TODO_S     300     /* y cada cuánto en todos los canales (por si cambió) */
+#define ROUTER_ISLA             "aura-isla"
+
 #define PIN_BOTON               GPIO_NUM_0     /* botón BOOT */
+/* Consola: 1 = una línea por cada trama que llega (TRAMA <hw_id> <tipo> ...), de cualquier aula.
+   Sirve en el banco para ver las hojas de los grupos y lo que mandan. */
+#define VER_TRAMAS              1
 #define PIN_LED_RGB             38             /* WS2812 de la Waveshare ESP32-S3-DEV-KIT */
 #define BRILLO_LED              150
 
 static const char *TAG = "CONCENTRADOR";
 static volatile bool conectado = false;
 static volatile bool reconecto = false;
+/* Modo isla: sobrevive al esp_restart() (no a un corte de luz, que arranca en modo normal) */
+#define RTC_ISLA                0x49534C41u    /* "ISLA" */
+static RTC_NOINIT_ATTR uint32_t rtc_isla;
+static RTC_NOINIT_ATTR uint8_t rtc_canal_isla;
+static bool isla = false;
+static uint8_t canal_conocido = 0;               /* último canal de la malla (NVS) */
+static volatile TickType_t sin_padre_desde = 0;
 static volatile int hijos = 0;
 static volatile int fallos_envio = 0;
 static led_strip_handle_t led_rgb = NULL;
@@ -83,9 +119,26 @@ typedef struct {
     uint8_t mac[6];
     TickType_t visto;
     char aula[AURA_AULA_MAX];          /* la que informa en su reporte; "" = todavía no informó */
+    uint32_t ts_mostrado;              /* hora del último valor mostrado: no se vuelve atrás */
+    bool hay_evento;
+    uint16_t seq_evento;               /* último evento mostrado: un reintento no se muestra dos veces */
+    uint32_t intervalo_s;              /* el de su reporte: 3 intervalos sin hablar -> ausente */
+    TickType_t desconectada_desde;     /* 0 = colgada de este concentrador */
+    bool ausente;
 } hoja_t;
 static hoja_t hojas[MAX_HOJAS];
 static int cant_hojas = 0;
+/* hojas[] la tocan la recepción, la tarea de estado, el botón y los eventos de la malla.
+   Recursivo: las funciones que lo toman se llaman entre sí. */
+static SemaphoreHandle_t lock_hojas = NULL;
+#define HOJAS_TOMAR()   xSemaphoreTakeRecursive(lock_hojas, portMAX_DELAY)
+#define HOJAS_SOLTAR()  xSemaphoreGiveRecursive(lock_hojas)
+
+/* Raíces que anuncian AURA_IE_GATEWAY en el último escaneo (el callback de vendor IE las anota) */
+#define MAX_GATEWAYS_VISTOS 4
+static uint8_t gateways_vistos[MAX_GATEWAYS_VISTOS][6];
+static int cant_gateways_vistos = 0;
+static portMUX_TYPE lock_gateways = portMUX_INITIALIZER_UNLOCKED;
 static int hoja_led = -1;                        /* -1 = todavía no informó */
 
 /* LOTE que se arma con lo que mandan las hojas */
@@ -109,17 +162,29 @@ static volatile bool reportar_ya = false;        /* la raíz lo pidió (volvió 
 /* ================================================================== */
 /*  Pantalla: LED RGB + puerto serie                                   */
 /* ================================================================== */
-static void led_mostrar(int estado)
+static bool hay_ausente(void);
+
+/* Rojo si falta una hoja del aula; si no, azul con el LED de la hoja prendido */
+static void pantalla_led(void)
 {
     if (led_rgb == NULL) {
         return;
     }
-    if (estado == 1) {
-        led_strip_set_pixel(led_rgb, 0, 0, 0, BRILLO_LED);     /* azul, como el LED de la hoja */
+    if (hay_ausente()) {
+        led_strip_set_pixel(led_rgb, 0, BRILLO_LED, 0, 0);
+        led_strip_refresh(led_rgb);
+    } else if (hoja_led == 1) {
+        led_strip_set_pixel(led_rgb, 0, 0, 0, BRILLO_LED);
         led_strip_refresh(led_rgb);
     } else {
         led_strip_clear(led_rgb);
     }
+}
+
+static void led_mostrar(int estado)
+{
+    (void)estado;
+    pantalla_led();
 }
 
 static void led_iniciar(void)
@@ -169,8 +234,8 @@ static void hora_ajustar(uint64_t ms)
 /* destino NULL = la raíz. Con la raíz, vigilante de envío (control de flujo trabado). */
 static bool enviar_bytes(const mesh_addr_t *destino, const uint8_t *datos, size_t largo)
 {
-    if (!conectado) {
-        return false;
+    if (destino == NULL && (isla || !conectado)) {
+        return false;                          /* hacia arriba no hay a quién (las hojas reintentan) */
     }
     mesh_data_t d = {.data = (uint8_t *)datos, .size = (uint16_t)largo, .proto = MESH_PROTO_BIN, .tos = MESH_TOS_P2P};
     esp_err_t err = esp_mesh_send(destino, &d, MESH_DATA_P2P, NULL, 0);
@@ -261,6 +326,7 @@ static void tarea_lote(void *arg)
 /* ================================================================== */
 static hoja_t *hoja_vista(const uint8_t mac[6])
 {
+    HOJAS_TOMAR();
     int i;
     for (i = 0; i < cant_hojas && memcmp(hojas[i].mac, mac, 6) != 0; i++) {
     }
@@ -272,18 +338,121 @@ static hoja_t *hoja_vista(const uint8_t mac[6])
         }
         memcpy(hojas[i].mac, mac, 6);
         hojas[i].aula[0] = 0;
+        hojas[i].ts_mostrado = 0;
+        hojas[i].hay_evento = false;
+        hojas[i].intervalo_s = 0;
+        hojas[i].desconectada_desde = 0;
+        hojas[i].ausente = false;
         char hw[AURA_HW_ID_BYTES];
         aura_hw_id_de_mac(mac, hw);
         ESP_LOGI(TAG, "Hoja del aula: %s", hw);
     }
     hojas[i].visto = xTaskGetTickCount();
+    hojas[i].desconectada_desde = 0;           /* si habla, está colgada */
+    if (hojas[i].ausente) {
+        hojas[i].ausente = false;
+        char hw[AURA_HW_ID_BYTES];
+        aura_hw_id_de_mac(mac, hw);
+        printf("PANTALLA %s | %s VOLVIÓ\n", aula, hw);
+        pantalla_led();
+    }
+    HOJAS_SOLTAR();
     return &hojas[i];
+}
+
+static bool hay_ausente(void)
+{
+    bool hay = false;
+    HOJAS_TOMAR();
+    for (int i = 0; i < cant_hojas && !hay; i++) {
+        hay = hojas[i].ausente && (hojas[i].aula[0] == 0 || strcmp(hojas[i].aula, aula) == 0);
+    }
+    HOJAS_SOLTAR();
+    return hay;
+}
+
+/* ===== Hojas del aula en NVS (se escribe solo cuando cambia la lista) ===== */
+static void hojas_guardar(void)
+{
+    uint8_t macs[MAX_HOJAS][6];
+    int n = 0;
+    HOJAS_TOMAR();
+    for (int i = 0; i < cant_hojas; i++) {
+        if (strcmp(hojas[i].aula, aula) == 0) {
+            memcpy(macs[n++], hojas[i].mac, 6);
+        }
+    }
+    HOJAS_SOLTAR();
+    nvs_handle_t h;
+    if (nvs_open("concentrador", NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_blob(h, "hojas", macs, n * 6);
+        nvs_commit(h);
+        nvs_close(h);
+    }
+}
+
+static void hojas_cargar(void)
+{
+    uint8_t macs[MAX_HOJAS][6];
+    size_t tam = sizeof(macs);
+    nvs_handle_t h;
+    if (nvs_open("concentrador", NVS_READONLY, &h) != ESP_OK) {
+        return;
+    }
+    if (nvs_get_blob(h, "hojas", macs, &tam) == ESP_OK) {
+        for (int k = 0; k < (int)(tam / 6) && cant_hojas < MAX_HOJAS; k++) {
+            hoja_t *x = &hojas[cant_hojas++];
+            memset(x, 0, sizeof(*x));
+            memcpy(x->mac, macs[k], 6);
+            strlcpy(x->aula, aula, sizeof(x->aula));
+            x->visto = xTaskGetTickCount();
+            x->desconectada_desde = xTaskGetTickCount() | 1;  /* hasta que se cuelgue */
+        }
+        ESP_LOGI(TAG, "Hojas del aula conocidas: %d", (int)(tam / 6));
+    }
+    nvs_close(h);
+}
+
+/* Cada pocos segundos: ¿falta alguna hoja del aula? */
+static void revisar_ausentes(void)
+{
+    TickType_t ahora = xTaskGetTickCount();
+    if (ahora < pdMS_TO_TICKS(GRACIA_ARRANQUE_MS)) {
+        return;
+    }
+    bool cambio = false;
+    HOJAS_TOMAR();
+    for (int i = 0; i < cant_hojas; i++) {
+        hoja_t *x = &hojas[i];
+        if (x->ausente || (x->aula[0] && strcmp(x->aula, aula) != 0)) {
+            continue;
+        }
+        uint32_t iv = x->intervalo_s ? x->intervalo_s : INTERVALO_HOJA_DEFECTO;
+        const char *motivo = NULL;
+        if (x->desconectada_desde && ahora - x->desconectada_desde >= pdMS_TO_TICKS(HOJA_AUSENTE_MS)) {
+            motivo = "se desconectó y no volvió";
+        } else if (ahora - x->visto >= pdMS_TO_TICKS(3 * iv * 1000)) {
+            motivo = "3 intervalos sin datos";
+        }
+        if (motivo) {
+            x->ausente = true;
+            cambio = true;
+            char hw[AURA_HW_ID_BYTES];
+            aura_hw_id_de_mac(x->mac, hw);
+            printf("PANTALLA %s | %s AUSENTE (%s)\n", aula, hw, motivo);
+        }
+    }
+    HOJAS_SOLTAR();
+    if (cambio) {
+        pantalla_led();
+    }
 }
 
 /* La hoja que habló último (para el botón) */
 static bool hoja_ultima(mesh_addr_t *mac)
 {
     int mejor = -1;
+    HOJAS_TOMAR();
     for (int i = 0; i < cant_hojas; i++) {
         if (hojas[i].aula[0] && strcmp(hojas[i].aula, aula) != 0) {
             continue;                                  /* el botón solo manda a hojas de esta aula */
@@ -295,6 +464,7 @@ static bool hoja_ultima(mesh_addr_t *mac)
     if (mejor >= 0) {
         memcpy(mac->addr, hojas[mejor].mac, 6);
     }
+    HOJAS_SOLTAR();
     return mejor >= 0;
 }
 
@@ -308,25 +478,46 @@ static void aprender_aula(hoja_t *h, const aura_trama_t *t)
     char txt[AURA_PAYLOAD_MAX + 1];
     aura_payload_texto(t, txt, sizeof(txt));
     cJSON *d = cJSON_Parse(txt);
-    const cJSON *a = cJSON_GetObjectItemCaseSensitive(cJSON_GetObjectItemCaseSensitive(d, "config"), "aula");
+    const cJSON *config = cJSON_GetObjectItemCaseSensitive(d, "config");
+    const cJSON *a = cJSON_GetObjectItemCaseSensitive(config, "aula");
+    const cJSON *iv = cJSON_GetObjectItemCaseSensitive(config, "intervalo_s");
+    bool era_mia = strcmp(h->aula, aula) == 0;
     strlcpy(h->aula, cJSON_IsString(a) ? a->valuestring : "-", sizeof(h->aula));
+    if (cJSON_IsNumber(iv) && iv->valuedouble > 0) {
+        h->intervalo_s = (uint32_t)iv->valuedouble;
+    }
+    if (era_mia != (strcmp(h->aula, aula) == 0)) {
+        hojas_guardar();                       /* entró o salió una hoja del aula */
+    }
     cJSON_Delete(d);
 }
 
-/* Muestra en la pantalla lo que mandó una hoja */
-static void mostrar(const hoja_t *h, const uint8_t mac[6], const aura_trama_t *t)
+/*
+ * Muestra en la pantalla lo que mandó una hoja. Solo el ÚLTIMO valor: si llega uno más viejo
+ * que el que ya se muestra (la cola de la hoja vaciando el historial para AURA), se reenvía
+ * pero no se muestra.
+ */
+static void mostrar(hoja_t *h, const uint8_t mac[6], const aura_trama_t *t)
 {
     if (h->aula[0] && strcmp(h->aula, aula) != 0) {
         return;                                        /* no es de esta aula: se reenvía pero no se muestra */
     }
     char hw[AURA_HW_ID_BYTES];
     aura_hw_id_de_mac(mac, hw);
-    if (t->tipo == AURA_TIPO_TELEMETRIA && t->largo >= AURA_TELEMETRIA_CABECERA) {
+    size_t cab = t->tipo == AURA_TIPO_TELEMETRIA ? AURA_TELEMETRIA_CABECERA : 4;
+    if ((t->tipo == AURA_TIPO_TELEMETRIA || t->tipo == AURA_TIPO_ESTADO) && t->largo >= cab) {
+        uint32_t ts = aura_u32_leer(t->payload + cab - 4);
+        if (ts != 0 && h->ts_mostrado != 0 && ts < h->ts_mostrado) {
+            return;                                    /* historial atrasado: ya se muestra algo más nuevo */
+        }
+        if (ts != 0) {
+            h->ts_mostrado = ts;
+        }
         char values[AURA_VALUES_MAX + 1];
-        size_t n = t->largo - AURA_TELEMETRIA_CABECERA;
-        memcpy(values, t->payload + AURA_TELEMETRIA_CABECERA, n);
+        size_t n = t->largo - cab;
+        memcpy(values, t->payload + cab, n);
         values[n] = '\0';
-        printf("PANTALLA %s | %s | %s\n", aula, hw, values);
+        printf("PANTALLA %s | %s | %s%s\n", aula, hw, values, t->tipo == AURA_TIPO_ESTADO ? " (estado)" : "");
         cJSON *v = cJSON_Parse(values);
         const cJSON *l = cJSON_GetObjectItemCaseSensitive(v, "led");
         if (cJSON_IsNumber(l) && l->valueint != hoja_led) {
@@ -336,6 +527,11 @@ static void mostrar(const hoja_t *h, const uint8_t mac[6], const aura_trama_t *t
         }
         cJSON_Delete(v);
     } else if (t->tipo == AURA_TIPO_RESULTADO || t->tipo == AURA_TIPO_REPORTE || t->tipo == AURA_TIPO_ALERTA) {
+        if (h->hay_evento && h->seq_evento == t->seq) {
+            return;                                    /* reintento del mismo evento */
+        }
+        h->hay_evento = true;
+        h->seq_evento = t->seq;
         char txt[AURA_PAYLOAD_MAX + 1];
         aura_payload_texto(t, txt, sizeof(txt));
         printf("PANTALLA %s | %s | %s %s\n", aula, hw,
@@ -368,12 +564,22 @@ static void tarea_recepcion(void *arg)
             vTaskDelay(pdMS_TO_TICKS(100));
             continue;
         }
+        if (aura_es_ota(buf, d.size)) {                /* actualización de este concentrador */
+            aura_ota_recibir(buf, d.size);
+            continue;
+        }
         if (aura_trama_validar(buf, d.size) != AURA_TRAMA_OK) {
             ESP_LOGW(TAG, "Trama inválida de " MACSTR " (%u bytes)", MAC2STR(de.addr), d.size);
             continue;
         }
         aura_trama_t t;
         memcpy(&t, buf, d.size);
+#if VER_TRAMAS
+        char hw_rx[AURA_HW_ID_BYTES], txt_rx[AURA_PAYLOAD_MAX + 1];
+        aura_hw_id_de_mac(de.addr, hw_rx);
+        aura_trama_describir(&t, txt_rx, sizeof(txt_rx));
+        printf("TRAMA %s %s seq=%u %s\n", hw_rx, aura_tipo_nombre(t.tipo), t.seq, txt_rx);
+#endif
 
         /* Para este concentrador (de la raíz) */
         if (t.tipo == AURA_TIPO_COMANDO) {
@@ -387,6 +593,7 @@ static void tarea_recepcion(void *arg)
             continue;
         }
         if (t.tipo == AURA_TIPO_EVENTO_OK) {
+            aura_fw_confirmar();                       /* habla con la raíz: la versión anda */
             if (t.largo == 2 && hay_resultado_pendiente &&
                 resultado_pendiente.seq == (uint16_t)(t.payload[0] | t.payload[1] << 8)) {
                 hay_resultado_pendiente = false;
@@ -398,6 +605,7 @@ static void tarea_recepcion(void *arg)
             continue;
         }
         /* De una hoja del aula */
+        HOJAS_TOMAR();
         hoja_t *h = hoja_vista(de.addr);
         aprender_aula(h, &t);
         if (t.tipo == AURA_TIPO_HORA) {                /* pedido de hora: si la tengo, contesto yo */
@@ -408,10 +616,15 @@ static void tarea_recepcion(void *arg)
                 aura_hora_armar(&r, seq++, ms);
                 xSemaphoreGive(lock_envio);
                 enviar_bytes(&de, (const uint8_t *)&r, aura_trama_bytes(&r));
+                HOJAS_SOLTAR();
                 continue;
             }
         }
         mostrar(h, de.addr, &t);
+        HOJAS_SOLTAR();
+        if (t.tipo == AURA_TIPO_ESTADO || isla) {
+            continue;                                  /* ESTADO es solo para el aula; en isla no hay arriba */
+        }
         if (filtrar(de.addr, &t)) {
             lote_agregar(de.addr, buf, d.size);
             if (t.tipo != AURA_TIPO_TELEMETRIA) {
@@ -464,6 +677,9 @@ static void describir(cJSON *config)
 static void reportar(void)
 {
     cJSON *d = cJSON_CreateObject();
+    char fw[2 * AURA_OTA_TEXTO];
+    aura_fw_texto(fw, sizeof(fw));
+    cJSON_AddStringToObject(d, "fw", fw);
     describir(cJSON_AddObjectToObject(d, "config"));
     cJSON_AddStringToObject(d, "rol", "concentrador");
     cJSON_AddNumberToObject(d, "capa", esp_mesh_get_layer());
@@ -515,8 +731,11 @@ static void atender_comando(const comando_t *c)
                        vuelva a elegir padre (las de esta aula vuelven, las otras van a plan B). */
                     ESP_LOGW(TAG, "Cambió el aula: suelto a las %d hojas conectadas", hijos);
                     esp_wifi_deauth_sta(0);
+                    HOJAS_TOMAR();
                     cant_hojas = 0;
+                    HOJAS_SOLTAR();
                     hoja_led = -1;
+                    hojas_guardar();                   /* lista vacía: las de la nueva aula se aprenden */
                     led_mostrar(0);
                 }
             } else {
@@ -550,6 +769,124 @@ static void atender_comando(const comando_t *c)
     }
 }
 
+static void canal_guardar(uint8_t canal)
+{
+    if (canal == 0 || canal == canal_conocido) {
+        return;
+    }
+    canal_conocido = canal;
+    nvs_handle_t h;
+    if (nvs_open("concentrador", NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_u8(h, "canal", canal);
+        nvs_commit(h);
+        nvs_close(h);
+    }
+}
+
+static void entrar_en_isla(void)
+{
+    ESP_LOGW(TAG, "%d s sin raíz: me reinicio como raíz de la isla del aula (canal %u)", ISLA_TRAS_S, canal_conocido);
+    rtc_isla = RTC_ISLA;
+    rtc_canal_isla = canal_conocido;
+    vTaskDelay(pdMS_TO_TICKS(200));
+    esp_restart();
+}
+
+static void salir_de_isla(void)
+{
+    ESP_LOGW(TAG, "Volvió el gateway: me reinicio en modo normal");
+    rtc_isla = 0;
+    vTaskDelay(pdMS_TO_TICKS(200));
+    esp_restart();
+}
+
+/* En isla: ¿hay otra raíz de esta malla (el gateway) al alcance? */
+/* Por cada beacon/probe response con vendor IE (tarea WiFi: breve). Solo hace falta en isla. */
+static void vendor_ie_cb(void *ctx, wifi_vendor_ie_type_t tipo, const uint8_t sa[6],
+                         const vendor_ie_data_t *ie, int rssi)
+{
+    if (!isla || ie->vendor_oui[0] != AURA_OUI_0 || ie->vendor_oui[1] != AURA_OUI_1 ||
+        ie->vendor_oui[2] != AURA_OUI_2 || ie->vendor_oui_type != AURA_IE_GATEWAY) {
+        return;
+    }
+    taskENTER_CRITICAL(&lock_gateways);
+    int i;
+    for (i = 0; i < cant_gateways_vistos && memcmp(gateways_vistos[i], sa, 6) != 0; i++) {
+    }
+    if (i == cant_gateways_vistos && i < MAX_GATEWAYS_VISTOS) {
+        memcpy(gateways_vistos[cant_gateways_vistos++], sa, 6);
+    }
+    taskEXIT_CRITICAL(&lock_gateways);
+}
+
+static bool es_gateway(const uint8_t bssid[6])
+{
+    bool es = false;
+    taskENTER_CRITICAL(&lock_gateways);
+    for (int i = 0; i < cant_gateways_vistos && !es; i++) {
+        es = memcmp(gateways_vistos[i], bssid, 6) == 0;
+    }
+    taskEXIT_CRITICAL(&lock_gateways);
+    return es;
+}
+
+static void isla_buscar_gateway(bool todos_los_canales)
+{
+    taskENTER_CRITICAL(&lock_gateways);
+    cant_gateways_vistos = 0;
+    taskEXIT_CRITICAL(&lock_gateways);
+    wifi_scan_config_t sc = {
+        .show_hidden = true,
+        .scan_type = WIFI_SCAN_TYPE_PASSIVE,
+        .scan_time.passive = 600,
+        .channel = todos_los_canales ? 0 : rtc_canal_isla,
+    };
+    esp_wifi_scan_stop();
+    if (esp_wifi_scan_start(&sc, false) != ESP_OK) {
+        ESP_LOGW(TAG, "Isla: no se pudo escanear");
+    }
+}
+
+static void isla_revisar_escaneo(int num)
+{
+    mesh_assoc_t assoc;
+    wifi_ap_record_t rec;
+    int ie_len = 0;
+    bool gateway = false;
+    for (int i = 0; i < num; i++) {
+        esp_mesh_scan_get_ap_ie_len(&ie_len);
+        esp_mesh_scan_get_ap_record(&rec, &assoc);
+        if (ie_len != sizeof(assoc) || assoc.layer != 1 || memcmp(assoc.mesh_id, MESH_ID, 6) != 0) {
+            continue;
+        }
+        /* Una raíz de esta malla: el gateway solo si anuncia que lo es. Si no, es otro concentrador
+           en isla (o se perdió el beacon con la marca: se ve en la próxima revisión) */
+        if (es_gateway(rec.bssid)) {
+            ESP_LOGI(TAG, "Isla: veo al gateway en " MACSTR " (canal %d)", MAC2STR(rec.bssid), rec.primary);
+            gateway = true;
+        } else {
+            ESP_LOGI(TAG, "Isla: la raíz " MACSTR " no es el gateway (otra aula en isla)", MAC2STR(rec.bssid));
+        }
+    }
+    esp_mesh_flush_scan_result();
+    if (gateway) {
+        salir_de_isla();
+    }
+}
+
+static void tarea_isla(void *arg)
+{
+    int vueltas = 0;
+    while (true) {
+        vTaskDelay(pdMS_TO_TICKS(ISLA_REVISAR_S * 1000));
+        bool todos = ++vueltas * ISLA_REVISAR_S >= ISLA_REVISAR_TODO_S;
+        if (todos) {
+            vueltas = 0;
+        }
+        isla_buscar_gateway(todos);
+    }
+}
+
 static void tarea_estado(void *arg)
 {
     TickType_t ultimo_reporte = 0, ultimo_pedido_hora = 0;
@@ -558,7 +895,18 @@ static void tarea_estado(void *arg)
         if (xQueueReceive(cola_comandos, &c, pdMS_TO_TICKS(200)) == pdTRUE && conectado) {
             atender_comando(&c);
         }
+        static TickType_t ultima_revision = 0;
+        if (xTaskGetTickCount() - ultima_revision >= pdMS_TO_TICKS(2000)) {
+            ultima_revision = xTaskGetTickCount();
+            revisar_ausentes();
+        }
         if (!conectado) {
+            /* Sin raíz: si dura, el aula pasa a modo isla (solo si ya se sabe en qué canal está) */
+            TickType_t desde = sin_padre_desde;
+            if (!isla && desde != 0 && canal_conocido != 0 &&
+                xTaskGetTickCount() - desde >= pdMS_TO_TICKS(ISLA_TRAS_S * 1000)) {
+                entrar_en_isla();
+            }
             continue;
         }
         TickType_t ahora = xTaskGetTickCount();
@@ -590,7 +938,7 @@ static void tarea_boton(void *arg)
             vTaskDelay(pdMS_TO_TICKS(30));             /* antirrebote */
             mesh_addr_t hoja;
             if (gpio_get_level(PIN_BOTON) == 0) {
-                if (conectado && hoja_ultima(&hoja)) {
+                if (hoja_ultima(&hoja)) {                   /* no depende de la raíz: mando local */
                     const char *orden = "{\"command\":\"led\",\"params\":{\"invertir\":true},\"origen\":\"local\"}";
                     ESP_LOGI(TAG, "Botón: orden local a la hoja");
                     enviar_trama(&hoja, AURA_TIPO_COMANDO, orden, strlen(orden));
@@ -607,11 +955,26 @@ static void manejador_mesh(void *arg, esp_event_base_t base, int32_t id, void *d
 {
     switch (id) {
     case MESH_EVENT_STARTED:
+        /* Sin PMF (802.11w) en el AP de la malla. Con PMF, cuando el padre se reinicia el hijo tarda
+           ~17 s en enterarse (SA query) y la radio muestra "MIC mismatch" en los beacons; sin PMF, el
+           AP nuevo lo desconecta en el acto. Tiene que ir acá: antes de esp_mesh_start() la malla lo
+           vuelve a activar (probado 2026-10-22). */
+        esp_wifi_disable_pmf_config(WIFI_IF_AP);
+        if (isla) {
+            esp_mesh_set_self_organized(false, false);   /* raíz de isla: no busca router */
+        }
         anunciar_aula();
+        break;
+    case MESH_EVENT_SCAN_DONE:
+        if (isla) {
+            isla_revisar_escaneo(((mesh_event_scan_done_t *)data)->number);
+        }
         break;
     case MESH_EVENT_PARENT_CONNECTED: {
         mesh_event_connected_t *c = (mesh_event_connected_t *)data;
         conectado = true;
+        sin_padre_desde = 0;
+        canal_guardar(c->connected.channel);
         reconecto = true;
         fallos_envio = 0;
         ESP_LOGI(TAG, "Conectado al padre " MACSTR " - capa %d, canal %d", MAC2STR(c->connected.bssid),
@@ -620,8 +983,18 @@ static void manejador_mesh(void *arg, esp_event_base_t base, int32_t id, void *d
         break;
     }
     case MESH_EVENT_PARENT_DISCONNECTED:
+        if (conectado || sin_padre_desde == 0) {
+            sin_padre_desde = xTaskGetTickCount() | 1;
+        }
         conectado = false;
         ESP_LOGW(TAG, "Desconectado del padre, buscando...");
+        if (!isla) {
+            /* Elegir padre de nuevo, con un escaneo, como al arrancar. Si la pila reintenta sola el padre
+               de antes y ese padre era el gateway que se reinició, el saludo WPA falla una y otra vez
+               (handshake timeout cada ~10 s) hasta que el concentrador se reinicia: el aula quedaba
+               más de 60 s afuera y pasaba a isla. Así vuelve en ~1 s (probado 2026-10-22). */
+            esp_mesh_set_self_organized(true, true);
+        }
         break;
     case MESH_EVENT_NO_PARENT_FOUND:
         ESP_LOGW(TAG, "No se encontró padre (¿gateway encendido? ¿mismo MESH_ID?)");
@@ -629,6 +1002,13 @@ static void manejador_mesh(void *arg, esp_event_base_t base, int32_t id, void *d
     case MESH_EVENT_CHILD_CONNECTED: {
         mesh_event_child_connected_t *c = (mesh_event_child_connected_t *)data;
         hijos++;
+        HOJAS_TOMAR();
+        for (int i = 0; i < cant_hojas; i++) {
+            if (memcmp(hojas[i].mac, c->mac, 6) == 0) {
+                hojas[i].desconectada_desde = 0;
+            }
+        }
+        HOJAS_SOLTAR();
         ESP_LOGI(TAG, "Hijo conectado: " MACSTR " (aid %d)", MAC2STR(c->mac), c->aid);
         break;
     }
@@ -637,6 +1017,13 @@ static void manejador_mesh(void *arg, esp_event_base_t base, int32_t id, void *d
         if (hijos > 0) {
             hijos--;
         }
+        HOJAS_TOMAR();
+        for (int i = 0; i < cant_hojas; i++) {
+            if (memcmp(hojas[i].mac, c->mac, 6) == 0 && hojas[i].desconectada_desde == 0) {
+                hojas[i].desconectada_desde = xTaskGetTickCount() | 1;
+            }
+        }
+        HOJAS_SOLTAR();
         ESP_LOGW(TAG, "Hijo desconectado: " MACSTR, MAC2STR(c->mac));
         break;
     }
@@ -645,8 +1032,19 @@ static void manejador_mesh(void *arg, esp_event_base_t base, int32_t id, void *d
     }
 }
 
+/* Antes de reiniciarse con una versión nueva: el resultado pendiente y el lote salen primero
+   (lo de las hojas no se pierde igual: cada hoja lo reintenta hasta que AURA lo confirma) */
+static void antes_de_reiniciar(void)
+{
+    lote_mandar();
+    for (int i = 0; i < 50 && hay_resultado_pendiente; i++) {
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+}
+
 void app_main(void)
 {
+    aura_fw_iniciar();
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
@@ -660,14 +1058,28 @@ void app_main(void)
         if (nvs_get_str(h, "aula", aula, &n) != ESP_OK || !aura_aula_valida(aula)) {
             aula[0] = '\0';
         }
+        nvs_get_u8(h, "canal", &canal_conocido);
         nvs_close(h);
+    }
+    isla = rtc_isla == RTC_ISLA && rtc_canal_isla >= 1 && rtc_canal_isla <= 13;
+    if (!isla) {
+        rtc_isla = 0;
+    }
+    if (aula[0]) {
+        hojas_cargar();
     }
     esp_read_mac(mi_mac, ESP_MAC_WIFI_STA);
     char hw[AURA_HW_ID_BYTES];
     aura_hw_id_de_mac(mi_mac, hw);
-    ESP_LOGI(TAG, "Concentrador %s, aula %s", hw, aula[0] ? aula : "(sin asignar: la asigna AURA)");
+    ESP_LOGI(TAG, "Concentrador %s, aula %s%s", hw, aula[0] ? aula : "(sin asignar: la asigna AURA)",
+             isla ? " — MODO ISLA (sin gateway)" : "");
 
+    /* seq arranca al azar: si arrancara siempre en 0, el primer evento tras un reinicio podría
+       llevar la misma seq que el último de antes y el que lo recibe lo tomaría por repetido
+       (pasaba con el reporte tras reiniciarse: la raíz lo confirmaba sin publicarlo) */
+    seq = (uint16_t)esp_random();
     lock_envio = xSemaphoreCreateMutex();
+    lock_hojas = xSemaphoreCreateRecursiveMutex();
     lock_lote = xSemaphoreCreateMutex();
     cola_comandos = xQueueCreate(4, sizeof(comando_t));
     aura_lote_vaciar(&lote);
@@ -684,10 +1096,14 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_wifi_init(&wcfg));
     ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
     ESP_ERROR_CHECK(esp_wifi_set_country_code("AR", false));   /* canales 1 a 13 */
+    ESP_ERROR_CHECK(esp_wifi_set_vendor_ie_cb(vendor_ie_cb, NULL));
     ESP_ERROR_CHECK(esp_wifi_start());
 
     ESP_ERROR_CHECK(esp_mesh_init());
     ESP_ERROR_CHECK(esp_event_handler_register(MESH_EVENT, ESP_EVENT_ANY_ID, &manejador_mesh, NULL));
+    if (isla) {
+        ESP_ERROR_CHECK(esp_mesh_set_type(MESH_ROOT)); /* raíz de la isla del aula */
+    }
     ESP_ERROR_CHECK(esp_mesh_fix_root(true));          /* la raíz es fija: no compite */
     ESP_ERROR_CHECK(esp_mesh_set_max_layer(MESH_MAX_CAPAS));
     ESP_ERROR_CHECK(esp_mesh_disable_ps());
@@ -695,10 +1111,11 @@ void app_main(void)
 
     mesh_cfg_t cfg = MESH_INIT_CONFIG_DEFAULT();
     memcpy((uint8_t *)&cfg.mesh_id, MESH_ID, 6);
-    cfg.channel = 0;                                   /* buscar en todos los canales */
-    cfg.allow_channel_switch = true;
-    cfg.router.ssid_len = strlen(ROUTER_FICTICIO);
-    memcpy(cfg.router.ssid, ROUTER_FICTICIO, cfg.router.ssid_len);
+    const char *router = isla ? ROUTER_ISLA : ROUTER_FICTICIO;
+    cfg.channel = isla ? rtc_canal_isla : 0;           /* isla: el último canal; si no, buscar en todos */
+    cfg.allow_channel_switch = !isla;
+    cfg.router.ssid_len = strlen(router);
+    memcpy(cfg.router.ssid, router, cfg.router.ssid_len);
     cfg.mesh_ap.max_connection = MESH_MAX_HIJOS;
     cfg.mesh_ap.nonmesh_max_connection = 0;
     memcpy(cfg.mesh_ap.password, MESH_AP_PASS, strlen(MESH_AP_PASS));
@@ -710,4 +1127,12 @@ void app_main(void)
     xTaskCreate(tarea_lote, "lote", 3072, NULL, 5, NULL);
     xTaskCreate(tarea_estado, "estado", 4096, NULL, 4, NULL);
     xTaskCreate(tarea_boton, "boton", 3072, NULL, 4, NULL);
+    aura_ota_receptor_cfg_t ota = {.antes_de_reiniciar = antes_de_reiniciar};
+    aura_ota_receptor_iniciar(&ota);
+    aura_fw_antes_de_volver(antes_de_reiniciar);
+    if (isla) {
+        xTaskCreate(tarea_isla, "isla", 3072, NULL, 3, NULL);
+    } else {
+        sin_padre_desde = xTaskGetTickCount() | 1;     /* hasta que se conecte a la raíz */
+    }
 }

@@ -1,0 +1,6 @@
+# Conector de prueba de aura_sdk.subproceso: manifiesto inválido a propósito (no declara campos).
+nombre  = "manifiesto_roto"
+version = "0.1.0"
+sdk     = ">=1,<2"
+autores = ["catedra"]
+clase   = "conector:ConectorPrueba"

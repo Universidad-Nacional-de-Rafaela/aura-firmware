@@ -80,10 +80,9 @@ raíz y sus datos llegan igual. Para probar sin AURA, la cátedra levanta el ban
 > ya están escritos así se portan. El CI todavía no compila los proyectos ESP-IDF: compilalos
 > vos antes de abrir el PR.
 
-Si usás código de `comun/`, incluilo con ruta relativa (`#include "../../comun/protocolo_aura.h"`)
-y corré `herramientas/generar_autocontenidos.sh` antes de commitear. Si tu lógica se puede probar
-sin placa (formato de trama, validación de rangos, cola), poné los tests en
-`dispositivos/<CÓDIGO>/tests/` con un `Makefile`: el CI los corre solo.
+Si usás código de `comun/`, incluilo con ruta relativa (`#include "../../comun/protocolo_aura.h"`).
+Si tu lógica se puede probar sin placa (formato de trama, validación de rangos, cola), poné los
+tests en `dispositivos/<CÓDIGO>/tests/` con un `Makefile`: el CI los corre solo.
 
 ## 3. Tu conector
 
@@ -93,8 +92,15 @@ código que tu dispositivo (ver [`conectores/README.md`](conectores/README.md)).
 
 1. Copiá [`ejemplos/plantilla_conector/`](ejemplos/plantilla_conector/) a `conectores/<CÓDIGO>/`.
 2. En `conector.toml`: `nombre` igual a la carpeta, tus usuarios de GitHub, y **un bloque
-   `[campos.<nombre>]` por cada campo que manda tu firmware**, con su unidad y su rango físico.
-   Lo que no esté declarado, o esté fuera de rango, AURA no lo guarda.
+   `[campos.<nombre>]` por cada campo que manda tu firmware** (y por cada uno que calcule tu
+   conector), con su unidad y su rango físico. Lo que no esté declarado, o esté fuera de rango,
+   AURA no lo guarda. Cada campo dice además cómo se muestra en la web:
+   - `etiqueta`: cómo se lo nombra ("Nivel tanque 1"), hasta 40 caracteres. Si falta, el nombre del campo.
+   - `rol`: `principal` va en la tarjeta del Dashboard y en el gráfico de la ficha; `auxiliar`,
+     solo en la ficha, aparte (la medición cruda, un valor derivado de otro); `oculto` se guarda
+     pero no se muestra. Si falta, `principal`. Pocos principales: los que alguien mira para
+     saber cómo está el dispositivo.
+   - Los campos se muestran en el orden del manifiesto.
 3. En `conector.py`, `al_recibir_datos(self, msg, ctx)`: con `msg.values` y `msg.ts` decidís
    `ctx.guardar_medicion(...)` o `ctx.descartar("motivo")`. Si querés predecir, `predecir(self, ctx)`
    y `[prediccion]` en el manifiesto.
@@ -106,12 +112,20 @@ código que tu dispositivo (ver [`conectores/README.md`](conectores/README.md)).
    ```bash
    herramientas/correr_conector.py conectores/<CÓDIGO> --hw-id mac-<MAC de tu placa> --docker aura-mosquitto
    ```
+6. **Probalo como corre en AURA.** AURA no importa tu conector en su proceso: lo corre en un
+   proceso aparte, sin credenciales, con 256 MB de memoria, 5 s de CPU, 64 archivos abiertos y
+   10 s por muestra. Con `--subproceso`, `correr_conector.py` hace lo mismo:
+   ```bash
+   herramientas/correr_conector.py conectores/<CÓDIGO> --archivo mensajes.jsonl --subproceso
+   ```
+   Si algo anda sin `--subproceso` y falla con él (un import pesado, una muestra que tarda), en
+   AURA va a fallar igual. Lo que imprimas con `print()` va al log, no a la salida.
 
 Lo que puede usar un conector es solo el `Contexto`: `guardar_medicion`, `descartar`, `serie`,
 `guardar_prediccion`, `alertar`, `config_vigente` y `log`. No tiene acceso a la base, a la red ni
 a archivos, y AURA puede recrearlo en cualquier momento: lo que tenga que recordar lo lee con
-`ctx.serie()`. Si lanza una excepción, no se guarda nada y el dispositivo reenvía la muestra más
-tarde. Python 3.11 o posterior, sin bibliotecas externas por ahora.
+`ctx.serie()`. Si lanza una excepción, se guarda la muestra cruda (los campos dentro de rango) con una alerta
+`conector_fallo`, y el dispositivo no reenvía. Python 3.11 o posterior, sin bibliotecas externas por ahora.
 
 ## 4. Lo que no se negocia
 
@@ -140,6 +154,6 @@ Abrilo contra `main` de este repo. La plantilla del PR trae un checklist. El CI:
 | Códigos de dispositivos | Cada carpeta respeta el formato y el mapa, tiene su ficha y su `.ino` se llama igual |
 | Tests de host | `comun/tests`, `infraestructura/*/tests`, `herramientas/tests` y los `tests/` de cada dispositivo |
 | Conectores | Tests de `aura_sdk`, manifiesto y clase de cada conector, y sus `tests/` |
-| Compilar sketches | Compila cada sketch para ESP32-C3 SuperMini (o para el FQBN de su `fqbn.txt`) y verifica que `autocontenido/` esté al día |
+| Compilar sketches | Compila cada sketch para ESP32-C3 SuperMini (o para el FQBN de su `fqbn.txt`) |
 
 Con todo en verde, la cátedra revisa y mergea.

@@ -2,6 +2,10 @@
 
 Es la fuente de los rangos físicos de cada campo. La ficha del dispositivo y los límites del
 firmware tienen que coincidir con lo que dice acá.
+
+También dice cómo se presenta cada campo en la web: su etiqueta y su rol. Los principales van en
+la tarjeta del Dashboard y en el gráfico; los auxiliares, en la ficha, aparte; los ocultos se
+guardan pero no se muestran. Los campos se muestran en el orden del manifiesto.
 """
 import re
 import tomllib
@@ -15,6 +19,8 @@ _REQUISITO = re.compile(r"^(>=|<=|>|<|==)\s*(\d+(?:\.\d+){0,2})$")
 _DURACION = re.compile(r"^(\d+)(s|m|h|d)$")
 _SEGUNDOS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
 _CLASE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*:[A-Za-z_][A-Za-z0-9_]*$")
+ROLES = ("principal", "auxiliar", "oculto")
+MAX_ETIQUETA = 40
 
 
 class ManifiestoInvalido(ValueError):
@@ -26,6 +32,8 @@ class Campo:
     unidad: str
     min: float
     max: float
+    etiqueta: str = ""        # cómo se lo nombra en la web; si falta en el manifiesto, el nombre del campo
+    rol: str = "principal"    # uno de ROLES
 
 
 @dataclass(frozen=True)
@@ -127,7 +135,14 @@ def cargar_manifiesto(carpeta) -> Manifiesto:
             raise ManifiestoInvalido(f"campos.{nombre_campo}: min y max tienen que ser números")
         if mn >= mx:
             raise ManifiestoInvalido(f"campos.{nombre_campo}: min ({mn}) tiene que ser menor que max ({mx})")
-        campos[nombre_campo] = Campo(unidad=unidad, min=mn, max=mx)
+        etiqueta = c.get("etiqueta", nombre_campo)
+        if not isinstance(etiqueta, str) or not etiqueta.strip() or len(etiqueta.strip()) > MAX_ETIQUETA:
+            raise ManifiestoInvalido(f"campos.{nombre_campo}: etiqueta tiene que ser un texto de 1 a "
+                                     f"{MAX_ETIQUETA} caracteres, por ejemplo \"Nivel tanque 1\"")
+        rol = c.get("rol", "principal")
+        if rol not in ROLES:
+            raise ManifiestoInvalido(f"campos.{nombre_campo}: rol {rol!r} tiene que ser principal, auxiliar u oculto")
+        campos[nombre_campo] = Campo(unidad=unidad, min=mn, max=mx, etiqueta=etiqueta.strip(), rol=rol)
 
     prediccion = None
     if "prediccion" in datos:
