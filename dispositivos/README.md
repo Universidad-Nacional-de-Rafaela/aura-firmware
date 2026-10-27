@@ -76,6 +76,6 @@ que monitorea, o lo que acciona. Una placa que mide varias magnitudes del ambien
 
 | Código | Qué es | Responsable | Estado |
 |---|---|---|---|
-| [`E1-AZ-TERR-TAN01`](E1-AZ-TERR-TAN01/) | Nivel de dos tanques de agua de la terraza (LoRaWAN) | losHijosDelStackOverFlow (IC IV 2026) | en desarrollo |
+| [`E1-AZ-TERR-TAN01`](E1-AZ-TERR-TAN01/) | Nivel de dos tanques de agua de la terraza (LoRaWAN) | losHijosDelStackOverFlow (IC IV 2026) | instalado |
 | [`E1-PB-LECA-HFR01`](E1-PB-LECA-HFR01/) | Heladera-freezer del LabECA | grupo de IC IV 2026 | en desarrollo |
 | [`E2-AZ-TERR-TAN01`](E2-AZ-TERR-TAN01/) | Nivel de 3 tanques de agua de la terraza del Edificio 2 | grupo de IC IV 2026 | en desarrollo |

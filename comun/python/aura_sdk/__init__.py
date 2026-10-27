@@ -14,7 +14,7 @@ from .cargar import cargar_conector
 from .mensaje import Mensaje
 from .subproceso import ConectorEnSubproceso, Limites
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 __all__ = [
     "Alerta", "Campo", "Conector", "ConectorEnSubproceso", "Contexto", "ContextoDePrueba", "Manifiesto",
