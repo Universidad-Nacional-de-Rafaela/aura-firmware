@@ -44,9 +44,11 @@ valida y guarda mediciones, y genera alertas al cruzar umbrales.
 | `main/idf_component.yml`, `dependencies.lock` | Dependencias declaradas y versiones resueltas por ESP-IDF. |
 | `tests/` | Pruebas de lógica y configuración en computadora; no se cargan en la placa. |
 
-La versión anterior de Arduino queda en el historial de Git. Este proyecto ya
-no usa `.ino`, `comun/nodo_mesh.h` ni una copia en `autocontenido/`: se compila
-directamente desde esta carpeta con los componentes de `Mesh_Red_Completa/`.
+La versión anterior de Arduino queda en el historial de Git. Este proyecto se
+compila directamente desde esta carpeta con los componentes de
+`Mesh_Red_Completa/`, sin `.ino` ni `comun/nodo_mesh.h`. La carpeta
+`autocontenido/`, su generador y su verificación en CI fueron retirados del
+repositorio: no se generan ni se versionan copias del firmware.
 
 ## Hardware
 

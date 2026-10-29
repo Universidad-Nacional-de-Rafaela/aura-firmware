@@ -112,6 +112,40 @@ class Manifiesto(unittest.TestCase):
             with self.assertRaisesRegex(ManifiestoInvalido, "cada"):
                 cargar_manifiesto(carpeta(tmp, extra='[prediccion]\ncada = "15 minutos"\nhorizonte = "6h"\n'))
 
+    def _con_temp(self, tmp, lineas):
+        """El manifiesto de prueba con esas líneas agregadas a [campos.temp_c]."""
+        d = carpeta(tmp)
+        (d / "conector.toml").write_text((d / "conector.toml").read_text().replace(
+            "max = 125\n", "max = 125\n" + lineas), encoding="utf-8")
+        return d
+
+    def test_etiqueta_y_rol_por_defecto(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            m = cargar_manifiesto(carpeta(tmp))
+            self.assertEqual((m.campos["temp_c"].etiqueta, m.campos["temp_c"].rol), ("temp_c", "principal"))
+
+    def test_etiqueta_y_rol_declarados(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            m = cargar_manifiesto(self._con_temp(tmp, 'etiqueta = "Temperatura"\nrol = "auxiliar"\n'))
+            self.assertEqual((m.campos["temp_c"].etiqueta, m.campos["temp_c"].rol), ("Temperatura", "auxiliar"))
+            self.assertEqual(m.campos["hum_pct"].rol, "principal")
+
+    def test_los_campos_conservan_el_orden_del_manifiesto(self):
+        # La web muestra los campos en este orden: el de quien escribió el manifiesto
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(list(cargar_manifiesto(carpeta(tmp)).campos), ["temp_c", "hum_pct"])
+
+    def test_rol_desconocido(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(ManifiestoInvalido, "temp_c.*rol.*principal, auxiliar u oculto"):
+                cargar_manifiesto(self._con_temp(tmp, 'rol = "secundario"\n'))
+
+    def test_etiqueta_vacia_o_larga(self):
+        for valor in ('""', '"   "', '"' + "x" * 41 + '"', "3"):
+            with self.subTest(valor=valor), tempfile.TemporaryDirectory() as tmp:
+                with self.assertRaisesRegex(ManifiestoInvalido, "temp_c.*etiqueta"):
+                    cargar_manifiesto(self._con_temp(tmp, f"etiqueta = {valor}\n"))
+
     def test_toml_roto(self):
         with tempfile.TemporaryDirectory() as tmp:
             d = carpeta(tmp)

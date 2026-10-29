@@ -16,6 +16,4 @@
 - [ ] El dispositivo figura en la tabla de `dispositivos/README.md`, y las abreviaturas nuevas
       están en el mapa.
 - [ ] `bibliotecas.txt` lista todas las bibliotecas, con versión.
-- [ ] Si toqué `comun/` o un sketch con `#include` de `comun/`, corrí
-      `herramientas/generar_autocontenidos.sh` y commiteé `autocontenido/`.
 - [ ] Lo probé en hardware: <qué se probó y qué se vio>.

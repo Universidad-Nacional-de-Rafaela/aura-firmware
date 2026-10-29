@@ -6,10 +6,24 @@ el SDK aura_sdk de comun/python/, sin paquetes externos ni acceso a red/archivos
 
 | Archivo | Función |
 |---|---|
-| conector.toml | Código, usuarios del grupo, unidad y rango físico de las dos sondas. |
+| conector.toml | Código, usuarios del grupo, unidad, rango físico, etiqueta y rol de las dos sondas. |
 | conector.py | Validación, guardado y alertas por cruce de umbrales. |
 | tests/test_conector.py | 20 pruebas con ContextoDePrueba, sin AURA ni hardware. |
 | tests/mensajes_ejemplo.jsonl | Seis mensajes ficticios para probar el runner por archivo. |
+
+## Presentación en AURA
+
+El manifiesto requiere `sdk = ">=1.2,<2"`. Ambas temperaturas son principales:
+se muestran en la tarjeta del Dashboard y en el gráfico de la ficha, en el
+orden del manifiesto:
+
+| Campo | Etiqueta | Rol |
+|---|---|---|
+| temp_heladera_c | Temperatura heladera | principal |
+| temp_freezer_c | Temperatura freezer | principal |
+
+Estas opciones definen la presentación; no cambian los nombres que envía el
+firmware, las unidades, los rangos ni la lógica de guardado y alertas.
 
 ## Decisiones
 
