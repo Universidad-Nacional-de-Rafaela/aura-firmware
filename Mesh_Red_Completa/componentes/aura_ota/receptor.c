@@ -3,8 +3,10 @@
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "esp_log.h"
+#include "esp_mac.h"
 #include "esp_system.h"
 #include "esp_mesh.h"
+#include "esp_event.h"
 #include "esp_app_desc.h"
 #include "esp_app_format.h"
 #include "esp_ota_ops.h"
@@ -15,6 +17,12 @@
 #include "aura_ota_receptor.h"
 
 static const char *TAG = "AURA_OTA";
+
+/* Dirección de la raíz de la malla (MESH_EVENT_ROOT_ADDRESS). Solo la raíz ofrece y manda
+   actualizaciones: una trama OTA de otro nodo se descarta. */
+static portMUX_TYPE lock_raiz = portMUX_INITIALIZER_UNLOCKED;
+static uint8_t raiz[6];
+static bool hay_raiz = false;
 
 typedef struct {
     uint16_t largo;
@@ -67,7 +75,9 @@ static void fin(uint32_t s, uint8_t resultado, const char *motivo)
     uint8_t p[1 + AURA_OTA_MOTIVO_MAX];
     size_t n = motivo ? strnlen(motivo, AURA_OTA_MOTIVO_MAX) : 0;
     p[0] = resultado;
-    memcpy(p + 1, motivo, n);
+    if (n) {
+        memcpy(p + 1, motivo, n);
+    }
     enviar(AURA_OTA_FIN, s, p, 1 + n);
 }
 
@@ -113,7 +123,8 @@ static void atender_oferta(uint32_t s, const uint8_t *cuerpo, size_t largo)
         motivo = "imagen_invalida";
     } else if (!aura_tipo_valido(o.tipo) || !aura_version_valida(o.version)) {
         motivo = "imagen_sin_tipo_o_version";
-    } else if (strcmp(o.tipo, aura_fw_tipo()) != 0 && !o.forzar) {
+    } else if (strcmp(o.tipo, aura_fw_tipo()) != 0) {
+        /* Sin excepciones: cambiarle el uso a una placa se hace por USB (o.forzar se ignora) */
         motivo = "tipo_distinto";
     } else if (strcmp(o.tipo, aura_fw_tipo()) == 0 && strcmp(o.version, aura_fw_version()) == 0) {
         ESP_LOGI(TAG, "Oferta de %s %s: ya es la que corre", o.tipo, o.version);
@@ -291,19 +302,47 @@ static void tarea_ota(void *arg)
     }
 }
 
+static void al_saber_la_raiz(void *arg, esp_event_base_t base, int32_t id, void *data)
+{
+    mesh_event_root_address_t *r = (mesh_event_root_address_t *)data;
+    /* La pila informa la MAC del AP de la raíz; sus tramas salen de su MAC de estación, que es una
+       menos (AP = estación + 1 en los ESP32). Se resta 1 a los 48 bits. */
+    uint8_t sta[6];
+    memcpy(sta, r->addr, 6);
+    for (int i = 5; i >= 0 && sta[i]-- == 0; i--) {
+    }
+    taskENTER_CRITICAL(&lock_raiz);
+    memcpy(raiz, sta, 6);
+    hay_raiz = true;
+    taskEXIT_CRITICAL(&lock_raiz);
+}
+
+bool aura_es_la_raiz(const uint8_t mac[6])
+{
+    taskENTER_CRITICAL(&lock_raiz);
+    bool es = hay_raiz && memcmp(raiz, mac, 6) == 0;
+    taskEXIT_CRITICAL(&lock_raiz);
+    return es;
+}
+
 void aura_ota_receptor_iniciar(const aura_ota_receptor_cfg_t *c)
 {
     if (c) {
         cfg = *c;
     }
+    esp_event_handler_register(MESH_EVENT, MESH_EVENT_ROOT_ADDRESS, al_saber_la_raiz, NULL);
     psa_crypto_init();
     cola = xQueueCreate(6, sizeof(trama_ota_t));
     xTaskCreate(tarea_ota, "ota", 4096, NULL, 4, NULL);
 }
 
-void aura_ota_recibir(const uint8_t *datos, size_t largo)
+void aura_ota_recibir(const uint8_t de[6], const uint8_t *datos, size_t largo)
 {
     if (cola == NULL || !aura_es_ota(datos, largo)) {
+        return;
+    }
+    if (!aura_es_la_raiz(de)) {
+        ESP_LOGW(TAG, "Trama OTA de " MACSTR ", que no es la raíz: se descarta", MAC2STR(de));
         return;
     }
     static trama_ota_t t;                              /* solo la llama la tarea de recepción */

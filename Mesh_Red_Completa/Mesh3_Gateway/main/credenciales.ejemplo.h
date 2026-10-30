@@ -17,17 +17,33 @@
     { "OTRA_RED",       "CAMBIAR" }
 
 /*
- * Broker MQTT:
- *  ""  = buscarlo solo: el gateway pregunta por broadcast (UDP 18830) y broker.py
- *        le contesta con su IP. No hace falta saber la IP de la PC.
- *  "mqtt://IP:puerto" = usar siempre esa dirección (p. ej. un broker que no contesta
- *        el descubrimiento, como un Mosquitto o el servidor de AURA).
+ * Broker MQTT (PRODUCCIÓN: siempre una dirección fija):
+ *  "mqtts://servidor:8883" = TLS: el gateway verifica el certificado del broker antes de mandar nada.
+ *        Con una CA propia, definir BROKER_CA_PEM (el certificado de la CA en PEM, como texto);
+ *        sin ella se aceptan los certificados de las CA públicas.
+ *  "mqtt://IP:puerto"      = sin TLS (solo en una red de confianza).
+ *  ""  = buscarlo por broadcast (UDP 18830, broker.py contesta): SOLO EN EL BANCO, con
+ *        DESCUBRIR_BROKER 1. A un broker descubierto nunca se le mandan usuario y clave.
  */
 #define BROKER_URI      ""
+#define DESCUBRIR_BROKER 0
+/* #define BROKER_CA_PEM "-----BEGIN CERTIFICATE-----
+...
+-----END CERTIFICATE-----
+" */
 
 /*
- * Usuario y clave del broker. Vacíos = anónimo (broker.py del banco).
+ * Usuario y clave del broker (solo se mandan a la BROKER_URI fija). Vacíos = anónimo.
  * El broker de aura-app no acepta anónimos: usuario "raiz" y la clave MQTT_RAIZ_PASSWORD de su .env.
  */
 #define MQTT_USUARIO    ""
 #define MQTT_CLAVE      ""
+
+/* Actualización por la malla: solo https://. 1 = acepta también http:// (SOLO el banco, con ota.py) */
+#define OTA_PERMITIR_HTTP 0
+/* Servidor de las imágenes con certificado de una CA propia (por ejemplo, el banco con
+   ota.py --https): el certificado de esa CA. Sin definir, se verifica contra las CA públicas. */
+/* #define OTA_CA_PEM "-----BEGIN CERTIFICATE-----
+...
+-----END CERTIFICATE-----
+" */

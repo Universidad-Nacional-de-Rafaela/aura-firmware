@@ -693,6 +693,15 @@ static void procesar_recibidas(TickType_t espera)
         espera = 0;
         aura_trama_t t;
         memcpy(&t, r.datos, r.largo);
+        /* Lo que manda la raíz (o, en modo aula, el concentrador: su botón y la hora) es lo único
+           que puede mandarle algo a una hoja. Cualquier otro nodo de la malla se ignora. */
+        bool de_la_raiz = aura_es_la_raiz(r.de);
+        bool de_mi_concentrador = modo == MODO_AULA && memcmp(r.de, concentrador.addr, 6) == 0;
+        if (!de_la_raiz && !(de_mi_concentrador && (t.tipo == AURA_TIPO_COMANDO || t.tipo == AURA_TIPO_HORA))) {
+            ESP_LOGW(TAG, "Trama %u de " MACSTR " (no es la raíz ni mi concentrador): se descarta", t.tipo,
+                     MAC2STR(r.de));
+            continue;
+        }
         switch (t.tipo) {
         case AURA_TIPO_CONFIRMACION:
             procesar_confirmacion(&t);
@@ -743,7 +752,7 @@ static void tarea_rx(void *arg)
             continue;
         }
         if (aura_es_ota(buf, d.size)) {                /* actualización: tiene su propia tarea */
-            aura_ota_recibir(buf, d.size);
+            aura_ota_recibir(de.addr, buf, d.size);
             continue;
         }
         if (aura_trama_validar(buf, d.size) != AURA_TRAMA_OK) {
