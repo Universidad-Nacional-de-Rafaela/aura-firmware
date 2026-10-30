@@ -9,7 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import aura_sdk  # noqa: E402
 from aura_sdk import (  # noqa: E402
-    Conector, ContextoDePrueba, ManifiestoInvalido, Mensaje, cargar_conector,
+    Conector, ContextoDePrueba, FalloDelConector, ManifiestoInvalido, Mensaje, cargar_conector,
     cargar_manifiesto, procesar,
 )
 from aura_sdk.contrato import PruebasDeContrato  # noqa: E402
@@ -112,6 +112,40 @@ class Manifiesto(unittest.TestCase):
             with self.assertRaisesRegex(ManifiestoInvalido, "cada"):
                 cargar_manifiesto(carpeta(tmp, extra='[prediccion]\ncada = "15 minutos"\nhorizonte = "6h"\n'))
 
+    def _con_temp(self, tmp, lineas):
+        """El manifiesto de prueba con esas líneas agregadas a [campos.temp_c]."""
+        d = carpeta(tmp)
+        (d / "conector.toml").write_text((d / "conector.toml").read_text().replace(
+            "max = 125\n", "max = 125\n" + lineas), encoding="utf-8")
+        return d
+
+    def test_etiqueta_y_rol_por_defecto(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            m = cargar_manifiesto(carpeta(tmp))
+            self.assertEqual((m.campos["temp_c"].etiqueta, m.campos["temp_c"].rol), ("temp_c", "principal"))
+
+    def test_etiqueta_y_rol_declarados(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            m = cargar_manifiesto(self._con_temp(tmp, 'etiqueta = "Temperatura"\nrol = "auxiliar"\n'))
+            self.assertEqual((m.campos["temp_c"].etiqueta, m.campos["temp_c"].rol), ("Temperatura", "auxiliar"))
+            self.assertEqual(m.campos["hum_pct"].rol, "principal")
+
+    def test_los_campos_conservan_el_orden_del_manifiesto(self):
+        # La web muestra los campos en este orden: el de quien escribió el manifiesto
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(list(cargar_manifiesto(carpeta(tmp)).campos), ["temp_c", "hum_pct"])
+
+    def test_rol_desconocido(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(ManifiestoInvalido, "temp_c.*rol.*principal, auxiliar u oculto"):
+                cargar_manifiesto(self._con_temp(tmp, 'rol = "secundario"\n'))
+
+    def test_etiqueta_vacia_o_larga(self):
+        for valor in ('""', '"   "', '"' + "x" * 41 + '"', "3"):
+            with self.subTest(valor=valor), tempfile.TemporaryDirectory() as tmp:
+                with self.assertRaisesRegex(ManifiestoInvalido, "temp_c.*etiqueta"):
+                    cargar_manifiesto(self._con_temp(tmp, f"etiqueta = {valor}\n"))
+
     def test_toml_roto(self):
         with tempfile.TemporaryDirectory() as tmp:
             d = carpeta(tmp)
@@ -192,22 +226,54 @@ class Procesar(unittest.TestCase):
         r = procesar(c, self.ctx, mensaje({"temp_c": 1}))
         self.assertEqual((r.resultado, r.motivo), ("descartado", "sin_accion"))
 
-    def test_excepcion_queda_sin_ack(self):
-        def explota(self, msg, ctx):
-            raise ValueError("bug del grupo")
-        c = type("C", (Conector,), {"al_recibir_datos": explota})(self.m)
-        r = procesar(c, self.ctx, mensaje({"temp_c": 1}))
-        self.assertIsNone(r.resultado)
-        self.assertIn("bug del grupo", r.error)
-        self.assertEqual(self.ctx.mediciones, [])
+    def _conector(self, fn):
+        return type("C", (Conector,), {"al_recibir_datos": fn})(self.m)
 
-    def test_lo_guardado_antes_de_una_excepcion_no_queda(self):
-        def guarda_y_explota(self, msg, ctx):
-            ctx.guardar_medicion(msg.values)
+    def test_d5_excepcion_guarda_cruda_y_alerta(self):
+        def lanza(self, msg, ctx):
+            raise ValueError("bug del grupo")
+        r = procesar(self._conector(lanza), self.ctx, mensaje({"temp_c": 20, "otro": 1}, ingest_id="a"))
+        self.assertEqual((r.resultado, r.motivo), ("persistido", "conector_fallo"))
+        self.assertEqual(r.quitados, ["otro"])
+        self.assertEqual(self.ctx.mediciones[-1].values, {"temp_c": 20})
+        self.assertEqual([a.tipo for a in self.ctx.alertas], ["conector_fallo"])
+        self.assertIn("Traceback", r.error)
+        self.assertIn("bug del grupo", r.error)
+        self.assertEqual(self.ctx.alertas[0].severidad, "high")
+        self.assertEqual(self.ctx.alertas[0].mensaje, "el conector falló (excepcion): ValueError: bug del grupo")
+
+    def test_d5_sin_campos_validos_descarta_y_alerta(self):
+        def lanza(self, msg, ctx):
+            raise ValueError("x")
+        r = procesar(self._conector(lanza), self.ctx, mensaje({"temp_c": 999}, ingest_id="b"))
+        self.assertEqual((r.resultado, r.motivo), ("descartado", "conector_fallo"))
+        self.assertEqual(self.ctx.mediciones, [])
+        self.assertEqual([a.tipo for a in self.ctx.alertas], ["conector_fallo"])
+
+    def test_d5_lo_que_hizo_el_conector_antes_de_fallar_no_queda(self):
+        def guarda_alerta_y_lanza(self, msg, ctx):
+            ctx.guardar_medicion({"temp_c": 1})
+            ctx.alertar("umbral", "high", "x")
             raise RuntimeError("tarde")
-        c = type("C", (Conector,), {"al_recibir_datos": guarda_y_explota})(self.m)
-        procesar(c, self.ctx, mensaje({"temp_c": 1}))
-        self.assertEqual(self.ctx.mediciones, [])   # rollback, como el runtime
+        procesar(self._conector(guarda_alerta_y_lanza), self.ctx, mensaje({"temp_c": 20}))
+        self.assertEqual([a.tipo for a in self.ctx.alertas], ["conector_fallo"])
+        self.assertEqual(self.ctx.mediciones[-1].values, {"temp_c": 20})   # la cruda, no la del conector
+        self.assertEqual(len(self.ctx.mediciones), 1)
+
+    def test_alertas_quedan_pendientes_hasta_confirmar(self):
+        self.ctx._empezar(mensaje({"temp_c": 1}))
+        self.ctx.alertar("umbral", "high", "x")
+        self.assertEqual(self.ctx.alertas, [])
+        self.ctx._confirmar()
+        self.assertEqual([a.tipo for a in self.ctx.alertas], ["umbral"])
+
+    def test_falla_del_conector_en_subproceso_usa_su_causa_y_detalle(self):
+        def lanza(self, msg, ctx):
+            raise FalloDelConector("timeout", "se pasó de 10 s")
+        r = procesar(self._conector(lanza), self.ctx, mensaje({"temp_c": 20}))
+        self.assertIn("se pasó de 10 s", r.error)
+        self.assertEqual(self.ctx.alertas[-1].mensaje, "el conector falló (timeout): se pasó de 10 s")
+        self.assertEqual((r.resultado, r.motivo), ("persistido", "conector_fallo"))
 
     def test_ingest_id_repetido_es_duplicado_sin_llamar_al_conector(self):
         procesar(self.c, self.ctx, mensaje({"temp_c": 1}))

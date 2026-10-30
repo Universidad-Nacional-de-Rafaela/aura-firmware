@@ -97,6 +97,7 @@ class ContextoDePrueba(Contexto):
         self._vistos = set()
         self._msg = None
         self._pendiente = None   # lo que hizo el conector con el mensaje en curso
+        self._alertas_pendientes: list = []
 
     # ----- lo que usa el conector -----
 
@@ -152,7 +153,8 @@ class ContextoDePrueba(Contexto):
             raise ValueError("tipo: minúsculas y _, hasta 24 caracteres")
         if severidad not in SEVERIDADES:
             raise ValueError(f"severidad: una de {SEVERIDADES}")
-        self.alertas.append(Alerta(tipo=tipo, severidad=severidad, mensaje=str(mensaje)))
+        # Pendiente hasta _confirmar(); _deshacer() la tira (como en AURA).
+        self._alertas_pendientes.append(Alerta(tipo=tipo, severidad=severidad, mensaje=str(mensaje)))
 
     def config_vigente(self):
         return dict(self._config)
@@ -165,6 +167,7 @@ class ContextoDePrueba(Contexto):
     def _empezar(self, msg):
         self._msg = msg
         self._pendiente = None
+        self._alertas_pendientes = []
 
     def _registrar(self, accion):
         # La última decisión del conector sobre el mensaje es la que vale.
@@ -172,12 +175,21 @@ class ContextoDePrueba(Contexto):
             raise RuntimeError("guardar_medicion y descartar solo se llaman dentro de al_recibir_datos")
         self._pendiente = accion
 
+    def _fallo(self, causa, error):
+        """El conector falló (D5): deja una alerta pendiente con la causa y la última línea del error."""
+        lineas = [l for l in str(error).splitlines() if l.strip()]
+        ultima = lineas[-1].strip() if lineas else ""
+        self._alertas_pendientes.append(
+            Alerta("conector_fallo", "high", f"el conector falló ({causa}): {ultima}"))
+
     def _confirmar(self):
         """Commit: devuelve (resultado, motivo, quitados)."""
         accion, self._pendiente, msg, self._msg = self._pendiente, None, self._msg, None
         if accion is None:
             accion = ("descartado", "sin_accion", None, [])
         resultado, motivo, medicion, quitados = accion
+        self.alertas.extend(self._alertas_pendientes)
+        self._alertas_pendientes = []
         if medicion is not None:
             self.mediciones.append(medicion)
         if resultado == "descartado":
@@ -189,4 +201,5 @@ class ContextoDePrueba(Contexto):
     def _deshacer(self):
         """Rollback: lo que hizo el conector con este mensaje no queda."""
         self._pendiente = None
+        self._alertas_pendientes = []
         self._msg = None

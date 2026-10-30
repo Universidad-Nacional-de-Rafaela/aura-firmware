@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
-# Componentes comunes de la mesh de AURA (trama)
-set(EXTRA_COMPONENT_DIRS "${CMAKE_CURRENT_LIST_DIR}/../componentes/aura_mesh")
+# Componentes comunes de la mesh de AURA (trama y actualización por la malla)
+set(EXTRA_COMPONENT_DIRS "${CMAKE_CURRENT_LIST_DIR}/../componentes/aura_mesh"
+                         "${CMAKE_CURRENT_LIST_DIR}/../componentes/aura_ota")
+# Tipo y versión del firmware (regla en GUIA_NODOS_HOJA.md): subir la versión en cada entrega
+set(PROJECT_VER "1.0.0")
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-project(mesh_intermedio)
+project(aura-concentrador)

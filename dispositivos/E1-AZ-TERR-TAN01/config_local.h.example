@@ -1,0 +1,15 @@
+// Copiar este archivo como config_local.h (en la misma carpeta) y completar.
+// config_local.h está en el .gitignore: NUNCA se commitea. Si el AppKey llega a
+// GitHub, este repo es público: hay que pedirle a la cátedra uno nuevo.
+
+#pragma once
+
+// Credenciales OTAA, LoRaWAN 1.0.x: las da la cátedra al dar de alta el dispositivo
+// en ChirpStack. El DevEUI es también su identidad en AURA: hw_id "eui-" + el DevEUI
+// en minúsculas.
+#define LORAWAN_JOIN_EUI 0x0000000000000000
+#define LORAWAN_DEV_EUI  0x0000000000000000
+
+// La "Application key" de la web de ChirpStack (columna nwk_key en 1.0.x), 16 bytes.
+#define LORAWAN_APP_KEY {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, \
+                         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}

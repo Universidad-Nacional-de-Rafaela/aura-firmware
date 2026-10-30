@@ -8,15 +8,16 @@ Python 3.11 o posterior, sin dependencias.
 """
 from .conector import Conector
 from .contexto import Alerta, Contexto, ContextoDePrueba, Medicion, Prediccion
-from .ejecutar import ResultadoMensaje, procesar
+from .ejecutar import MOTIVO_FALLO, ErrorDelAnfitrion, FalloDelConector, ResultadoMensaje, procesar
 from .manifiesto import Campo, Manifiesto, ManifiestoInvalido, PrediccionCada, cargar_manifiesto
 from .cargar import cargar_conector
 from .mensaje import Mensaje
+from .subproceso import ConectorEnSubproceso, Limites
 
-__version__ = "1.0.0"
+__version__ = "1.2.0"
 
 __all__ = [
-    "Alerta", "Campo", "Conector", "Contexto", "ContextoDePrueba", "Manifiesto",
-    "ManifiestoInvalido", "Medicion", "Mensaje", "Prediccion", "PrediccionCada",
+    "Alerta", "Campo", "Conector", "ConectorEnSubproceso", "Contexto", "ContextoDePrueba", "Manifiesto",
+    "MOTIVO_FALLO", "ErrorDelAnfitrion", "FalloDelConector", "Limites", "ManifiestoInvalido", "Medicion", "Mensaje", "Prediccion", "PrediccionCada",
     "ResultadoMensaje", "cargar_conector", "cargar_manifiesto", "procesar", "__version__",
 ]
