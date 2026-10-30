@@ -364,6 +364,14 @@ El **concentrador** publica su propio `status` como cualquier placa de la mesh, 
 `rol: "concentrador"`, su `config` (incluida `aula`) y su `firmware`. Sin aula no anuncia nada a las
 hojas.
 
+**`rol` es solo un dato que declara la placa (v4.4): no da ningún permiso.** AURA **nunca** debe
+autorizar a una placa por lo que dice su `rol`, ni de forma automática: cualquier placa podría decir
+que es concentrador. Lo que vale es **`concentrador_autorizado`** (`true`/`false`), que el raíz agrega
+al `status` de cada nodo de la mesh: es `true` solo si AURA lo autorizó con el comando
+`autorizar_concentrador` (§3.3). El raíz acepta datos de varias hojas juntos (el lote interno del
+aula) solo de un concentrador autorizado; de otro, los descarta y las hojas los reintentan, sin
+perderse.
+
 El contador de la cola y la alimentación van acá y **no** en `values`, por la misma razón que
 `pend` y `desc` en la v1.x.
 
@@ -472,6 +480,20 @@ límite es el **payload de la trama, 180 B**. El raíz publica `rechazado` con `
 
 El raíz **no** valida qué comandos acepta cada hoja: la hoja rechaza los que no conoce
 (`comando_desconocido`). **Ningún comando se descarta sin respuesta.**
+
+**Autorizar un concentrador (mesh, v4.4).** Lo atiende el raíz (no baja al nodo) y lo guarda: vale
+también después de reiniciarse.
+
+```json
+{ "command": "autorizar_concentrador", "command_id": "c-2026-0051", "params": { "autorizado": true } }
+```
+
+Se manda al `hw_id` del concentrador, cuando una **persona** lo acepta en AURA sabiendo qué placa es
+(por ejemplo, al sacarlo de la cuarentena y asignarle el aula). `"autorizado": false` le quita el
+permiso (un concentrador que se retira). Respuestas: `recibido` y `aplicado`; `rechazado` con
+`params_invalidos` (falta `autorizado` o el `hw_id` es el del raíz) o `sin_lugar` (el raíz ya conoce
+el máximo de nodos). Hasta que se lo autoriza, un concentrador nuevo no entrega los datos de sus
+hojas: quedan en las colas de las hojas.
 
 **Actualización por la malla (mesh, v4.3,
 [ADR-008](adr/ADR-008-actualizacion-por-la-malla-y-tipo-de-firmware.md)).** El comando `ota` cambia el
@@ -847,7 +869,7 @@ MAC del medidor. Mientras no se decida, sus mensajes se descartan:
 
 | Versión | Fecha | Cambio |
 |---|---|---|
-| 4.4 | 2026-10-26 | **Propuesta. Seguridad de la actualización por la malla** (revisión de seguridad de la red, etapa 1). **Incompatible solo para quien use `forzar_tipo`**, que se elimina (`forzar_tipo_deshabilitado`). `params.url` pasa a ser `https://`. Las imágenes van **firmadas por la cátedra** y la placa rechaza una sin firma (`imagen_invalida`). Pendiente 23 resuelto en parte (firma sin Secure Boot). |
+| 4.4 | 2026-10-30 | **Propuesta. Seguridad de la actualización por la malla** (revisión de seguridad de la red, etapa 1). **Incompatible solo para quien use `forzar_tipo`**, que se elimina (`forzar_tipo_deshabilitado`). Nuevo comando **`autorizar_concentrador`** y `details.concentrador_autorizado` (§3.2, §3.3): el `rol` que declara una placa es solo un dato y AURA nunca autoriza por él; hasta que AURA autoriza un concentrador, el raíz no acepta los datos de sus hojas. `params.url` pasa a ser `https://`. Las imágenes van **firmadas por la cátedra** y la placa rechaza una sin firma (`imagen_invalida`). Pendiente 23 resuelto en parte (firma sin Secure Boot). |
 | 4.3 | 2026-10-22 | **Propuesta. Actualización por la malla** ([ADR-008](adr/ADR-008-actualizacion-por-la-malla-y-tipo-de-firmware.md), `aura-firmware` #24). Compatible: nada cambia de forma. Nuevos: el comando **`ota`** para cualquier placa de la mesh, incluido el raíz, que solo acepta ese comando para sí mismo (§3.3), con sus motivos de `rechazado` y el significado de cada estado (§3.4); **`details.firmware`** (`tipo` y `versión`) en el `status` de hojas, concentradores y raíz, y `details.ota` en el del raíz mientras actualiza (§3.2). Regla del tipo de firmware: `aura-<uso>`, uno por uso. Pendientes 22 y 23. |
 | 4.2 | 2026-10-21 | **Propuesta.** Nuevo motivo de `offline` en la mesh: `fuera_de_la_malla` (§3.2), además de `sin_tramas`. Compatible si el backend no valida el motivo. Sin otros cambios de formato: el modo isla del concentrador, la trama interna `ESTADO` y las hojas ausentes en la pantalla del aula son internos de la mesh (`aura-firmware/Mesh_Red_Completa/`). |
 | 4.1 | 2026-10-20 | **Mesh en ESP-IDF con concentrador por aula** ([ADR-007](adr/ADR-007-mesh-en-esp-idf-con-concentrador-por-aula.md), `aura-firmware` #21). Compatible: el árbol de tópicos y los payloads no cambian. Nuevos: el **concentrador del aula** (§1, §2.3, transparente para AURA), el parámetro reservado **`aula`** de `set_config` con los motivos `aula_invalida` y `sin_parametros` (§3.3), y en el `status` de la hoja `modo`, `en_flash`, `eventos_perdidos`, `rssi`, `capa` y `config.aula` (§3.2). La cola de la hoja pasa a **híbrida**: RAM, y flash solo para lo que pasa 5 min sin confirmar (§5). En las hojas ya no hace falta el SSID del WiFi del edificio: solo el raíz se conecta al router. Pendiente 20. |

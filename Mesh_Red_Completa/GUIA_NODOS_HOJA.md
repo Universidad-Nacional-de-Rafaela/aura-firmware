@@ -292,15 +292,28 @@ python ota.py build/aura-acceso.bin --todas --aula aula11                       
 Para que nadie pueda instalar por la malla un firmware que no sea el de la cátedra, **cada imagen va firmada** y la placa
 verifica la firma antes de instalarla (`CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT`, RSA-3072; no quema eFuses).
 
-- La compilación firma sola con la clave privada **`Mesh_Red_Completa/claves/firma_aura.pem`**, que **nunca se sube al
-  repo** (está en el `.gitignore`).
-- **Placas de la instalación:** solo la cátedra tiene esa clave. Un grupo que quiere actualizar por la malla le pasa su
-  código (o su `.bin`) a la cátedra, que lo compila y firma.
-- **Banco y desarrollo:** cada grupo se genera su propia clave de prueba (una vez):
+- **La compilación no firma.** Se firma aparte, en la máquina que tiene la clave privada, y recién después se graba por
+  USB o se manda por OTA. La clave no tiene que estar en la carpeta del proyecto ni en el repo (el `.gitignore` de la
+  raíz excluye `claves/`, `*.pem` y `*.key` por si acaso).
   ```
-  python -m espsecure generate-signing-key --version 2 --scheme rsa3072 Mesh_Red_Completa/claves/firma_aura.pem
+  idf.py build
+  python -m espsecure sign-data --version 2 --keyfile <ruta>/firma_aura.pem --output build/firmado.bin build/<tipo>.bin
+  move /y build\firmado.bin build\<tipo>.bin        (en Linux o macOS: mv -f build/firmado.bin build/<tipo>.bin)
+  idf.py -p COMx flash
   ```
-  Sus placas quedan grabadas por USB con su clave, y por la malla solo aceptan imágenes firmadas con ella.
+  `sign-data` no deja escribir sobre el mismo archivo: se firma a otro y se lo pone en lugar del original, que es el que
+  graba `idf.py flash` (si no se cambió el código, no recompila). Para comprobarlo:
+  `python -m espsecure verify-signature --version 2 --keyfile <ruta>/firma_aura.pem build/<tipo>.bin`. Para OTA, ese
+  mismo `.bin` firmado es el que se le pasa a `ota.py` o a AURA.
+- **Siempre grabar por USB una imagen firmada:** una placa que arranca con una imagen sin firma no acepta ninguna OTA.
+- **Placas de la instalación:** solo la cátedra tiene la clave definitiva. Un grupo le pasa su `.bin` sin firmar y la
+  cátedra lo firma.
+- **Banco y desarrollo:** cada grupo se genera su propia clave de prueba (una vez) y la guarda fuera del repo:
+  ```
+  python -m espsecure generate-signing-key --version 2 --scheme rsa3072 <ruta>/firma_prueba.pem
+  ```
+  Sus placas quedan grabadas por USB con imágenes firmadas con su clave, y por la malla solo aceptan esas. La OTA
+  funciona igual que con la definitiva.
 - Una placa grabada con una clave **no acepta** imágenes firmadas con otra (`imagen_invalida`): para cambiar de clave se
   graba una vez por USB.
 - Por USB se graba cualquier imagen: la firma protege la actualización por la malla. Para que tampoco se pueda por USB
@@ -370,6 +383,7 @@ Después de cambiar un parámetro hay que **recompilar y grabar todos los firmwa
 | `DESCUBRIR_BROKER` | `0` | Gc | `1` = buscar el broker por broadcast: **solo en el banco** (cualquiera en la red puede contestar). A un broker descubierto nunca se le mandan usuario y clave. En producción, `BROKER_URI` fija. |
 | `BROKER_CA_PEM` | sin definir | Gc | Con `BROKER_URI` `mqtts://`: el certificado de la CA del broker, para verificarlo antes de mandar nada (sin definir, las CA públicas). |
 | `OTA_PERMITIR_HTTP` | `0` | Gc | `1` = acepta la OTA por `http://` (solo el banco, con `ota.py`). En producción, solo `https://`. |
+| `OTA_CA_PEM` | sin definir | Gc | El certificado de la CA del servidor de las imágenes, si no es una CA pública (por ejemplo, el banco con `ota.py --https`). Sin definir, las CA públicas. |
 | `TRABAJOS_CAP`, `REINTENTOS_MAX` | `32`, `2` | G (`ota_gateway.c`) | Actualizaciones en espera; transferencias cortadas que se vuelven a empezar antes de rechazar. |
 | `GRACIA_PROPIO_MS` | `15000` | G (`ota_gateway.c`) | Su propia actualización espera tanto sin otros pedidos: que entre toda la tanda antes de reiniciarse. |
 | `ESPERA_VUELTA_MS`, `SONDEO_MS` | 15 min, `8000` | G (`ota_gateway.c`) | Cuánto espera que la placa vuelva tras reiniciarse; sin pedidos tanto, le reenvía la última ventana (una placa reiniciada contesta y se vuelve a empezar enseguida). |
@@ -452,7 +466,7 @@ una vez (por si otra versión de IDF lo acepta) y, si no, se une como `MESH_NODE
 | `ota`: `rechazado` `nodo_no_responde` | La placa tiene un firmware anterior a la actualización por la malla | Grabarla una vez por USB con este firmware |
 | `ota`: `rechazado` `tipo_distinto` | La imagen es de otro uso (`details.firmware.tipo` dice cuál tiene) | Elegir la imagen correcta; un cambio de uso se hace por USB |
 | `ota`: `rechazado` `imagen_invalida` | La imagen no tiene la firma de la cátedra (o está dañada) | Que la compile y firme quien tiene la clave (sección 2.9) |
-| Al compilar: `Secure Boot Signing Key ... not found` | Falta la clave de firma en `Mesh_Red_Completa/claves/firma_aura.pem` | Sección 2.9 |
+| `ota`: `rechazado` `imagen_invalida` con una imagen recién compilada | Se olvidó firmarla (la compilación no firma) | `espsecure sign-data`, sección 2.9 |
 | `ota`: `aplicado` con `sin_cambios` | La placa ya tenía esa versión | Subir `PROJECT_VER` en cada entrega |
 | `ota`: `rechazado` `volvio_a_la_version_anterior` | La versión nueva se colgó o no logró hablar con el gateway, y la placa volvió sola a la anterior | El serie de la placa con la versión nueva (probarla por USB antes) |
 | `ota`: `rechazado` `descarga_fallida` | El gateway no pudo bajar la imagen | Que la URL se abra desde la red del gateway (firewall de la PC: Python en redes privadas) |

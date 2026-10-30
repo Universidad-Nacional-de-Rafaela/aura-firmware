@@ -2,7 +2,7 @@
 Actualiza placas de la mesh de AURA por la malla (OTA). En producción lo hará AURA con los
 mismos mensajes; acá lo hace este script, en la PC del banco.
 
-  PC: sirve el .bin por HTTP --> gateway: lo descarga una vez y lo verifica (SHA-256)
+  PC: sirve el .bin por HTTP(S) --> gateway: lo descarga una vez y lo verifica (SHA-256)
                                  gateway --malla--> una placa por vez --> verifica, se reinicia
   PC <--MQTT-- hw/<hw_id>/response: transmitido, recibido, aplicado (volvió con la versión nueva)
                                     o rechazado (details.motivo)
@@ -21,6 +21,9 @@ Opciones:
   --broker 127.0.0.1       dónde está el broker MQTT (puerto 1883)
   --ip 192.168.1.5         la IP de esta PC que ve el gateway (si no, se deduce)
   --puerto-http 8070       puerto del servidor de la imagen
+  --https cert.pem key.pem sirve la imagen por HTTPS con ese certificado (el de esta PC, firmado por
+                           la CA propia del banco; el gateway, con esa CA en OTA_CA_PEM). Sin --https,
+                           HTTP: el gateway tiene que estar compilado con OTA_PERMITIR_HTTP 1
   --esperar 1800           segundos máximos de espera
 
 Si el gateway se reinicia o se corta el broker en el medio, lo que no terminó se vuelve a pedir (es
@@ -34,6 +37,7 @@ import json
 import os
 import re
 import socket
+import ssl
 import struct
 import sys
 import threading
@@ -78,7 +82,7 @@ def leer_imagen(ruta):
 # ---------------------------------------------------------------------------
 #  Servidor HTTP: solo esa imagen
 # ---------------------------------------------------------------------------
-def servir(datos, nombre, puerto):
+def servir(datos, nombre, puerto, https=None):
     class Manejador(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
             if self.path != "/" + nombre:
@@ -98,6 +102,10 @@ def servir(datos, nombre, puerto):
             pass
 
     srv = http.server.ThreadingHTTPServer(("0.0.0.0", puerto), Manejador)
+    if https:
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(https[0], https[1])
+        srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return srv
 
@@ -247,6 +255,7 @@ def main():
     ap.add_argument("--broker", default="127.0.0.1")
     ap.add_argument("--ip", help="IP de esta PC que ve el gateway")
     ap.add_argument("--puerto-http", type=int, default=8070)
+    ap.add_argument("--https", nargs=2, metavar=("CERT", "KEY"), help="servir por HTTPS con ese certificado")
     ap.add_argument("--esperar", type=float, default=1800)
     a = ap.parse_args()
     if bool(a.hw) == a.todas:
@@ -256,8 +265,8 @@ def main():
     sha = hashlib.sha256(datos).hexdigest()
     nombre = f"{tipo}-{version}.bin"
     ip = a.ip or mi_ip(a.broker)
-    servir(datos, nombre, a.puerto_http)
-    url = f"http://{ip}:{a.puerto_http}/{nombre}"
+    servir(datos, nombre, a.puerto_http, a.https)
+    url = f"{'https' if a.https else 'http'}://{ip}:{a.puerto_http}/{nombre}"
     log(f"Imagen {tipo} {version} ({chip}, {len(datos)} bytes, sha256 {sha[:16]}...)")
     log(f"Servida en {url}")
 

@@ -7,7 +7,8 @@
  *   contra el del comando. Si varias placas piden la misma imagen, se usa la descargada.
  * - Antes de mandar nada se compara con lo que la placa informó en su reporte (fw): si es de otro
  *   tipo se rechaza y si ya tiene esa versión se contesta aplicado sin_cambios.
- * - Seguridad: solo HTTPS (OTA_PERMITIR_HTTP solo en el banco); sin forzar_tipo (un cambio de uso
+ * - Seguridad: solo HTTPS (OTA_PERMITIR_HTTP solo en el banco; el servidor se verifica con OTA_CA_PEM
+ *   o con las CA públicas); sin forzar_tipo (un cambio de uso
  *   se hace por USB); las imágenes van firmadas por la cátedra y cada placa verifica la firma al
  *   instalarlas (esp_ota_end, CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT).
  * - Transferencia: oferta -> el nodo pide desde un byte -> se le manda una ventana de bloques. Si el
@@ -424,7 +425,12 @@ static const char *descargar(const char *url, const uint8_t sha[32])
         .url = url,
         .timeout_ms = 15000,
         .buffer_size = 4096,
+        /* https://: se verifica el certificado del servidor de la imagen (CA propia o las públicas) */
+#ifdef OTA_CA_PEM
+        .cert_pem = OTA_CA_PEM,
+#else
         .crt_bundle_attach = esp_crt_bundle_attach,
+#endif
     };
     esp_http_client_handle_t cli = esp_http_client_init(&c);
     if (cli == NULL) {

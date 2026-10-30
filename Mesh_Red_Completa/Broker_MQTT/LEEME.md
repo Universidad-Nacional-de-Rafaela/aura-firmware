@@ -99,6 +99,18 @@ PLAN B / SIN AULA     Hoja ──────────────> Raíz (u 
   desde otras); el broker acepta anónimos salvo que se lo arranque con `--usuario u --clave c`. Nunca en la red del
   campus: desde la misma red se puede leer todo y mandar comandos.
 - Para usarlo, el gateway del banco se compila con `DESCUBRIR_BROKER 1` y `OTA_PERMITIR_HTTP 1` en su `credenciales.h`.
+- **Concentradores:** el gateway acepta los datos de un concentrador (el lote de su aula) solo si AURA lo autorizó. En el
+  tablero, botón **Autorizar concentrador** en la tarjeta de cada concentrador (una vez: el gateway lo guarda). Hasta
+  entonces, las hojas de esa aula guardan sus datos en la cola.
+- **OTA por HTTPS en el banco** (gateway con `OTA_PERMITIR_HTTP 0`): una CA propia y un certificado para la IP de esta
+  PC, con `openssl` (viene con Git para Windows). Los `.pem` quedan fuera del repo.
+  ```
+  openssl req -x509 -newkey rsa:2048 -nodes -days 365 -subj "/CN=CA banco AURA" -keyout ca.key -out ca.pem
+  openssl req -newkey rsa:2048 -nodes -subj "/CN=192.168.1.5" -keyout pc.key -out pc.csr
+  openssl x509 -req -in pc.csr -CA ca.pem -CAkey ca.key -CAcreateserial -days 365 -out pc.pem -extfile <(printf "subjectAltName=IP:192.168.1.5")
+  python ota.py imagen.bin --hw mac-... --ip 192.168.1.5 --https pc.pem pc.key
+  ```
+  (con la IP de esta PC). El contenido de `ca.pem` va en `OTA_CA_PEM` del `credenciales.h` del gateway.
 - El tablero muestra el **firmware** de cada placa y, en el gateway, el avance de una actualización.
 
 ## Actualización por la malla (`ota.py`)

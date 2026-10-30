@@ -10,10 +10,10 @@ CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 # Una versión nueva que no logra conectarse al broker vuelve sola a la anterior
 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 # Imágenes firmadas: la placa solo instala por OTA una imagen firmada con la clave de la cátedra
-# (RSA-3072, esquema de Secure Boot V2, sin quemar eFuses). La clave privada va en
-# ../claves/firma_aura.pem y NUNCA se sube al repo (GUIA_NODOS_HOJA.md, "Imágenes firmadas").
+# (RSA-3072, esquema de Secure Boot V2, sin quemar eFuses). La compilación NO firma: se firma
+# aparte, en la máquina que tiene la clave privada, antes de grabar o de mandar por OTA
+# (GUIA_NODOS_HOJA.md, "Imágenes firmadas"). La clave nunca se sube al repo.
 CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT=y
 CONFIG_SECURE_SIGNED_APPS_RSA_SCHEME=y
 CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT=y
-CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=y
-CONFIG_SECURE_BOOT_SIGNING_KEY="../claves/firma_aura.pem"
+# CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES is not set

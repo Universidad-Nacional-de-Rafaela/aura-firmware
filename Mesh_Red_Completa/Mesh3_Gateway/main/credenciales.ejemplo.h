@@ -41,3 +41,9 @@
 
 /* Actualización por la malla: solo https://. 1 = acepta también http:// (SOLO el banco, con ota.py) */
 #define OTA_PERMITIR_HTTP 0
+/* Servidor de las imágenes con certificado de una CA propia (por ejemplo, el banco con
+   ota.py --https): el certificado de esa CA. Sin definir, se verifica contra las CA públicas. */
+/* #define OTA_CA_PEM "-----BEGIN CERTIFICATE-----
+...
+-----END CERTIFICATE-----
+" */
