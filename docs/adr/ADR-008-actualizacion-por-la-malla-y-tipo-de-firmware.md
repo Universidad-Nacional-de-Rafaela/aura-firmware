@@ -111,6 +111,10 @@ Espressif (ESP-MDF `mupgrade`): no está en ESP-IDF 6 y el proyecto ESP-MDF est�
 - **Secure Boot.** Desde el 2026-10-26 las imágenes van firmadas y cada placa verifica la firma al
   instalarlas, pero no en cada arranque: eso es Secure Boot V2, que quema eFuses y queda para las
   placas de la instalación final. Quién custodia la clave de firma es el pendiente 15 del contrato.
+- **Una placa con la clave de la malla.** El filtro "solo de la raíz" se apoya en la MAC de origen que entrega
+  `esp_mesh_recv`: alguien con la clave de la malla y un firmware modificado podría falsificarla. La firma de la
+  imagen no depende de ese filtro, pero sí las demás tramas de control. Queda pendiente de la etapa 2 de la
+  revisión de seguridad.
 - **Volver a una versión más vieja** está permitido (útil para deshacer una entrega). Si hiciera
   falta impedirlo: anti-rollback por eFuse.
 - La actualización de los dispositivos **LoRaWAN** (FUOTA) es otro mecanismo.

@@ -1217,13 +1217,14 @@ esp_err_t nodo_mesh_iniciar(const nodo_mesh_config_t *c)
     strlcpy((char *)mc.mesh_ap.password, cfg.mesh_clave, sizeof(mc.mesh_ap.password));
     ESP_ERROR_CHECK(esp_mesh_set_config(&mc));
     ESP_ERROR_CHECK(esp_mesh_send_block_time(LIMITE_ENVIO_MS));
+    /* Antes de arrancar la malla: registra el evento que informa la raíz, y sin ella se descarta todo el control */
+    aura_ota_receptor_cfg_t ota = {.antes_de_reiniciar = antes_de_reiniciar};
+    aura_ota_receptor_iniciar(&ota);
     ESP_ERROR_CHECK(esp_mesh_start());
 
     xTaskCreate(tarea_rx, "mesh_rx", 4096, NULL, 5, NULL);
     xTaskCreate(tarea_nodo, "nodo", 6144, NULL, 5, NULL);
     xTaskCreate(tarea_vigia, "vigia", 3072, NULL, 4, NULL);
-    aura_ota_receptor_cfg_t ota = {.antes_de_reiniciar = antes_de_reiniciar};
-    aura_ota_receptor_iniciar(&ota);
     aura_fw_antes_de_volver(antes_de_reiniciar);   /* lo medido con la versión nueva no se pierde */
     return ESP_OK;
 }

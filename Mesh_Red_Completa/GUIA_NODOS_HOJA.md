@@ -305,6 +305,9 @@ verifica la firma antes de instalarla (`CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT
   graba `idf.py flash` (si no se cambió el código, no recompila). Para comprobarlo:
   `python -m espsecure verify-signature --version 2 --keyfile <ruta>/firma_aura.pem build/<tipo>.bin`. Para OTA, ese
   mismo `.bin` firmado es el que se le pasa a `ota.py` o a AURA.
+- **Si ya tenías un `sdkconfig` de antes de las imágenes firmadas, borralo y volvé a compilar.** `sdkconfig.defaults` solo
+  se aplica a las opciones que el `sdkconfig` todavía no tiene. Sin la verificación de firma la compilación se frena con
+  un `#error`, en vez de generar una imagen que acepta cualquier OTA.
 - **Siempre grabar por USB una imagen firmada:** una placa que arranca con una imagen sin firma no acepta ninguna OTA.
 - **Placas de la instalación:** solo la cátedra tiene la clave definitiva. Un grupo le pasa su `.bin` sin firmar y la
   cátedra lo firma.

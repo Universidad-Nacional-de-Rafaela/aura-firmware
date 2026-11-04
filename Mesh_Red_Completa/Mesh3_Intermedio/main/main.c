@@ -1128,14 +1128,15 @@ void app_main(void)
     memcpy(cfg.mesh_ap.password, MESH_AP_PASS, strlen(MESH_AP_PASS));
     ESP_ERROR_CHECK(esp_mesh_set_config(&cfg));
     ESP_ERROR_CHECK(esp_mesh_send_block_time(LIMITE_ENVIO_MS));
+    /* Antes de arrancar la malla: registra el evento que informa la raíz, y sin ella se descarta todo el control */
+    aura_ota_receptor_cfg_t ota = {.antes_de_reiniciar = antes_de_reiniciar};
+    aura_ota_receptor_iniciar(&ota);
     ESP_ERROR_CHECK(esp_mesh_start());
 
     xTaskCreate(tarea_recepcion, "mesh_rx", 6144, NULL, 5, NULL);
     xTaskCreate(tarea_lote, "lote", 3072, NULL, 5, NULL);
     xTaskCreate(tarea_estado, "estado", 4096, NULL, 4, NULL);
     xTaskCreate(tarea_boton, "boton", 3072, NULL, 4, NULL);
-    aura_ota_receptor_cfg_t ota = {.antes_de_reiniciar = antes_de_reiniciar};
-    aura_ota_receptor_iniciar(&ota);
     aura_fw_antes_de_volver(antes_de_reiniciar);
     if (isla) {
         xTaskCreate(tarea_isla, "isla", 3072, NULL, 3, NULL);

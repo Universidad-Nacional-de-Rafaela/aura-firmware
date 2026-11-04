@@ -16,6 +16,12 @@
 #include "aura_fw.h"
 #include "aura_ota_receptor.h"
 
+/* sdkconfig.defaults solo se aplica a las opciones que el sdkconfig todavía no tiene: uno viejo compilaría
+   una imagen que acepta cualquier OTA, sin avisar. */
+#if !CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT
+#error "Falta la verificación de firma: borrá sdkconfig y volvé a compilar (GUIA_NODOS_HOJA.md, sección 2.9)"
+#endif
+
 static const char *TAG = "AURA_OTA";
 
 /* Dirección de la raíz de la malla (MESH_EVENT_ROOT_ADDRESS). Solo la raíz ofrece y manda

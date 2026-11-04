@@ -50,6 +50,11 @@
 #endif
 #include "ota_gateway.h"
 
+/* Igual que en aura_ota/receptor.c: un sdkconfig viejo no verificaría la firma de la imagen del gateway */
+#if !CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT
+#error "Falta la verificación de firma: borrá sdkconfig y volvé a compilar (GUIA_NODOS_HOJA.md, sección 2.9)"
+#endif
+
 static const char *TAG = "OTA_GW";
 
 #define TRABAJOS_CAP            32

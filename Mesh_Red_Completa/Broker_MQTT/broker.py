@@ -214,6 +214,7 @@ async def atender(reader, writer):
                 if flags & 0x04:                    # Last Will
                     w_topico, i = leer_str(cuerpo, i)
                     w_payload, i = leer_str(cuerpo, i)
+                    voluntad = (w_topico.decode(), w_payload, bool(flags & 0x20))
                 usuario = clave = b""
                 if flags & 0x80:
                     usuario, i = leer_str(cuerpo, i)
@@ -226,7 +227,6 @@ async def atender(reader, writer):
                     await writer.drain()
                     voluntad = None
                     break
-                    voluntad = (w_topico.decode(), w_payload, bool(flags & 0x20))
                 print(f"{ahora()}  + conectado {cliente}", flush=True)
                 writer.write(b"\x20\x02\x00\x00")   # CONNACK aceptado
 
