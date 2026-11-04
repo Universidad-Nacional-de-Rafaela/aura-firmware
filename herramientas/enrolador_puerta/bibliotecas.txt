@@ -1,0 +1,3 @@
+# Bibliotecas de Arduino que necesita esta herramienta, una por línea, con versión.
+# El CI las instala junto con las de dispositivos/E1-PB-LECA-PUE01 (que usa la misma).
+MFRC522@1.4.12

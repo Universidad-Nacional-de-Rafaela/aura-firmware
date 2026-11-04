@@ -1,0 +1,12 @@
+// Copiar este archivo como config_local.h (en la misma carpeta) y completar.
+// config_local.h está en el .gitignore: NUNCA se commitea. Este repo es público.
+
+#pragma once
+
+// MAC (STA) de la placa de la puerta (dispositivos/E1-PB-LECA-PUE01). Se lee en el monitor
+// serie de la puerta al arrancar.
+#define MAC_PUERTA_BYTES {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+
+// Claves de ESP-NOW: 16 caracteres exactos, las mismas que en el config_local.h de la puerta.
+#define ESPNOW_PMK "CAMBIAR-PMK-0000"
+#define ESPNOW_LMK "CAMBIAR-LMK-0000"

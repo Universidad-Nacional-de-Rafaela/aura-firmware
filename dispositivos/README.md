@@ -68,6 +68,7 @@ que monitorea, o lo que acciona. Una placa que mide varias magnitudes del ambien
 | `TAB` | Tablero eléctrico (consumo) | equipo |
 | `TAN` | Tanque de agua (nivel) | equipo |
 | `CRT` | Cortina | actuador |
+| `PUE` | Puerta con control de acceso (cerradura eléctrica) | actuador |
 | `GWM` | Raíz de la mesh (gateway hacia AURA) | infraestructura |
 | `SAL` | Relevo de la mesh (antes, nodo de sala) | infraestructura |
 
@@ -77,3 +78,4 @@ que monitorea, o lo que acciona. Una placa que mide varias magnitudes del ambien
 |---|---|---|---|
 | [`E1-AZ-TERR-TAN01`](E1-AZ-TERR-TAN01/) | Nivel de dos tanques de agua de la terraza (LoRaWAN) | losHijosDelStackOverFlow (IC IV 2026) | instalado |
 | [`E1-PB-LECA-HFR01`](E1-PB-LECA-HFR01/) | Heladera-freezer del LabECA | grupo de IC IV 2026 | en desarrollo |
+| [`E1-PB-LECA-PUE01`](E1-PB-LECA-PUE01/) | Puerta con tarjeta RFID y cerradura eléctrica (prototipo en banco, ESP-NOW) | grupo de IC IV 2026 | en banco |
