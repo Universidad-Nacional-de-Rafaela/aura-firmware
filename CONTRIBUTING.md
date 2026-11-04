@@ -92,8 +92,15 @@ código que tu dispositivo (ver [`conectores/README.md`](conectores/README.md)).
 
 1. Copiá [`ejemplos/plantilla_conector/`](ejemplos/plantilla_conector/) a `conectores/<CÓDIGO>/`.
 2. En `conector.toml`: `nombre` igual a la carpeta, tus usuarios de GitHub, y **un bloque
-   `[campos.<nombre>]` por cada campo que manda tu firmware**, con su unidad y su rango físico.
-   Lo que no esté declarado, o esté fuera de rango, AURA no lo guarda.
+   `[campos.<nombre>]` por cada campo que manda tu firmware** (y por cada uno que calcule tu
+   conector), con su unidad y su rango físico. Lo que no esté declarado, o esté fuera de rango,
+   AURA no lo guarda. Cada campo dice además cómo se muestra en la web:
+   - `etiqueta`: cómo se lo nombra ("Nivel tanque 1"), hasta 40 caracteres. Si falta, el nombre del campo.
+   - `rol`: `principal` va en la tarjeta del Dashboard y en el gráfico de la ficha; `auxiliar`,
+     solo en la ficha, aparte (la medición cruda, un valor derivado de otro); `oculto` se guarda
+     pero no se muestra. Si falta, `principal`. Pocos principales: los que alguien mira para
+     saber cómo está el dispositivo.
+   - Los campos se muestran en el orden del manifiesto.
 3. En `conector.py`, `al_recibir_datos(self, msg, ctx)`: con `msg.values` y `msg.ts` decidís
    `ctx.guardar_medicion(...)` o `ctx.descartar("motivo")`. Si querés predecir, `predecir(self, ctx)`
    y `[prediccion]` en el manifiesto.

@@ -1,40 +1,56 @@
 # Manifiesto del conector. Ver CONTRIBUTING.md, "Tu conector".
 nombre  = "E1-AZ-TERR-TAN01"            # igual a la carpeta
-version = "0.1.0"
-sdk     = ">=1,<2"
+version = "0.2.0"
+sdk     = ">=1.2,<2"
 autores = ["FerChaparro27", "romerof7"] # usuarios de GitHub del grupo
 clase   = "conector:ConectorTanques"
+
+# Los campos se muestran en este orden. rol: principal (tarjeta del Dashboard y gráfico),
+# auxiliar (en la ficha, aparte) u oculto.
+
+# Nivel de cada tanque: lo calcula conector.py a partir de la distancia. Es lo que importa.
+[campos.nivel_t1_pct]
+unidad   = "%"
+min      = 0
+max      = 100
+etiqueta = "Nivel tanque 1"
+rol      = "principal"
+
+[campos.nivel_t2_pct]
+unidad   = "%"
+min      = 0
+max      = 100
+etiqueta = "Nivel tanque 2"
+rol      = "principal"
 
 # Distancia del sensor a la superficie del agua, uno por tanque: lo único que manda el nodo
 # (lo decodifica dispositivos/E1-AZ-TERR-TAN01/codec.js).
 [campos.dist_t1_cm]
-unidad = "cm"
-min = 0
-max = 600
+unidad   = "cm"
+min      = 0
+max      = 600
+etiqueta = "Distancia al agua, tanque 1"
+rol      = "auxiliar"
 
 [campos.dist_t2_cm]
-unidad = "cm"
-min = 0
-max = 600
+unidad   = "cm"
+min      = 0
+max      = 600
+etiqueta = "Distancia al agua, tanque 2"
+rol      = "auxiliar"
 
-# Nivel y volumen de cada tanque: los calcula conector.py a partir de la distancia.
-[campos.nivel_t1_pct]
-unidad = "%"
-min = 0
-max = 100
-
-[campos.nivel_t2_pct]
-unidad = "%"
-min = 0
-max = 100
-
-# Volumen: max = la capacidad de TANQUES en conector.py.
+# Agua que hay ahora en cada tanque: el nivel por la capacidad de TANQUES en conector.py
+# (max = esa capacidad). Es redundante con el nivel: auxiliar.
 [campos.vol_t1_l]
-unidad = "L"
-min = 0
-max = 1000
+unidad   = "L"
+min      = 0
+max      = 1000
+etiqueta = "Agua en el tanque 1"
+rol      = "auxiliar"
 
 [campos.vol_t2_l]
-unidad = "L"
-min = 0
-max = 500
+unidad   = "L"
+min      = 0
+max      = 500
+etiqueta = "Agua en el tanque 2"
+rol      = "auxiliar"
