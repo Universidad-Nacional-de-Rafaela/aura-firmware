@@ -113,6 +113,13 @@ Espressif (ESP-MDF `mupgrade`): no está en ESP-IDF 6 y el proyecto ESP-MDF est�
 - **Volver a una versión más vieja** está permitido (útil para deshacer una entrega). Si hiciera
   falta impedirlo: anti-rollback por eFuse.
 - La actualización de los dispositivos **LoRaWAN** (FUOTA) es otro mecanismo.
+- **El gateway no verifica la firma antes de ofrecer la imagen.** Con las imágenes firmadas
+  (aura-firmware #36), el gateway controla el SHA-256, el tipo y el chip, pero la firma la verifica
+  recién el nodo, después de recibir la imagen entera: una imagen sin firmar o firmada con otra clave
+  ocupa la malla unos 16 s antes del rechazo (prueba del grupo de E1-PB-LECA-TAB01, 2026-10-30,
+  aura-firmware #11). No es un agujero, porque el nodo la rechaza igual, pero conviene que el gateway
+  la verifique al descargarla y conteste `imagen_invalida` sin transferirla. Queda para la etapa 2 de
+  la revisión de seguridad.
 
 ## Disparador de revisión
 
