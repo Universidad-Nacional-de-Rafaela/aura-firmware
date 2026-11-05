@@ -1,0 +1,13 @@
+# E1-PB-LECA-LUZ01 (AURA, hoja de la mesh ESP-WIFI-MESH) - ESP-IDF puro.
+# Placa: ESP32-C3 SuperMini (4 MB).
+CONFIG_IDF_TARGET="esp32c3"
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+# Consola por USB-Serial-JTAG (el C3 SuperMini expone el USB nativo).
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+# Tabla propia: app + partición "cola" (respaldo de mediciones sin confirmar tras un corte)
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+# FreeRTOS a 1000 Hz: la logica usa milisegundos.
+CONFIG_FREERTOS_HZ=1000
+# Pila holgada para la tarea principal (I2C + UART + radar).
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
