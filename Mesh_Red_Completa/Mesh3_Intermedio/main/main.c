@@ -565,7 +565,7 @@ static void tarea_recepcion(void *arg)
             continue;
         }
         if (aura_es_ota(buf, d.size)) {                /* actualización de este concentrador */
-            aura_ota_recibir(buf, d.size);
+            aura_ota_recibir(de.addr, buf, d.size);
             continue;
         }
         if (aura_trama_validar(buf, d.size) != AURA_TRAMA_OK) {
@@ -581,7 +581,14 @@ static void tarea_recepcion(void *arg)
         printf("TRAMA %s %s seq=%u %s\n", hw_rx, aura_tipo_nombre(t.tipo), t.seq, txt_rx);
 #endif
 
-        /* Para este concentrador (de la raíz) */
+        /* Para este concentrador: solo de la raíz. Un COMANDO, HORA con hora, EVENTO_OK o REPORTAR de
+           otro nodo se descarta (con la clave de la malla, cualquiera podría mandarlos). */
+        bool para_mi = t.tipo == AURA_TIPO_COMANDO || (t.tipo == AURA_TIPO_HORA && t.largo == 8) ||
+                       t.tipo == AURA_TIPO_EVENTO_OK || t.tipo == AURA_TIPO_REPORTAR;
+        if (para_mi && !aura_es_la_raiz(de.addr)) {
+            ESP_LOGW(TAG, "Trama %u de " MACSTR " (no es la raíz): se descarta", t.tipo, MAC2STR(de.addr));
+            continue;
+        }
         if (t.tipo == AURA_TIPO_COMANDO) {
             comando_t c = {.seq = t.seq};
             aura_payload_texto(&t, c.json, sizeof(c.json));
@@ -1121,14 +1128,15 @@ void app_main(void)
     memcpy(cfg.mesh_ap.password, MESH_AP_PASS, strlen(MESH_AP_PASS));
     ESP_ERROR_CHECK(esp_mesh_set_config(&cfg));
     ESP_ERROR_CHECK(esp_mesh_send_block_time(LIMITE_ENVIO_MS));
+    /* Antes de arrancar la malla: registra el evento que informa la raíz, y sin ella se descarta todo el control */
+    aura_ota_receptor_cfg_t ota = {.antes_de_reiniciar = antes_de_reiniciar};
+    aura_ota_receptor_iniciar(&ota);
     ESP_ERROR_CHECK(esp_mesh_start());
 
     xTaskCreate(tarea_recepcion, "mesh_rx", 6144, NULL, 5, NULL);
     xTaskCreate(tarea_lote, "lote", 3072, NULL, 5, NULL);
     xTaskCreate(tarea_estado, "estado", 4096, NULL, 4, NULL);
     xTaskCreate(tarea_boton, "boton", 3072, NULL, 4, NULL);
-    aura_ota_receptor_cfg_t ota = {.antes_de_reiniciar = antes_de_reiniciar};
-    aura_ota_receptor_iniciar(&ota);
     aura_fw_antes_de_volver(antes_de_reiniciar);
     if (isla) {
         xTaskCreate(tarea_isla, "isla", 3072, NULL, 3, NULL);

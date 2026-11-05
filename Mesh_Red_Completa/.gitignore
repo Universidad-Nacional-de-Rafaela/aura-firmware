@@ -10,3 +10,7 @@ sdkconfig.old
 
 # Broker de prueba
 mensajes.log
+
+# Clave de firma de las imágenes (OTA firmada): NUNCA al repo
+claves/
+*.pem
