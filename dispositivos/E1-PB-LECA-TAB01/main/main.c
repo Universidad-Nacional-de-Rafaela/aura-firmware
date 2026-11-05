@@ -21,6 +21,11 @@
  *
  * MESH_ID y MESH_AP_PASS: en main/config_local.h (los da la cátedra; no se sube al repo).
  * Todas las placas de este dispositivo llevan el MISMO binario: no hay MAC, id ni aula.
+ *
+ * Tipo y versión (CMakeLists.txt): aura-energia-pm2130, PROJECT_VER. Se actualiza por la malla
+ * (OTA); la imagen se firma aparte antes de grabarla o mandarla (GUIA_NODOS_HOJA.md, 2.9).
+ * Al arrancar informa por serie su tipo y su versión. Para ver a simple vista que una OTA quedó
+ * instalada, MOSTRAR_LED_AL_MEDIR enciende el LED azul de la placa en cada medición.
  */
 #include <stdio.h>
 #include <string.h>
@@ -32,6 +37,8 @@
 #include "nvs.h"
 #include "driver/gpio.h"
 #include "driver/uart.h"
+#include "esp_app_desc.h"
+#include "aura_trama.h"                   /* AURA_VALUES_MAX */
 #include "cJSON.h"
 #include "nodo_mesh.h"
 #include "pm2130.h"
@@ -41,6 +48,12 @@
 #else
 #error "Falta main/config_local.h: copiá config_local.ejemplo.h como config_local.h y completá el ID y la clave de la mesh"
 #endif
+
+/* Prueba de OTA: compilar la 1.0.0 con 0 y la 1.0.1 con 1. Si después de la actualización el LED
+ * azul de la placa parpadea en cada medición, quedó instalada la versión nueva. */
+#define MOSTRAR_LED_AL_MEDIR 0
+#define PIN_LED             GPIO_NUM_8   /* LED azul de la C3 SuperMini */
+#define LED_ACTIVO_BAJO     1            /* en la SuperMini se enciende con nivel bajo */
 
 /* Potencia en pasos de 0,25 dBm: la de la plantilla de la cátedra para la C3 SuperMini. */
 #define POTENCIA_TX         60
@@ -52,7 +65,6 @@
 #define ESCLAVO_MIN         1
 #define ESCLAVO_MAX         247
 
-#define VALUES_MAX          160          /* bytes de JSON que admite una medición */
 
 /* ---- RS-485 ---- */
 #define MB_UART             UART_NUM_1
@@ -66,6 +78,7 @@
 
 static const char *TAG = "TAB01";
 static volatile uint32_t intervalo_s = INTERVALO_DEFECTO_S;
+static TaskHandle_t tarea_medicion_h;   /* para avisarle un cambio de intervalo */
 static volatile uint8_t id_esclavo = ESCLAVO_DEFECTO;
 
 /* ============================ RS-485 / Modbus ============================ */
@@ -207,7 +220,7 @@ static void medir_y_guardar(void)
         cJSON *todo = cJSON_CreateObject();
         sumar(todo, principal);
         sumar(todo, extras);
-        if (largo_json(todo) <= VALUES_MAX) {
+        if (largo_json(todo) <= AURA_VALUES_MAX) {
             guardar("Medicion", todo);
         } else {
             /* No entra en una trama: dos mediciones (contrato §3.1: values no trae todos los campos) */
@@ -220,11 +233,23 @@ static void medir_y_guardar(void)
     cJSON_Delete(extras);
 }
 
+static void led(bool encendido)
+{
+    gpio_set_level(PIN_LED, LED_ACTIVO_BAJO ? !encendido : encendido);
+}
+
 static void tarea_medicion(void *arg)
 {
     while (true) {
         medir_y_guardar();
-        vTaskDelay(pdMS_TO_TICKS(intervalo_s * 1000));
+#if MOSTRAR_LED_AL_MEDIR
+        led(true);                               /* la versión con el cambio visible */
+        vTaskDelay(pdMS_TO_TICKS(200));
+        led(false);
+#endif
+        /* Espera el intervalo, o menos si llega uno nuevo por set_config: en ese caso mide
+         * enseguida y sigue con el nuevo, en lugar de esperar lo que quedaba del anterior. */
+        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(intervalo_s * 1000));
     }
 }
 
@@ -261,7 +286,9 @@ static bool aplicar_config(const cJSON *params, char *motivo, size_t tam)
     /* Todo validó: recién ahora se aplica y se guarda. */
     nvs_handle_t h;
     bool nvs = nvs_open("tab01", NVS_READWRITE, &h) == ESP_OK;
+    bool intervalo_cambio = false;
     if (iv != NULL) {
+        intervalo_cambio = (uint32_t)iv->valuedouble != intervalo_s;
         intervalo_s = (uint32_t)iv->valuedouble;
         if (nvs) nvs_set_u32(h, "intervalo_s", intervalo_s);
     }
@@ -274,6 +301,7 @@ static bool aplicar_config(const cJSON *params, char *motivo, size_t tam)
         nvs_close(h);
     }
     ESP_LOGI(TAG, "Configuracion: intervalo %lu s, esclavo %u", (unsigned long)intervalo_s, id_esclavo);
+    if (intervalo_cambio && tarea_medicion_h != NULL) xTaskNotifyGive(tarea_medicion_h);
     return true;
 }
 
@@ -310,6 +338,14 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(err);
 
+    const esp_app_desc_t *app = esp_app_get_description();
+    ESP_LOGI(TAG, "Firmware %s, version %s (LED al medir: %s)", app->project_name, app->version,
+             MOSTRAR_LED_AL_MEDIR ? "si" : "no");
+
+    gpio_reset_pin(PIN_LED);
+    gpio_set_direction(PIN_LED, GPIO_MODE_OUTPUT);
+    led(false);
+
     leer_config_guardada();
     modbus_iniciar();
     ESP_LOGI(TAG, "PM2130 por RS-485: TX GPIO%d, RX GPIO%d, DE/RE GPIO%d, esclavo %u, %d 8E1, cada %lu s",
@@ -325,5 +361,5 @@ void app_main(void)
         .ejecutar_comando = NULL,               /* sin comandos propios */
     };
     ESP_ERROR_CHECK(nodo_mesh_iniciar(&cfg));
-    xTaskCreate(tarea_medicion, "medicion", 4096, NULL, 4, NULL);
+    xTaskCreate(tarea_medicion, "medicion", 4096, NULL, 4, &tarea_medicion_h);
 }

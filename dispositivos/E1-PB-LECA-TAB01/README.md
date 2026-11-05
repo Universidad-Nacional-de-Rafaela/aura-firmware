@@ -6,8 +6,8 @@
 | **Responsable** | Grupo de IC III 2026: francobroggi, tomasvidela11, santicianflone |
 | **Estado** | en desarrollo |
 | **Instalado** | todavía no |
-| **Transporte** | mesh ESP-WIFI-MESH (interior), en ESP-IDF 6.1, según [ADR-007](../../docs/adr/ADR-007-mesh-en-esp-idf-con-concentrador-por-aula.md) |
-| **Contrato que implementa** | [`CONTRATO_MQTT.md`](../../docs/CONTRATO_MQTT.md) v4.1 |
+| **Transporte** | mesh ESP-WIFI-MESH (interior), en ESP-IDF 6.1, según [ADR-007](../../docs/adr/ADR-007-mesh-en-esp-idf-con-concentrador-por-aula.md); actualización por la malla según ADR-008 |
+| **Contrato que implementa** | [`CONTRATO_MQTT.md`](../../docs/CONTRATO_MQTT.md) v4.3 |
 | **Basado en** | [`Mesh_Red_Completa/Mesh3_Hoja`](../../Mesh_Red_Completa/Mesh3_Hoja/), sobre la biblioteca `nodo_mesh` |
 | **Códigos anteriores** | ninguno |
 
@@ -51,7 +51,8 @@ No acepta comandos propios.
 ## Configuración
 
 Parámetros que acepta `set_config` (contrato §3.3). Se validan todos antes de aplicar alguno y se
-guardan en NVS. `aula` la maneja la biblioteca.
+guardan en NVS. `aula` la maneja la biblioteca. Un `intervalo_s` nuevo rige enseguida: la placa
+mide en ese momento y sigue con el intervalo nuevo, sin esperar lo que quedaba del anterior.
 
 | Parámetro | Rango | Valor en esta placa |
 |---|---|---|
@@ -60,14 +61,25 @@ guardan en NVS. `aula` la maneja la biblioteca.
 
 ## Compilar y probar
 
+Tipo de firmware `aura-energia-pm2130`, versión en `PROJECT_VER` del `CMakeLists.txt` (se sube en cada
+entrega). Se actualiza por la malla ([ADR-008](../../docs/adr/ADR-008-actualizacion-por-la-malla-y-tipo-de-firmware.md)).
+
 1. ESP-IDF 6.1 (instalador EIM). Copiar `main/config_local.ejemplo.h` como `main/config_local.h` y
    completar el ID y la clave de la mesh, que da la cátedra (no se sube al repositorio).
-2. Desde esta carpeta: `idf.py set-target esp32c3` y `idf.py -p <puerto> build flash monitor`.
-3. Tests de la lógica del medidor (trama, validación, conversión, rangos), sin placa:
-   `make -C tests`.
+2. Desde esta carpeta: `idf.py set-target esp32c3` y `idf.py build`. La compilación no firma.
+3. Firmar aparte con la clave del banco o de la instalación (GUIA_NODOS_HOJA.md, 2.9) y grabar la imagen
+   firmada: `idf.py -p <puerto> flash monitor`. La primera vez, por USB y con la flash borrada, porque
+   la tabla de particiones tiene dos lugares para el firmware.
+4. Al arrancar, el monitor muestra el tipo y la versión. Para la prueba de OTA, `MOSTRAR_LED_AL_MEDIR`
+   en `main.c` enciende el LED azul en cada medición: la 1.0.0 sin LED y la 1.0.1 con LED.
+5. Tests de la lógica del medidor (trama, validación, conversión, rangos), sin placa: `make -C tests`.
 
 ## Notas
 
+- **Prueba de la actualización por la malla por HTTP (2026-10-30):** los 8 casos que se podían
+  hacer en el banco salieron bien, sin perder mediciones. El informe, con los extractos de los
+  registros que respaldan cada caso, está en
+  [`pruebas/2026-10-30-ota-http/`](pruebas/2026-10-30-ota-http/README.md).
 - Al armar el banco, el PM2130 tenía la relación del TI en el valor de fábrica (5/5), lo que
   daba corrientes, potencias y energías 20 veces menores. Se configuró 100/5 y quedó guardado.
 - Se detectó la polaridad del TI invertida (potencia activa negativa). Se corrige intercambiando

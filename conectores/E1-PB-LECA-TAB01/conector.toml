@@ -1,7 +1,7 @@
 # Manifiesto del conector del medidor de energía (PM2130) del tablero del LabECA.
 # Ver CONTRIBUTING.md, "Tu conector".
 nombre  = "E1-PB-LECA-TAB01"
-version = "0.2.0"
+version = "0.2.1"
 sdk     = ">=1.2,<2"
 autores = ["francobroggi", "tomasvidela11", "santicianflone"]
 clase   = "conector:ConectorTableroAula"

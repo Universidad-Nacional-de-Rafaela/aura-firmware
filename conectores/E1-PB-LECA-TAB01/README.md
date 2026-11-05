@@ -1,8 +1,8 @@
 # E1-PB-LECA-TAB01 — conector del medidor de energía del LabECA
 
 Procesa lo que manda el medidor Schneider PM2130 del tablero del LabECA (leído por Modbus RTU
-desde una XIAO, hoja de la mesh): guarda las mediciones eléctricas de la fase A y alerta cuando
-la instalación sale de lo normal.
+desde una ESP32-C3 SuperMini, hoja de la mesh): guarda las mediciones eléctricas de la fase A y
+alerta cuando la instalación sale de lo normal.
 
 ## Campos
 
@@ -25,7 +25,7 @@ envía.
 ## Alertas
 
 Una por cruce del umbral y otra (`info`) al volver a lo normal. Para saber cómo estaba, compara
-con la última medición guardada de la última hora (`ctx.serie`).
+con la última medición de la última hora en la que esa regla se podía evaluar (`ctx.serie`).
 
 | Tipo | Severidad | Cuándo |
 |---|---|---|
@@ -33,13 +33,14 @@ con la última medición guardada de la última hora (`ctx.serie`).
 | `sobretension` | warning | tensión por encima de 242 V (220 V + 10 %) |
 | `sobrecorriente` | high | corriente por encima del 80 % de la protección del circuito |
 | `potencia_negativa` | warning | potencia activa por debajo de −50 W: en un aula, TI invertido |
-| `bajo_cosphi` | warning | cos φ por debajo de 0,85 con al menos 200 W de carga |
+| `bajo_cosphi` | warning | cos φ por debajo de 0,85 con al menos 200 W de carga. Con menos carga no se evalúa: ni se avisa ni se da por normalizado |
 
 Los umbrales son una **propuesta** y están arriba de todo en `conector.py`. Falta el dato de la
 protección del circuito (`TERMICA_A`).
 
 Un campo que falta en una muestra no activa ni normaliza ninguna alerta: no se sabe. Un valor
-fuera de rango tampoco: AURA lo quita antes.
+fuera de rango tampoco: AURA lo quita antes. Y una muestra así tampoco hace que se repita una
+alerta que seguía activa.
 
 ## Probarlo
 

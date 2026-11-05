@@ -46,6 +46,8 @@ class Regla:
     activa: Callable[[dict], bool]
     al_activarse: Callable[[dict], str]
     al_normalizarse: Callable[[dict], str]
+    # Si devuelve False, con esos valores la regla no dice nada: ni se activa ni se normaliza.
+    evaluable: Callable[[dict], bool] = lambda v: True
 
 
 REGLAS = (
@@ -67,30 +69,45 @@ REGLAS = (
           lambda v: f"Potencia activa negativa ({v['p_w']:.0f} W): revisar la polaridad del TI",
           lambda v: f"La potencia activa volvió a ser positiva ({v['p_w']:.0f} W)"),
     Regla("bajo_cosphi", "warning", ("cosphi_a", "p_w"),
-          lambda v: v["cosphi_a"] < COSPHI_MIN and v["p_w"] >= P_MIN_COSPHI_W,
+          lambda v: v["cosphi_a"] < COSPHI_MIN,
           lambda v: f"cos φ de {v['cosphi_a']:.2f} con {v['p_w']:.0f} W de carga "
                     f"(mínimo {COSPHI_MIN:.2f})",
-          lambda v: f"Ya no hay bajo cos φ (cos φ {v['cosphi_a']:.2f}, {v['p_w']:.0f} W)"),
+          lambda v: f"Ya no hay bajo cos φ (cos φ {v['cosphi_a']:.2f}, {v['p_w']:.0f} W)",
+          # Con poca carga el ángulo no es confiable: no se avisa ni se da por normalizado.
+          evaluable=lambda v: v["p_w"] >= P_MIN_COSPHI_W),
 )
 
 
 def _estado(regla, valores):
-    """True o False según la regla; None si falta algún campo (no se puede decir nada)."""
-    if not all(c in valores for c in regla.campos):
+    """True o False según la regla; None si falta algún campo o no es evaluable (no se puede decir
+    nada)."""
+    if not all(c in valores for c in regla.campos) or not regla.evaluable(valores):
         return None
     return regla.activa(valores)
+
+
+def _estado_previo(regla, puntos):
+    """El estado en la última medición anterior en la que la regla se podía evaluar. Así, una
+    medición sin un campo o con poca carga no hace que se repita una alerta que seguía activa.
+    Sin ninguna en la ventana, se toma como que estaba normal."""
+    for _, valores in reversed(puntos):
+        estado = _estado(regla, valores)
+        if estado is not None:
+            return estado
+    return False
 
 
 class ConectorTableroAula(Conector):
     def al_recibir_datos(self, msg, ctx):
         referencia = msg.ts or datetime.now(timezone.utc)
 
-        # La medición anterior de cada campo que usan las reglas, ANTES de guardar esta.
-        previo = {}
+        # Las mediciones anteriores (ANTES de guardar esta), agrupadas por momento: cada punto
+        # tiene los campos que llegaron juntos.
+        por_momento = {}
         for campo in {c for r in REGLAS for c in r.campos}:
-            serie = ctx.serie(campo, desde=referencia - VENTANA_PREVIA, hasta=referencia)
-            if serie:
-                previo[campo] = serie[-1][1]
+            for ts, valor in ctx.serie(campo, desde=referencia - VENTANA_PREVIA, hasta=referencia):
+                por_momento.setdefault(ts, {})[campo] = valor
+        puntos = sorted(por_momento.items())
 
         guardado = ctx.guardar_medicion(msg.values, msg.ts)   # AURA quita lo fuera de rango
         if not guardado:
@@ -99,8 +116,8 @@ class ConectorTableroAula(Conector):
         for regla in REGLAS:
             ahora = _estado(regla, guardado)
             if ahora is None:
-                continue                          # falta un campo: no se activa ni se normaliza
-            antes = bool(_estado(regla, previo))  # sin dato previo = estaba normal
+                continue                          # no se puede evaluar: ni se activa ni se normaliza
+            antes = _estado_previo(regla, puntos)
             if ahora and not antes:
                 ctx.alertar(regla.tipo, regla.severidad, regla.al_activarse(guardado))
             elif antes and not ahora:

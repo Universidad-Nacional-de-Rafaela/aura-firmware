@@ -120,6 +120,27 @@ class Alertas(Base):
         ]
         self.assertEqual(self.serie_de(muestras), [("bajo_cosphi", "warning"), ("bajo_cosphi", "info")])
 
+    def test_bajo_cosphi_con_poca_carga_no_se_normaliza(self):
+        # Revisión del PR #11: con menos de 200 W la regla daba "Ya no hay bajo cos φ" aunque el
+        # cos φ siguiera bajo. Ahora con poca carga no dice nada, y al volver la carga tampoco
+        # repite la alerta: sigue la misma hasta que el cos φ se normalice.
+        muestras = [
+            dict(NORMAL, cosphi_a=0.60, p_w=500),    # con carga: alerta
+            dict(NORMAL, cosphi_a=0.60, p_w=50),     # poca carga: no se sabe, nada
+            dict(NORMAL, cosphi_a=0.61, p_w=500),    # vuelve la carga, sigue bajo: nada nuevo
+            dict(NORMAL, cosphi_a=0.95, p_w=500),    # se normaliza
+        ]
+        self.assertEqual(self.serie_de(muestras), [("bajo_cosphi", "warning"), ("bajo_cosphi", "info")])
+
+    def test_bajo_cosphi_se_normaliza_cuando_vuelve_la_carga_con_buen_cosphi(self):
+        muestras = [
+            dict(NORMAL, cosphi_a=0.60, p_w=500),    # alerta
+            dict(NORMAL, cosphi_a=0.95, p_w=50),     # poca carga: aunque el cos φ sea bueno, no se sabe
+            dict(NORMAL, cosphi_a=0.96, p_w=500),    # con carga y cos φ bueno: se normaliza
+        ]
+        self.assertEqual(self.serie_de(muestras), [("bajo_cosphi", "warning"), ("bajo_cosphi", "info")])
+        self.assertIn("0.96", self.ctx.alertas[1].mensaje)
+
     def test_un_campo_que_falta_no_normaliza_la_alerta(self):
         muestras = [
             dict(NORMAL, v_an_v=190),                                 # subtensión
