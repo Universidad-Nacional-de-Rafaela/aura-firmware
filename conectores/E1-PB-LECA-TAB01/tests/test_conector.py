@@ -2,6 +2,7 @@
 
     python3 -m unittest discover -s conectores/E1-PB-LECA-TAB01/tests
 """
+import json
 import sys
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -13,6 +14,10 @@ from aura_sdk import ContextoDePrueba, Mensaje, cargar_conector, procesar  # noq
 
 T0 = datetime(2026, 10, 7, 12, 0, tzinfo=timezone.utc)
 HW = "mac-e072a1f7efe4"
+
+# Mediciones reales del tablero del LabECA, de las pruebas de OTA del 30/10 y del 6/11 de 2026 (una de
+# cada tres). El 30/10 el banco no tenía hora: esas llevan la de llegada al broker.
+DATOS_REALES = Path(__file__).resolve().parent / "tablero_real.jsonl"
 
 # Una medición normal del aula: 232,85 V, 12,3 A, 2,7 kW, cos φ 0,97.
 NORMAL = {"v_an_v": 232.85, "i_a_a": 12.34, "p_w": 2723.5, "cosphi_a": 0.97}
@@ -160,6 +165,30 @@ class Alertas(Base):
         procesar(self.conector, self.ctx, tarde)
         self.assertEqual([(a.tipo, a.severidad) for a in self.ctx.alertas],
                          [("subtension", "warning"), ("subtension", "warning")])
+
+
+class DatosReales(Base):
+    """Con el tablero funcionando normal no tiene que saltar ninguna alerta. Si un cambio de umbral o
+    de regla las hace saltar con estos datos, este test lo avisa antes de que pase en AURA."""
+
+    def setUp(self):
+        super().setUp()
+        lineas = DATOS_REALES.read_text(encoding="utf-8").splitlines()
+        self.muestras = [json.loads(linea) for linea in lineas if linea.strip()]
+
+    def test_hay_datos_de_las_dos_pruebas(self):
+        dias = {m["ts"][:10] for m in self.muestras}
+        self.assertEqual(dias, {"2026-10-30", "2026-11-06"})
+        self.assertGreater(len(self.muestras), 100)
+
+    def test_con_el_tablero_normal_se_guarda_todo_sin_alertas(self):
+        for m in self.muestras:
+            ts = datetime.fromisoformat(m["ts"].replace("Z", "+00:00"))
+            r = procesar(self.conector, self.ctx,
+                         Mensaje(hw_id=HW, values=m["values"], ingest_id=m["ingest_id"], ts=ts))
+            self.assertEqual(r.resultado, "persistido", m)
+        self.assertEqual(len(self.ctx.mediciones), len(self.muestras))
+        self.assertEqual(self.ctx.alertas, [])
 
 
 if __name__ == "__main__":

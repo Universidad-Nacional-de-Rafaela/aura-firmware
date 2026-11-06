@@ -23,8 +23,9 @@ activa y cos φ. El conector está en [`conectores/E1-PB-LECA-TAB01/`](../../con
 |---|---|---|
 | Placa | ESP32-C3 SuperMini, `hw_id` en la etiqueta de la placa (herramientas/leer_mac) | — |
 | Transceptor RS-485 | Módulo MAX485 (DI / DE / RE / RO), DE y RE puenteados | DI ← GPIO21, RO → GPIO20, DE+RE ← GPIO5, VCC 3V3, GND |
-| Medidor | Schneider EasyLogic PM2130 | A → D1, B → D0, GND → 0V. Modbus RTU, esclavo 1, 19200 baudios, 8E1 |
-| Transformador de corriente | 100/5 A, una pasada del conductor | al PM2130 (relación configurada 100/5) |
+| Medidor | Schneider EasyLogic PM2130 (METSEPM2130: RS-485, clase 0,5S, firmware v01.40) | A → D1 (22), B → D0 (23), GND → 0V (25); SHLD (24) libre. Modbus RTU, esclavo 1, 19200 baudios, 8E1 |
+| Transformador de corriente | BAW CP 62/30: 100/5 A, clase 1,0, 5 VA, FS5; una pasada del conductor | al PM2130, entradas I1+ (10) e I1− (11); relación configurada 100/5 |
+| Protección del circuito | Schneider Easy9 C40 (EZ9F34440), 4,5 kA; de 4 polos, aunque el laboratorio usa una sola fase | aguas arriba del TI; de ahí sale `TERMICA_A` del conector (40 A) |
 
 ## Lo que envía a AURA
 
@@ -80,6 +81,10 @@ entrega). Se actualiza por la malla ([ADR-008](../../docs/adr/ADR-008-actualizac
   hacer en el banco salieron bien, sin perder mediciones. El informe, con los extractos de los
   registros que respaldan cada caso, está en
   [`pruebas/2026-10-30-ota-http/`](pruebas/2026-10-30-ota-http/README.md).
+- **Prueba de la actualización por la malla por HTTPS (2026-11-06):** el gateway rechazó los
+  certificados de otra CA y para otra IP, y con el correcto la hoja se actualizó instalada en el
+  tablero, sin cables; también se la pasó a la 1.1.0 de esta carpeta y se comprobó en placa el cambio
+  de intervalo. Informe en [`pruebas/2026-11-06-ota-https/`](pruebas/2026-11-06-ota-https/README.md).
 - Al armar el banco, el PM2130 tenía la relación del TI en el valor de fábrica (5/5), lo que
   daba corrientes, potencias y energías 20 veces menores. Se configuró 100/5 y quedó guardado.
 - Se detectó la polaridad del TI invertida (potencia activa negativa). Se corrige intercambiando
@@ -88,3 +93,9 @@ entrega). Se actualiza por la malla ([ADR-008](../../docs/adr/ADR-008-actualizac
   por Modbus, lo primero es intercambiarlos.
 - La consola va por el USB del chip (`sdkconfig.defaults`), así la UART0 no usa los pines 20 y 21
   del RS-485.
+- **Precisión con poca carga.** Con la carga típica del aula (1 a 2 A), el TI de 100 A trabaja al
+  1 o 2 % de su corriente nominal. Su norma (IEC 60044-1, en la etiqueta como IEC 44-1) fija el
+  error de un TI de clase 1 recién desde el 5 % de la nominal (±3 % ahí, ±1 % desde el 100 %). Con
+  esa carga, la corriente, la potencia y el cos φ medidos pueden tener más error que el de la clase.
+  Además, como la protección es de 40 A, el TI de 100 A nunca pasa del 40 % de su nominal: uno de
+  menor relación (por ejemplo, 50/5) aprovecharía mejor la escala.

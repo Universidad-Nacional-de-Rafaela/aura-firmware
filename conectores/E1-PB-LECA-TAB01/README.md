@@ -35,8 +35,9 @@ con la última medición de la última hora en la que esa regla se podía evalua
 | `potencia_negativa` | warning | potencia activa por debajo de −50 W: en un aula, TI invertido |
 | `bajo_cosphi` | warning | cos φ por debajo de 0,85 con al menos 200 W de carga. Con menos carga no se evalúa: ni se avisa ni se da por normalizado |
 
-Los umbrales son una **propuesta** y están arriba de todo en `conector.py`. Falta el dato de la
-protección del circuito (`TERMICA_A`).
+Los umbrales de tensión y de cos φ son una **propuesta**, y están arriba de todo en `conector.py`.
+La protección del circuito es una llave Schneider Easy9 C40: `TERMICA_A` es 40 A, y la alerta de
+sobrecorriente salta desde los 32 A.
 
 Un campo que falta en una muestra no activa ni normaliza ninguna alerta: no se sabe. Un valor
 fuera de rango tampoco: AURA lo quita antes. Y una muestra así tampoco hace que se repita una
@@ -47,4 +48,10 @@ alerta que seguía activa.
 ```bash
 python3 -m unittest discover -s conectores/E1-PB-LECA-TAB01/tests
 herramientas/correr_conector.py conectores/E1-PB-LECA-TAB01 --hw-id mac-<MAC de la placa> --docker aura-mosquitto
+herramientas/correr_conector.py conectores/E1-PB-LECA-TAB01 --archivo conectores/E1-PB-LECA-TAB01/tests/tablero_real.jsonl
 ```
+
+Los tests incluyen 148 mediciones reales del tablero (`tests/tablero_real.jsonl`, de las pruebas de
+OTA del 30/10 y del 6/11 de 2026): con el tablero funcionando normal, el conector las guarda todas y
+no emite ninguna alerta. Si un cambio de umbral o de regla hace saltar alertas con esos datos, el
+test lo avisa. La última línea de arriba pasa esos mismos datos por el conector como lo haría AURA.

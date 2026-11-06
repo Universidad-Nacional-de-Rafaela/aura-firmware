@@ -19,13 +19,13 @@ from typing import Callable, Tuple
 
 from aura_sdk import Conector
 
-# ---- Umbrales. TODO: validarlos con la cátedra y con los datos del tablero ----
+# ---- Umbrales. TERMICA_A es el de la llave del tablero; los demás, una propuesta para validar ----
 V_NOMINAL_V = 220.0
 TOLERANCIA_V = 0.10                       # ±10 % de la nominal
 V_MIN_V = V_NOMINAL_V * (1 - TOLERANCIA_V)   # 198 V
 V_MAX_V = V_NOMINAL_V * (1 + TOLERANCIA_V)   # 242 V
 
-TERMICA_A = 40.0                          # TODO: la protección del circuito del aula
+TERMICA_A = 40.0                          # Schneider Easy9 C40 (EZ9F34440) del tablero
 I_ALERTA_A = 0.8 * TERMICA_A              # aviso al 80 % de la protección
 
 P_NEGATIVA_W = -50.0                      # por debajo: energía hacia la red (TI invertido)
