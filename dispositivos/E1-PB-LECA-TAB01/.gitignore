@@ -1,0 +1,3 @@
+# Lo que genera VS Code con la extensión ESP-IDF (rutas locales de cada máquina)
+.vscode/
+.clangd
