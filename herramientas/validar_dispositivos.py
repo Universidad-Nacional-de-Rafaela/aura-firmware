@@ -6,7 +6,11 @@ Cada carpeta (salvo las que empiezan con _):
   del mapa, numerado desde 01;
 - figura en la tabla "Dispositivos" del mapa;
 - tiene su ficha README.md;
-- si tiene firmware, es un solo .ino llamado igual que la carpeta (Arduino lo exige).
+- si tiene firmware, es un solo .ino llamado igual que la carpeta (Arduino lo exige);
+- si su ficha apunta a un modelo (`_modelos/<MODELO>`), el modelo existe y la carpeta no tiene
+  firmware propio.
+
+Cada modelo de dispositivos/_modelos/ tiene su ficha README.md y al menos un dispositivo que lo usa.
 
 Uso: herramientas/validar_dispositivos.py   (desde cualquier carpeta; sale con 1 si hay errores)
 """
@@ -16,6 +20,8 @@ from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent.parent
 DISPOSITIVOS = RAIZ / "dispositivos"
+MODELOS = DISPOSITIVOS / "_modelos"
+MODELO_EN_FICHA = re.compile(r"\*\*Modelo:\*\*\s*\[?`_modelos/([A-Z0-9-]+)`")
 CODIGO = re.compile(r"^([A-Z0-9]+)-([A-Z0-9]+)-([A-Z0-9]+)-([A-Z]{3})(\d{2})$")
 
 
@@ -43,6 +49,7 @@ partes = {
 }
 listados = set(mapa.get("Dispositivos", []))
 errores = []
+modelos_usados = set()
 
 for carpeta in sorted(p for p in DISPOSITIVOS.iterdir() if p.is_dir()):
     nombre = carpeta.name
@@ -64,6 +71,25 @@ for carpeta in sorted(p for p in DISPOSITIVOS.iterdir() if p.is_dir()):
     for ino in sorted(carpeta.glob("*.ino")):
         if ino.name != f"{nombre}.ino":
             errores.append(f"dispositivos/{nombre}: el firmware tiene que llamarse {nombre}.ino, no {ino.name}")
+    ficha = carpeta / "README.md"
+    modelo = MODELO_EN_FICHA.search(ficha.read_text(encoding="utf-8")) if ficha.is_file() else None
+    if modelo:
+        modelos_usados.add(modelo.group(1))
+        if not (MODELOS / modelo.group(1)).is_dir():
+            errores.append(f"dispositivos/{nombre}: el modelo _modelos/{modelo.group(1)} no existe")
+        if any(carpeta.glob("*.ino")) or (carpeta / "CMakeLists.txt").is_file():
+            errores.append(f"dispositivos/{nombre}: usa el modelo _modelos/{modelo.group(1)}, así que no lleva firmware propio")
+
+if MODELOS.is_dir():
+    for carpeta in sorted(p for p in MODELOS.iterdir() if p.is_dir()):
+        nombre = carpeta.name
+        if not (carpeta / "README.md").is_file():
+            errores.append(f"dispositivos/_modelos/{nombre}: falta la ficha README.md")
+        if nombre not in modelos_usados:
+            errores.append(f"dispositivos/_modelos/{nombre}: ningún dispositivo lo usa (falta **Modelo:** en su ficha)")
+        for ino in sorted(carpeta.glob("*.ino")):
+            if ino.name != f"{nombre}.ino":
+                errores.append(f"dispositivos/_modelos/{nombre}: el firmware tiene que llamarse {nombre}.ino, no {ino.name}")
 
 for codigo in sorted(listados - {p.name for p in DISPOSITIVOS.iterdir() if p.is_dir()}):
     errores.append(f"dispositivos/README.md: {codigo} está en la tabla pero no tiene carpeta")

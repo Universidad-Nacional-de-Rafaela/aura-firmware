@@ -141,6 +141,7 @@ function dibujar(hw) {
     if (d.modo) html += `<span>modo <b>${d.modo}</b></span>`;
     if (cfg.intervalo_s) html += `<span>intervalo <b>${cfg.intervalo_s} s</b></span>`;
     if (d.pendientes !== undefined) html += `<span>en cola <b>${d.pendientes}</b></span><span>descartadas <b>${d.descartadas}</b></span>`;
+    if (rol === "concentrador") html += `<span>autorizado <b>${d.concentrador_autorizado ? "sí" : "no"}</b></span>`;
     if (d.hojas_aula !== undefined) html += `<span>hojas <b>${d.hojas_aula}</b></span><span>capa <b>${d.capa}</b></span>`;
   }
   html += `</div>`;
@@ -167,6 +168,11 @@ function dibujar(hw) {
     }
     html += `<input id="aula-${hw}" placeholder="aula" value="${cfg.aula || ""}">
              <button onclick='comando("${hw}","set_config",{aula:document.getElementById("aula-${hw}").value})'>Asignar aula</button>`;
+    /* El rol que informa la placa es solo un dato: el permiso de mandar LOTE lo da AURA (acá, a mano) */
+    if (rol === "concentrador" || d.concentrador_autorizado) {
+      const aut = d.concentrador_autorizado === true;
+      html += `<button onclick='comando("${hw}","autorizar_concentrador",{autorizado:${!aut}})'>${aut ? "Quitar autorización" : "Autorizar concentrador"}</button>`;
+    }
     if (cfg.intervalo_s && rol === "hoja") {
       html += `<input id="iv-${hw}" type="number" min="2" max="3600" value="${cfg.intervalo_s}">
                <button onclick='comando("${hw}","set_config",{intervalo_s:Number(document.getElementById("iv-${hw}").value)})'>Intervalo</button>`;

@@ -19,6 +19,10 @@ typedef struct {
 } aura_ota_receptor_cfg_t;
 
 void aura_ota_receptor_iniciar(const aura_ota_receptor_cfg_t *cfg);
-/* Desde la tarea de recepción, para cada trama que cumple aura_es_ota(): la copia y vuelve */
-void aura_ota_recibir(const uint8_t *datos, size_t largo);
+/* Desde la tarea de recepción, para cada trama que cumple aura_es_ota(): la copia y vuelve.
+   de = quien la mandó (esp_mesh_recv): solo se acepta de la raíz. */
+void aura_ota_recibir(const uint8_t de[6], const uint8_t *datos, size_t largo);
+/* true si mac es la raíz de la malla (la que informa MESH_EVENT_ROOT_ADDRESS). Sirve para
+   aceptar tramas de control solo de la raíz. false mientras no se sepa cuál es. */
+bool aura_es_la_raiz(const uint8_t mac[6]);
 bool aura_ota_en_curso(void);

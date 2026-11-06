@@ -6,6 +6,10 @@
 # Cada grupo agrega acá la carpeta de su dispositivo con sus usuarios de GitHub, en el mismo PR
 # en que la crea. Ejemplo:
 #   /dispositivos/E1-PB-LECA-HFR01/   @usuario1 @usuario2
+#
+# Si el grupo trabaja sobre un modelo (varias placas con el mismo firmware), agrega el modelo y
+# cada dispositivo que lo usa:
+#   /dispositivos/_modelos/PUE-RFID/  @usuario1 @usuario2
 
 *                     @mwanzenried
 /comun/               @mwanzenried
