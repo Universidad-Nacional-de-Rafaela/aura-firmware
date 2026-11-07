@@ -620,6 +620,16 @@ static void procesar_comando(const recibida_t *r, const aura_trama_t *t)
     bool local = cJSON_IsString(o) && strcmp(o->valuestring, "local") == 0;
     char motivo[48] = "";
 
+    if (params != NULL && !cJSON_IsObject(params)) {
+        /* params es un objeto o no viene: con un arreglo, los hijos no tienen nombre
+           (string NULL) y el strcmp de aplicar_config o ejecutar_comando hace caer la placa. */
+        if (!local) {
+            resultado(command_id, false, "json_invalido");
+        }
+        cJSON_Delete(d);
+        return;
+    }
+
     if (strcmp(comando, "set_config") == 0) {
         const cJSON *a = cJSON_GetObjectItemCaseSensitive(params, "aula");
         bool solo_aula = a != NULL && cJSON_GetArraySize(params) == 1;
@@ -693,6 +703,15 @@ static void procesar_recibidas(TickType_t espera)
         espera = 0;
         aura_trama_t t;
         memcpy(&t, r.datos, r.largo);
+        /* Lo que manda la raíz (o, en modo aula, el concentrador: su botón y la hora) es lo único
+           que puede mandarle algo a una hoja. Cualquier otro nodo de la malla se ignora. */
+        bool de_la_raiz = aura_es_la_raiz(r.de);
+        bool de_mi_concentrador = modo == MODO_AULA && memcmp(r.de, concentrador.addr, 6) == 0;
+        if (!de_la_raiz && !(de_mi_concentrador && (t.tipo == AURA_TIPO_COMANDO || t.tipo == AURA_TIPO_HORA))) {
+            ESP_LOGW(TAG, "Trama %u de " MACSTR " (no es la raíz ni mi concentrador): se descarta", t.tipo,
+                     MAC2STR(r.de));
+            continue;
+        }
         switch (t.tipo) {
         case AURA_TIPO_CONFIRMACION:
             procesar_confirmacion(&t);
@@ -743,7 +762,7 @@ static void tarea_rx(void *arg)
             continue;
         }
         if (aura_es_ota(buf, d.size)) {                /* actualización: tiene su propia tarea */
-            aura_ota_recibir(buf, d.size);
+            aura_ota_recibir(de.addr, buf, d.size);
             continue;
         }
         if (aura_trama_validar(buf, d.size) != AURA_TRAMA_OK) {
@@ -1208,13 +1227,14 @@ esp_err_t nodo_mesh_iniciar(const nodo_mesh_config_t *c)
     strlcpy((char *)mc.mesh_ap.password, cfg.mesh_clave, sizeof(mc.mesh_ap.password));
     ESP_ERROR_CHECK(esp_mesh_set_config(&mc));
     ESP_ERROR_CHECK(esp_mesh_send_block_time(LIMITE_ENVIO_MS));
+    /* Antes de arrancar la malla: registra el evento que informa la raíz, y sin ella se descarta todo el control */
+    aura_ota_receptor_cfg_t ota = {.antes_de_reiniciar = antes_de_reiniciar};
+    aura_ota_receptor_iniciar(&ota);
     ESP_ERROR_CHECK(esp_mesh_start());
 
     xTaskCreate(tarea_rx, "mesh_rx", 4096, NULL, 5, NULL);
     xTaskCreate(tarea_nodo, "nodo", 6144, NULL, 5, NULL);
     xTaskCreate(tarea_vigia, "vigia", 3072, NULL, 4, NULL);
-    aura_ota_receptor_cfg_t ota = {.antes_de_reiniciar = antes_de_reiniciar};
-    aura_ota_receptor_iniciar(&ota);
     aura_fw_antes_de_volver(antes_de_reiniciar);   /* lo medido con la versión nueva no se pierde */
     return ESP_OK;
 }

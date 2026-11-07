@@ -18,7 +18,10 @@ el consumo del tablero (`E1-PB-LECA-TAB01`), uno de luz (`E1-PB-LECA-LUZ01`) y e
 cortina (`E1-PB-LECA-CRT01`): cinco dispositivos, cinco carpetas.
 
 Si un dispositivo nuevo usa el mismo firmware que otro (por ejemplo, otra heladera con el mismo
-hardware), se copia esa carpeta con el código nuevo, y la ficha dice de cuál está basado.
+hardware), se copia esa carpeta con el código nuevo, y la ficha dice de cuál está basado. Si van
+a ser **más de dos placas iguales** (las puertas de un edificio), el firmware va una sola vez en
+`dispositivos/_modelos/<MODELO>/` y cada dispositivo queda con su carpeta y solo la ficha, que
+apunta al modelo. Ver [*Varios dispositivos con el mismo firmware*](dispositivos/README.md#varios-dispositivos-con-el-mismo-firmware).
 
 ## 1. Antes de escribir código
 
@@ -48,7 +51,8 @@ hardware), se copia esa carpeta con el código nuevo, y la ficha dice de cuál e
 4. Listá en `bibliotecas.txt` cada biblioteca con su versión (`OneWire@2.3.8`). El CI instala
    exactamente esas.
 5. Sumá el dispositivo a la tabla *Dispositivos* de `dispositivos/README.md`, y tu carpeta a
-   `.github/CODEOWNERS` con los usuarios de GitHub del grupo.
+   `.github/CODEOWNERS` con los usuarios de GitHub del grupo. Si trabajás sobre un modelo, va
+   también `dispositivos/_modelos/<MODELO>/`.
 
 **Si el dispositivo va por la mesh**, se programa en **ESP-IDF 6.1**, no en Arduino
 ([ADR-007](docs/adr/ADR-007-mesh-en-esp-idf-con-concentrador-por-aula.md), desde el 2026-10-20).

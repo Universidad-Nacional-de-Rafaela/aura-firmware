@@ -48,8 +48,9 @@ regexTarget = "secret"
 regexes = [
     '''(?i)^(?:CAMBIAR|TU_CLAVE|changeme|x+|\*+|<[^>]*>|\$\{?[A-Z_]+\}?)$''',
     # Una constante de C (MQTT_CLAVE, MQTT_CLAVE[0]) no es la clave: la clave está en el
-    # credenciales.h ignorado. Sin la (?i): solo nombres en mayúsculas con guion bajo.
-    '''^[A-Z][A-Z0-9]*_[A-Z0-9_]+(?:\[\d+\])?$''',
+    # credenciales.h ignorado. Sin la (?i): solo nombres en mayúsculas con guion bajo. El paréntesis
+    # inicial opcional cubre una condición: (BROKER_URI[0] && MQTT_CLAVE[0]) ? MQTT_CLAVE : NULL.
+    '''^\(?[A-Z][A-Z0-9]*_[A-Z0-9_]+(?:\[\d+\])?$''',
 ]
 
 [[rules]]
