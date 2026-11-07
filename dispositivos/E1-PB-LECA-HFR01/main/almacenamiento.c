@@ -60,23 +60,6 @@ esp_err_t hfr_cargar_config(hfr_config_t *cfg)
     return ESP_OK;
 }
 
-esp_err_t hfr_guardar_corte(const hfr_corte_t *corte)
-{
-    if (!hfr_corte_valido(corte)) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    return guardar("corte", corte, sizeof(*corte));
-}
-
-esp_err_t hfr_cargar_corte(hfr_corte_t *corte)
-{
-    esp_err_t err = cargar("corte", corte, sizeof(*corte));
-    if (err != ESP_OK) {
-        return err;
-    }
-    return hfr_corte_valido(corte) ? ESP_OK : ESP_ERR_INVALID_CRC;
-}
-
 esp_err_t hfr_guardar_alimentacion(bool bateria)
 {
     uint8_t valor = bateria;

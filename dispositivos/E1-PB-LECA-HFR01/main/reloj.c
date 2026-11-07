@@ -1,13 +1,15 @@
 #include "reloj.h"
 #include "bus_i2c.h"
+#include "aura_trama.h"
 #include "hardware.h"
 #include "logica.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include <sys/time.h>
 #include <time.h>
 
 static i2c_master_dev_handle_t rtc;
-static uint32_t ultima_escritura;
+static int64_t proxima_revision;
 
 static bool leer(uint32_t *utc)
 {
@@ -24,18 +26,13 @@ static bool leer(uint32_t *utc)
         return false;
     }
     *utc += HFR_RTC_OFFSET_S;
-    return true;
+    return *utc >= AURA_EPOCA_MINIMA && *utc < 4102444800UL;
 }
 
 uint32_t hfr_reloj_utc(void)
 {
     time_t ahora = time(NULL);
-    if (ahora >= 1700000000 && ahora < 4102444800LL) {
-        return (uint32_t)ahora;
-    }
-    uint32_t utc = 0;
-    leer(&utc);
-    return utc;
+    return ahora >= AURA_EPOCA_MINIMA && ahora < 4102444800LL ? (uint32_t)ahora : 0;
 }
 
 void hfr_reloj_iniciar(void)
@@ -57,13 +54,13 @@ void hfr_reloj_iniciar(void)
 void hfr_reloj_mantener(bool mesh_conectada)
 {
     uint32_t utc = hfr_reloj_utc();
-    if (!mesh_conectada || rtc == NULL || utc == 0) {
+    int64_t ahora = esp_timer_get_time();
+    if (!mesh_conectada || rtc == NULL || utc == 0 || ahora < proxima_revision) {
         return;
     }
+    proxima_revision = ahora + 60000000LL;
     uint32_t guardada;
-    bool coincide = leer(&guardada) &&
-                    (utc > guardada ? utc - guardada : guardada - utc) <= 2;
-    if (coincide && ultima_escritura != 0 && utc - ultima_escritura < 3600) {
+    if (leer(&guardada) && (utc > guardada ? utc - guardada : guardada - utc) <= 2) {
         return;
     }
     uint8_t datos[8] = {0};
@@ -75,8 +72,6 @@ void hfr_reloj_mantener(bool mesh_conectada)
     uint8_t estado;
     if (i2c_master_transmit_receive(rtc, &direccion, 1, &estado, 1, 100) == ESP_OK) {
         uint8_t comando[2] = {0x0f, estado & ~0x80};
-        if (i2c_master_transmit(rtc, comando, sizeof(comando), 100) == ESP_OK) {
-            ultima_escritura = utc;
-        }
+        i2c_master_transmit(rtc, comando, sizeof(comando), 100);
     }
 }

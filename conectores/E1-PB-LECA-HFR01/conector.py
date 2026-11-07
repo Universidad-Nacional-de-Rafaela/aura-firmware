@@ -3,7 +3,7 @@
 No usa red, archivos ni estado de instancia. Las decisiones se apoyan en
 config_vigente() y serie(): sobreviven a una recreacion del conector.
 """
-from datetime import datetime, timezone
+from datetime import timezone
 from math import isfinite
 
 from aura_sdk import Conector
@@ -18,8 +18,17 @@ def numero(valor):
     return (isinstance(valor, int) and not isinstance(valor, bool)) or (isinstance(valor, float) and isfinite(valor))
 
 
-def zona(valor, inferior, superior):
-    return -1 if valor < inferior else 1 if valor > superior else 0
+def evaluar(estado, valor, inferior, superior, margen):
+    activa, pendiente = estado
+    zona = -1 if valor < inferior else 1 if valor > superior else 0
+    if zona != 0 and zona == pendiente:
+        activa = zona
+    if zona == 0 and (
+        (activa < 0 and valor >= inferior + margen)
+        or (activa > 0 and valor <= superior - margen)
+    ):
+        activa = 0
+    return activa, zona
 
 
 def hora_utc(ts):
@@ -44,7 +53,7 @@ class ConectorHeladeraFreezer(Conector):
             return
 
         # Leer antes de guardar: el contexto aplica su commit al terminar.
-        anteriores = {campo: ctx.serie(campo)[-1:] for campo in validos}
+        anteriores = {campo: ctx.serie(campo) for campo in validos}
         guardados = ctx.guardar_medicion(validos, msg.ts)
         config = ctx.config_vigente()
         instante = hora_utc(msg.ts)
@@ -59,15 +68,25 @@ class ConectorHeladeraFreezer(Conector):
             anterior = anteriores[campo]
             # Una cola puede entregar datos historicos fuera de orden. Se guardan,
             # pero no cambian el estado actual de la alarma ni disparan recuperaciones.
-            if anterior and instante is not None and instante < hora_utc(anterior[0][0]):
+            if anterior and instante is not None and instante < hora_utc(anterior[-1][0]):
                 ctx.log.info("%s: lectura historica guardada sin cambiar alarma actual", campo)
                 continue
-            previa = zona(anterior[0][1], inferior, superior) if anterior else 0
-            actual = zona(valor, inferior, superior)
-            if actual == previa:
+            # Trabajar en centésimas evita diferencias en los límites con el firmware.
+            minimo, maximo = round(inferior * 100), round(superior * 100)
+            margen = min(50, (maximo - minimo) / 2)
+            estado = (0, 0)
+            for _, temperatura in anterior:
+                # D5 puede guardar el centinela en crudo si el conector falló.
+                if numero(temperatura) and -55 <= temperatura <= 125 and temperatura != 85:
+                    estado = evaluar(estado, round(temperatura * 100), minimo, maximo, margen)
+            actual, _ = evaluar(estado, round(valor * 100), minimo, maximo, margen)
+            if actual == estado[0]:
                 continue
+
+            fecha = f" (medición {instante.isoformat()})" if instante is not None else " (sin hora de medición)"
             if actual == 0:
-                ctx.alertar(f"temperatura_{nombre}", "info", f"{nombre.capitalize()} recuperada: {valor} °C")
+                ctx.alertar(f"temperatura_{nombre}", "info",
+                            f"{nombre.capitalize()} recuperada: {valor} °C{fecha}")
             else:
                 ctx.alertar(f"temperatura_{nombre}", "warning",
-                            f"{nombre.capitalize()}: {valor} °C, fuera de {inferior}..{superior} °C")
+                            f"{nombre.capitalize()}: {valor} °C, fuera de {inferior}..{superior} °C{fecha}")

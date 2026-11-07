@@ -42,9 +42,10 @@ def main():
     fuentes = [RAIZ / "test_hfr.c", RAIZ.parent / "main/logica.c",
                RAIZ.parent / "main/config_parser.c", RAIZ.parent / "main/configuracion.c",
                RAIZ.parent / "main/almacenamiento.c", RAIZ.parent / "main/energia.c", deps / "cJSON.c"]
+    protocolo = RAIZ.parents[2] / "Mesh_Red_Completa/componentes/aura_mesh/include"
     comando = compilador + ["-std=c11", "-Wall", "-Wextra", "-Werror", "-pedantic",
                             "-DHFR_PIN_ALIMENTACION=1", "-I" + str(deps), "-I" + str(RAIZ / "dobles"),
-                            "-I" + str(RAIZ.parent / "main")]
+                            "-I" + str(RAIZ.parent / "main"), "-I" + str(protocolo)]
     comando += [str(f) for f in fuentes] + ["-lm", "-o", str(ejecutable)]
     subprocess.run(comando, check=True)
     subprocess.run([str(ejecutable)], check=True)

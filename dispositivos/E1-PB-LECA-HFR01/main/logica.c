@@ -1,4 +1,5 @@
 #include "logica.h"
+#include "aura_trama.h"
 #include <math.h>
 
 hfr_config_t hfr_config_defecto(void)
@@ -35,10 +36,23 @@ hfr_sonda_estado_t hfr_clasificar(float temperatura, bool leida)
     return HFR_SONDA_OK;
 }
 
-bool hfr_fuera_umbral(float temperatura, int16_t minimo, int16_t maximo)
+void hfr_alarma_actualizar(hfr_alarma_t *alarma, float temperatura, int16_t minimo, int16_t maximo)
 {
-    return hfr_clasificar(temperatura, true) == HFR_SONDA_OK &&
-        (temperatura * 100 < minimo || temperatura * 100 > maximo);
+    int medida = (int)lroundf(temperatura * 100);
+    int zona = medida < minimo ? -1 : medida > maximo ? 1 : 0;
+    if (zona != 0 && zona == alarma->pendiente) {
+        alarma->activa = zona;
+    }
+    alarma->pendiente = zona;
+
+    /* Se duplica la escala para conservar el punto medio en rangos menores a 1 °C. */
+    int ancho = maximo - minimo;
+    int margen_doble = ancho < 100 ? ancho : 100;
+    if (zona == 0 &&
+        ((alarma->activa < 0 && 2 * medida >= 2 * minimo + margen_doble) ||
+         (alarma->activa > 0 && 2 * medida <= 2 * maximo - margen_doble))) {
+        alarma->activa = 0;
+    }
 }
 
 uint32_t hfr_crc32(const void *datos, size_t longitud)
@@ -52,28 +66,6 @@ uint32_t hfr_crc32(const void *datos, size_t longitud)
         }
     }
     return ~crc;
-}
-
-void hfr_corte_sellado(hfr_corte_t *corte)
-{
-    corte->magic = 0x48464331;
-    corte->crc = hfr_crc32(corte, offsetof(hfr_corte_t, crc));
-}
-
-bool hfr_corte_valido(const hfr_corte_t *corte)
-{
-    if (corte->magic != 0x48464331 || corte->activo > 1 || corte->validas > 3 ||
-        (corte->utc && corte->utc < 1700000000UL) ||
-        corte->crc != hfr_crc32(corte, offsetof(hfr_corte_t, crc))) {
-        return false;
-    }
-    for (int s = 0; s < 2; ++s) {
-        if ((corte->validas & (1 << s)) &&
-            hfr_clasificar(corte->temperatura[s] / 100.0f, true) != HFR_SONDA_OK) {
-            return false;
-        }
-    }
-    return true;
 }
 
 static int bcd(uint8_t valor)
@@ -119,12 +111,12 @@ bool hfr_rtc_decodificar(const uint8_t r[7], uint32_t *utc)
         dias += dias_mes[m - 1] + (m == 2 && anio % 4 == 0);
     }
     *utc = (dias + dia - 1) * 86400UL + hora * 3600UL + minuto * 60UL + segundo;
-    return *utc >= 1700000000UL;
+    return *utc >= AURA_EPOCA_MINIMA;
 }
 
 bool hfr_rtc_codificar(uint32_t utc, uint8_t r[7])
 {
-    if (utc < 1700000000UL || utc >= 4102444800UL) {
+    if (utc < AURA_EPOCA_MINIMA || utc >= 4102444800UL) {
         return false;
     }
     uint32_t dias = utc / 86400UL - 10957;

@@ -1,5 +1,6 @@
 #include "configuracion.h"
 #include "almacenamiento.h"
+#include "aura_trama.h"
 #include "nvs.h"
 #include "energia.h"
 #include "driver/gpio.h"
@@ -10,7 +11,7 @@
 
 /* NVS transaccional en memoria: un commit fallido no cambia el dato durable. */
 typedef struct { unsigned char datos[64]; size_t tam; } registro_t;
-static registro_t registros[3];
+static registro_t registros[2];
 static registro_t pendiente;
 static unsigned clave_pendiente;
 static bool fallar_escritura;
@@ -35,9 +36,8 @@ void nodo_mesh_alerta(const char *tipo, const char *severity, const char *messag
 static unsigned indice(const char *clave)
 {
     if (strcmp(clave, "config") == 0) return 0;
-    if (strcmp(clave, "corte") == 0) return 1;
     assert(strcmp(clave, "bateria") == 0);
-    return 2;
+    return 1;
 }
 
 const char *esp_err_to_name(esp_err_t err) { (void)err; return "doble"; }
@@ -101,6 +101,10 @@ static void configuracion(void)
         assert(escrituras == 0);
         cJSON_Delete(params);
     }
+    cJSON *precision = cJSON_Parse("{\"flo\":-20.001}");
+    assert(!hfr_config_aplicar(precision, motivo, sizeof(motivo)));
+    assert(strcmp(motivo, "umbral_mas_de_dos_decimales") == 0);
+    cJSON_Delete(precision);
     cJSON *params = cJSON_Parse("{\"intervalo_s\":5,\"hlo\":-55,\"hhi\":125,\"aula\":\"aula1\"}");
     assert(hfr_config_aplicar(params, motivo, sizeof(motivo)));
     assert(escrituras == 1);
@@ -142,67 +146,62 @@ static void sondas(void)
     float invalidas[] = {NAN, INFINITY, -INFINITY, -127, 85, -55.1f, 125.1f};
     for (size_t i = 0; i < sizeof(invalidas) / sizeof(*invalidas); ++i) {
         assert(hfr_clasificar(invalidas[i], true) != HFR_SONDA_OK);
-        assert(!hfr_fuera_umbral(invalidas[i], 200, 600));
     }
     assert(hfr_clasificar(4, false) == HFR_SIN_RESPUESTA);
     assert(hfr_clasificar(-55, true) == HFR_SONDA_OK);
     assert(hfr_clasificar(125, true) == HFR_SONDA_OK);
-    assert(!hfr_fuera_umbral(2, 200, 600));
-    assert(!hfr_fuera_umbral(6, 200, 600));
-    assert(hfr_fuera_umbral(6.125f, 200, 600));
-    assert(hfr_fuera_umbral(-26, -2500, -1500));
-    puts("OK sondas: centinelas, limites y alarma local");
+    puts("OK sondas: centinelas y limites");
 }
 
-static void corte(void)
+static void alarma(void)
 {
-    hfr_corte_t dato = {.utc = 1792490400, .activo = 1};
-    hfr_corte_sellado(&dato);
-    assert(hfr_guardar_corte(&dato) == ESP_OK); /* Incluso con ambas sondas ausentes. */
-    hfr_corte_t copia;
-    assert(hfr_cargar_corte(&copia) == ESP_OK);
-    assert(copia.utc == dato.utc && copia.validas == 0);
-    dato.validas = 3;
-    dato.temperatura[0] = 425;
-    dato.temperatura[1] = -1800;
-    hfr_corte_sellado(&dato);
-    assert(hfr_guardar_corte(&dato) == ESP_OK);
-    assert(hfr_cargar_corte(&copia) == ESP_OK);
-    assert(memcmp(&dato, &copia, sizeof(dato)) == 0);
-    registros[1].datos[4] ^= 1;
-    assert(hfr_cargar_corte(&copia) == ESP_ERR_INVALID_CRC);
-    dato.validas = 4;
-    hfr_corte_sellado(&dato);
-    assert(hfr_guardar_corte(&dato) == ESP_ERR_INVALID_ARG);
-    bool bateria;
-    assert(!hfr_cargar_alimentacion(&bateria));
-    assert(hfr_guardar_alimentacion(true) == ESP_OK);
-    assert(hfr_cargar_alimentacion(&bateria) && bateria);
-    puts("OK corte: marca horaria sin sondas, persistencia y deteccion de corrupcion");
+    hfr_alarma_t heladera = {0};
+    hfr_alarma_t freezer = {0};
+    for (unsigned i = 0; i < 5; ++i) {
+        hfr_alarma_actualizar(&heladera, 6, 200, 600);
+        hfr_alarma_actualizar(&heladera, 6.5f, 200, 600);
+        assert(heladera.activa == 0);
+    }
+    hfr_alarma_actualizar(&heladera, 6.5f, 200, 600);
+    assert(heladera.activa == 1 && freezer.activa == 0);
+    hfr_alarma_actualizar(&heladera, 6, 200, 600);
+    assert(heladera.activa == 1);
+    hfr_alarma_actualizar(&heladera, 5.5f, 200, 600);
+    assert(heladera.activa == 0);
+
+    hfr_alarma_actualizar(&freezer, -26, -2500, -1500);
+    assert(freezer.activa == 0);
+    hfr_alarma_actualizar(&freezer, -26, -2500, -1500);
+    assert(freezer.activa == -1);
+    hfr_alarma_actualizar(&freezer, -25, -2500, -1500);
+    assert(freezer.activa == -1);
+    hfr_alarma_actualizar(&freezer, -24.5f, -2500, -1500);
+    assert(freezer.activa == 0);
+    puts("OK alarma: demora, oscilacion, recuperacion y sondas independientes");
 }
 
 static void reloj(void)
 {
-    const uint32_t fechas[] = {1700000000, 1709164800, 1792490400, 4102444799UL};
+    const uint32_t fechas[] = {AURA_EPOCA_MINIMA, 1792490400, 4102444799UL};
     for (size_t i = 0; i < sizeof(fechas) / sizeof(*fechas); ++i) {
         uint8_t r[7];
         uint32_t utc;
         assert(hfr_rtc_codificar(fechas[i], r));
         assert(hfr_rtc_decodificar(r, &utc) && utc == fechas[i]);
     }
-    uint8_t r[7] = {0,0,0,5,0x29,0x02,0x24};
+    uint8_t r[7] = {0,0,0,5,0x29,0x02,0x28};
     uint32_t utc;
-    assert(hfr_rtc_decodificar(r, &utc) && utc == 1709164800);
-    r[6] = 0x25; /* 29/2/2025 no existe. */
+    assert(hfr_rtc_decodificar(r, &utc) && utc == 1835395200);
+    r[6] = 0x27; /* 29/2/2027 no existe. */
     assert(!hfr_rtc_decodificar(r, &utc));
-    r[6] = 0x24;
+    r[6] = 0x28;
     r[2] = 0x52; /* 12 AM. */
-    assert(hfr_rtc_decodificar(r, &utc) && utc == 1709164800);
+    assert(hfr_rtc_decodificar(r, &utc) && utc == 1835395200);
     r[2] = 0x72; /* 12 PM. */
-    assert(hfr_rtc_decodificar(r, &utc) && utc == 1709208000);
+    assert(hfr_rtc_decodificar(r, &utc) && utc == 1835438400);
     r[0] = 0x6a;
     assert(!hfr_rtc_decodificar(r, &utc));
-    assert(!hfr_rtc_codificar(0, r));
+    assert(!hfr_rtc_codificar(AURA_EPOCA_MINIMA - 1, r));
     puts("OK RTC: UTC, bisiestos, 12/24 horas y BCD invalido");
 }
 
@@ -213,51 +212,39 @@ static void energia(void)
     nivel_red = 1;
     hfr_energia_iniciar(true);
     reloj_us += 200001;
-    assert(!hfr_energia_actualizar(1792490400, true));
-    assert(!hfr_energia_bateria());
+    hfr_energia_actualizar(true);
+    assert(!hfr_energia_bateria() && alertas == 0);
+
     nivel_red = 0;
-    assert(!hfr_energia_actualizar(1792490400, true));
+    hfr_energia_actualizar(true);
     reloj_us += 100000;
     nivel_red = 1; /* Rebote, no es un corte. */
-    assert(!hfr_energia_actualizar(1792490400, true));
+    hfr_energia_actualizar(true);
+    assert(!hfr_energia_bateria() && alertas == 0);
+
     nivel_red = 0;
-    assert(!hfr_energia_actualizar(1792490400, true));
+    hfr_energia_actualizar(true);
     reloj_us += 200001;
-    assert(hfr_energia_actualizar(1792490400, true));
-    assert(hfr_energia_bateria());
-    hfr_corte_t dato;
-    assert(hfr_cargar_corte(&dato) == ESP_OK && dato.utc == 1792490400 && dato.validas == 0);
-    float temperaturas[2] = {4.5f, -18};
-    hfr_energia_completar(temperaturas, 3);
-    reloj_us += 1000001;
-    assert(!hfr_energia_actualizar(1792490401, true));
-    assert(hfr_cargar_corte(&dato) == ESP_OK && dato.temperatura[0] == 450 && dato.validas == 3);
-    hfr_energia_iniciar(true); /* Reinicio con batería: no cambia el primer corte. */
-    reloj_us += 200001;
-    assert(!hfr_energia_actualizar(1792490402, true));
-    assert(hfr_energia_bateria());
-    nivel_red = 1;
-    assert(!hfr_energia_actualizar(1792490500, true));
-    reloj_us += 200001;
-    assert(!hfr_energia_actualizar(1792490500, true));
-    nivel_red = 0;
-    assert(!hfr_energia_actualizar(1792490600, true));
-    reloj_us += 200001;
-    assert(hfr_energia_actualizar(1792490600, true));
-    assert(hfr_cargar_corte(&dato) == ESP_OK && dato.utc == 1792490400 && dato.temperatura[0] == 450);
-    assert(alertas == 3); /* Primer corte, red, segundo corte; no inventar recuperacion al iniciar. */
-    /* Un registro corrupto no bloquea la captura siguiente. */
-    registros[1].datos[4] ^= 1;
+    hfr_energia_actualizar(true);
+    assert(hfr_energia_bateria() && alertas == 1);
+
     hfr_energia_iniciar(true);
     reloj_us += 200001;
-    fallar_escritura = true;
-    assert(hfr_energia_actualizar(1792490700, false));
-    hfr_energia_completar(temperaturas, 0);
-    fallar_escritura = false;
-    reloj_us += 1000001;
-    assert(!hfr_energia_actualizar(1792490701, false));
-    assert(hfr_cargar_corte(&dato) == ESP_OK && dato.utc == 1792490700 && dato.validas == 0);
-    puts("OK energia: rebotes, primer corte protegido, reinicio, segundo corte y recuperacion de NVS");
+    hfr_energia_actualizar(true);
+    assert(hfr_energia_bateria() && alertas == 1);
+
+    nivel_red = 1;
+    hfr_energia_actualizar(true);
+    reloj_us += 200001;
+    hfr_energia_actualizar(true);
+    assert(!hfr_energia_bateria() && alertas == 2);
+
+    nivel_red = 0;
+    hfr_energia_actualizar(true);
+    reloj_us += 200001;
+    hfr_energia_actualizar(true);
+    assert(hfr_energia_bateria() && alertas == 3);
+    puts("OK energia: rebotes, reinicio y alertas para cortes sucesivos");
 }
 
 int main(void)
@@ -265,7 +252,7 @@ int main(void)
     assert(hfr_crc32("123456789", 9) == 0xcbf43926);
     configuracion();
     sondas();
-    corte();
+    alarma();
     reloj();
     energia();
     puts("Todas las pruebas de host del nodo pasaron");

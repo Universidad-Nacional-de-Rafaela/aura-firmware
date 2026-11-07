@@ -28,9 +28,6 @@ bool hfr_config_parsear(const cJSON *params, const hfr_config_t *actual,
         if (!strcmp(k, "aula")) {
             continue;
         }
-        if (!strcmp(k, "r_s")) {
-            return fallo(motivo, tam, "reintentos_gestionados_por_biblioteca");
-        }
         static const char *claves[] = {"intervalo_s", "f_s", "hlo", "hhi", "flo", "fhi"};
         int indice = -1;
         for (int i = 0; i < 6; ++i) {
@@ -60,8 +57,11 @@ bool hfr_config_parsear(const cJSON *params, const hfr_config_t *actual,
                 candidata.freezer_s = (uint32_t)valor;
             }
         } else {
-            if (valor < -55 || valor > 125 || fabs(valor * 100 - round(valor * 100)) > 0.000001) {
+            if (valor < -55 || valor > 125) {
                 return fallo(motivo, tam, "umbral_fuera_de_rango");
+            }
+            if (fabs(valor * 100 - round(valor * 100)) > 0.000001) {
+                return fallo(motivo, tam, "umbral_mas_de_dos_decimales");
             }
             int s = indice >= 4;
             if (indice % 2 == 0) {

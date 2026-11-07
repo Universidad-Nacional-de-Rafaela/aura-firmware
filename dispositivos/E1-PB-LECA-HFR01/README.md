@@ -7,16 +7,17 @@
 | **Estado** | Firmware portado a ESP-IDF; pendiente la validación física con la C3. |
 | **Instalado** | Todavía no. |
 | **Transporte** | Interior: hoja ESP-WIFI-MESH; no reenvía tráfico de otras placas. |
-| **Contrato** | [Copia MQTT v4.3 (propuesta)](../../docs/CONTRATO_MQTT.md), [ADR-007](../../docs/adr/ADR-007-mesh-en-esp-idf-con-concentrador-por-aula.md) y [ADR-008](../../docs/adr/ADR-008-actualizacion-por-la-malla-y-tipo-de-firmware.md). |
+| **Contrato** | [Copia MQTT v4.4 (propuesta)](../../docs/CONTRATO_MQTT.md), [ADR-007](../../docs/adr/ADR-007-mesh-en-esp-idf-con-concentrador-por-aula.md) y [ADR-008](../../docs/adr/ADR-008-actualizacion-por-la-malla-y-tipo-de-firmware.md). |
 | **Basado en** | [Mesh3_Hoja](../../Mesh_Red_Completa/Mesh3_Hoja/) y su biblioteca pública `nodo_mesh`. |
-| **Firmware** | Tipo `aura-heladera-freezer`, versión `1.0.0`; mismo binario para las placas del mismo uso. |
+| **Firmware** | Tipo `aura-heladera-freezer`, versión `1.0.1`; mismo binario para las placas del mismo uso. |
 | **Códigos anteriores** | Ninguno confirmado. |
 
 ## Qué hace
 
 Una **ESP32-C3 SuperMini** lee dos sondas DS18B20: una de heladera y otra de freezer.
-Cada una tiene su intervalo y sus umbrales. El LED de alarma se enciende cuando
-cualquiera sale de su rango, incluso sin conexión. Una pantalla SH1106 muestra
+Cada una tiene su intervalo y sus umbrales. El LED de alarma se enciende
+si una sonda registra dos lecturas válidas seguidas del mismo lado del rango,
+incluso sin conexión. Una pantalla SH1106 muestra
 temperaturas y pendientes; el DS3231 con pila permite conservar UTC sin red.
 
 La biblioteca de la cátedra administra la conexión, el concentrador de aula, la
@@ -33,22 +34,16 @@ valida y guarda mediciones, y genera alertas al cruzar umbrales.
 | `main/main.c` | Arranque y tarea de medición; intervalos independientes y API de AURA. |
 | `main/hardware.h` | Propuesta de GPIO y opciones de pantalla, RTC y entrada de alimentación. |
 | `main/config_local.ejemplo.h` | Plantilla del ID y la clave privados de la mesh. |
-| `main/logica.c/.h` | Rangos, alarma, CRC, registro de corte y calendario UTC. |
+| `main/logica.c/.h` | Rangos, alarma con histéresis, CRC y calendario UTC. |
 | `main/config_parser.c`, `main/configuracion.c/.h` | Parche JSON, validación completa, aplicación y reporte de configuración. |
-| `main/almacenamiento.c/.h` | NVS de configuración y registro protegido del primer corte. |
+| `main/almacenamiento.c/.h` | NVS de configuración y último estado de alimentación. |
 | `main/sondas.c/.h` | Dos buses 1-Wire, detección y lectura de DS18B20 con el controlador de Espressif. |
 | `main/bus_i2c.c/.h` | Bus I2C compartido por OLED y RTC. |
 | `main/reloj.c/.h` | DS3231, validación de la hora y reloj de sistema. |
 | `main/pantalla.c/.h` | SH1106 128×64 y LEDs externos de umbral y desconexión. |
-| `main/energia.c/.h` | Antirrebote de alimentación y captura local de la primera lectura del corte. |
+| `main/energia.c/.h` | Antirrebote y alerta por cambio de alimentación. |
 | `main/idf_component.yml`, `dependencies.lock` | Dependencias declaradas y versiones resueltas por ESP-IDF. |
 | `tests/` | Pruebas de lógica y configuración en computadora; no se cargan en la placa. |
-
-La versión anterior de Arduino queda en el historial de Git. Este proyecto se
-compila directamente desde esta carpeta con los componentes de
-`Mesh_Red_Completa/`, sin `.ino` ni `comun/nodo_mesh.h`. La carpeta
-`autocontenido/`, su generador y su verificación en CI fueron retirados del
-repositorio: no se generan ni se versionan copias del firmware.
 
 ## Hardware
 
@@ -70,6 +65,11 @@ Evitar GPIO18/19 (USB) y GPIO2/8/9 (arranque) en este cableado. Todos los GPIO
 trabajan a 3,3 V; revisar también los pull-up de los módulos I2C. Las sondas se
 usan con alimentación externa, sin modo parásito. La resolución es de 9 bits
 (0,5 °C); cada conversión ocupa unos 100 ms de la tarea de medición.
+
+La alarma se recupera al entrar 0,5 °C en el rango desde el umbral que se
+cruzó. Para rangos menores a 1 °C, el margen es la mitad de su ancho. Si una
+sonda falla, el LED de temperatura conserva el estado de su alarma. Una falla
+por sí sola se indica en pantalla y con la alerta `sensor` en AURA.
 
 El LED de desconexión indica **asociación a la mesh**, según la API pública.
 No distingue por sí solo una caída del broker o de AURA: se observa también la
@@ -110,7 +110,10 @@ genera el conector; el LED de umbral se resuelve localmente.
 `set_config` valida el parche completo antes de modificar nada. Solo informa
 éxito si la escritura y el commit en NVS terminan bien. Un rechazo conserva
 los ajustes anteriores. Arranca con valores iniciales si no hay configuración
-válida guardada. No borra toda la NVS automáticamente si esta falla.
+válida guardada. Si al arrancar la NVS está llena o tiene una versión
+incompatible, se borra y se reinicializa como en `Mesh3_Hoja`. Se pierden los
+ajustes de esa partición, incluida el aula asignada. Los demás errores
+se informan por el monitor serie.
 
 | Parámetro | Significado y rango | Inicial |
 |---|---|---|
@@ -130,11 +133,8 @@ del dispositivo y rangos invertidos. Los campos ausentes conservan su valor.
 
 Usar parches y `command_id` cortos: el comando completo tiene un límite de
 180 bytes. La configuración vigente se agrega mediante `describir_config`.
-El parámetro anterior `r_s` se rechaza con
-`reintentos_gestionados_por_biblioteca`: la API actual no permite cambiar esos
-tiempos. Tampoco se configuran DR, ADR ni uplinks confirmados de LoRaWAN.
 
-## Cola, cortes y límites pendientes de la API
+## Cola y cortes
 
 La **única cola de mediciones** es la de la cátedra: hasta 400 registros en RAM
 (puede reducirse si no hay memoria), respaldo en flash cuando una muestra lleva
@@ -143,37 +143,10 @@ al llenarse. En operación normal las mediciones no escriben flash. Un reinicio
 puede perder los últimos 5 minutos que todavía estaban solo en RAM; no equivale
 a persistencia inmediata de todas las lecturas.
 
-Para la primera captura de un corte existe además un registro pequeño, con
-UTC, máscara de validez y dos temperaturas, protegido por CRC en NVS. Se guarda
-la hora incluso si ambas sondas faltan, y se completa con la primera conversión.
-Solo se activa al configurar y conectar la entrada de alimentación. Si no hay
-hora válida, conserva `utc = 0` y no afirma conocer la hora exacta.
-
-La API compartida todavía no ofrece todas las capacidades del dispositivo:
-
-- **Primera captura:** la cola oficial no permite fijar un registro contra
-  overflow ni recibir un ACK correlacionado para retirarlo. El corte local no
-  se sobrescribe con cortes posteriores y se imprime al arrancar. No se lo
-  reinyecta como una medición nueva: falta una API para reenviar con su timestamp
-  original y liberar el registro al confirmarlo. Esta función requiere acordar
-  con la cátedra la continuación de [#10](https://github.com/Universidad-Nacional-de-Rafaela/aura-firmware/issues/10)
-  para ESP-IDF; no se presenta como resuelta de extremo a extremo.
-- **Reintentos:** se usan los oficiales, con espera creciente de 15 s a 5 min y
-  azar. No hay ajuste remoto de `r_s` ni un modo propio de exactamente tres
-  intentos por lectura. La detección/reconexión de la mesh la maneja la biblioteca.
-- **Alimentación dinámica:** la API recibe `alimentacion` solo al iniciar.
-  Se declara `desconocida` en status y los cambios viajan como alertas `energia`;
-  falta un setter público para actualizar también el status. No se modifica
-  el estado interno de la biblioteca.
-- **Tamaño del reporte:** la biblioteca actual conserva `fw` y la configuración
-  completa y, si supera los **180 bytes**, retira primero diagnósticos accesorios.
-  Esto reemplaza el comportamiento anterior, que descartaba directamente el
-  reporte de los ajustes iniciales. El límite sigue existiendo: si ni quitando
-  accesorios entran todos los campos, el evento no se envía; un resultado de
-  comando grande también puede salir sin `config`. Verificar
-  `status.details.config` en el banco, especialmente con nombres de aula largos,
-  parámetros extremos y diagnósticos de flash/eventos pendientes. El dispositivo
-  no oculta ajustes ni inventa otro tópico para sortear el límite.
+La entrada de alimentación, cuando está habilitada, reporta transiciones
+con la alerta `energia`. La hoja sigue midiendo según los intervalos configurados.
+El reporte de estado prioriza la versión de firmware y todos los ajustes frente
+a los diagnósticos opcionales cuando se acerca al límite de 180 bytes.
 
 ## Compilar y cargar
 
@@ -195,38 +168,43 @@ La API compartida todavía no ofrece todas las capacidades del dispositivo:
 
    ```powershell
    idf.py set-target esp32c3
-   idf.py -p COM5 build flash monitor
+   idf.py build
    ```
 
-   Cambiar `COM5` por el puerto real. Salir del monitor con `Ctrl+]`.
-   Sin datos de mesh válidos o sin NVS, el programa conserva diagnóstico local,
-   pero no promete guardar mediciones en la cola: revisar los errores del monitor.
+   Para validar una compilación completa, usar datos de mesh válidos o
+   parámetros ficticios con formato válido. Los marcadores de la plantilla
+   pueden generar un binario de diagnóstico que excluye la mesh.
+6. Firmar el binario según la sección siguiente antes de grabarlo. Usar el
+   puerto real en `idf.py -p COM5 flash monitor`. Salir con `Ctrl+]`.
 
 La tabla es la de `Mesh3_Hoja`: `otadata`, dos aplicaciones `ota_0`/`ota_1` de
-1,75 MiB y `cola` de 256 KiB, en una flash de 4 MiB. La distribución cambia
-respecto de Arduino y de la primera versión ESP-IDF sin OTA; no se migran colas
-experimentales anteriores, porque ninguna versión previa llegó a instalarse.
-No usar `erase-flash` como paso rutinario: borra ajustes, corte protegido y datos
+1,75 MiB y `cola` de 256 KiB, en una flash de 4 MiB. Reservar `erase-flash`
+para los casos de recuperación que lo requieran, porque borra ajustes y datos
 pendientes.
 
 Si ya se compiló con los ajustes anteriores, regenerar la configuración y los
 resultados locales antes de compilar: `sdkconfig` y `build/` son generados e
 ignorados por Git. No borrar `main/config_local.h`. No alcanza con reemplazar
-`sdkconfig.defaults` y reutilizar un `sdkconfig` viejo con rollback desactivado.
+`sdkconfig.defaults` y reutilizar un `sdkconfig` sin verificación de firma.
 
 ## Actualización del firmware por la malla (OTA)
 
 La primera instalación de esta distribución de memoria se hace **por USB**,
-incluyendo bootloader y tabla de particiones (`idf.py -p COM5 flash`). Después,
-la biblioteca de la cátedra recibe las actualizaciones a través de la mesh;
-no se agrega un comando OTA propio ni se conecta la hoja al WiFi del edificio.
+incluyendo bootloader y tabla de particiones. Grabar desde el principio
+una imagen **firmada con RSA-3072** según [la guía §2.9](../../Mesh_Red_Completa/GUIA_NODOS_HOJA.md#29-imágenes-firmadas).
+Una placa que arranca con una imagen sin firma no acepta actualizaciones OTA.
 
-El proyecto declara `project(aura-heladera-freezer)` y `PROJECT_VER = 1.0.0`
+`idf.py build` produce el binario sin firmar. Para instalación, el grupo entrega
+ese `.bin` y la cátedra lo firma. Para banco, seguir la guía para crear una clave
+de prueba fuera del repo, firmar la primera imagen USB y usar la misma clave
+para las siguientes OTA. La placa verifica la firma al actualizar por la mesh.
+Esta configuración no quema eFuses.
+
+El proyecto declara `project(aura-heladera-freezer)` y `PROJECT_VER = 1.0.1`
 en `CMakeLists.txt`. La imagen es `build/aura-heladera-freezer.bin`. El tipo
 describe el uso, no la ubicación ni una placa particular. Se informa como
-`details.firmware.tipo` y `details.firmware.version` en AURA. Antes de cada
-entrega hay que subir la versión: por ejemplo, `1.0.1` para una corrección.
-La actualización a la misma versión responde `sin_cambios`.
+`details.firmware.tipo` y `details.firmware.version` en AURA. Incrementar la versión para cada
+nueva entrega. La actualización a la misma versión responde `sin_cambios`.
 
 `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y` habilita la vuelta atrás: una versión
 nueva se confirma cuando se comunica con la raíz y acumula 60 s estable. Si no
@@ -250,25 +228,11 @@ python herramientas/validar_dispositivos.py
 python herramientas/validar_conectores.py
 ```
 
-Validación de configuración del 26/10/2026: compilación completa con
-**ESP-IDF 6.1.0**, el `main` actualizado de la cátedra y parámetros de mesh
-ficticios, sin flashear. La imagen `aura-heladera-freezer` versión `1.0.0`,
-para `esp32c3`, ocupa **1.151.328 bytes**, con **37 % libre** en cada partición
-OTA de 1,75 MiB. El lector de imágenes de `Broker_MQTT/ota.py` acepta el tipo,
-la versión y el chip. Se comprobó rollback activado en la configuración generada.
-
-En la revisión D5 del mismo día pasaron los 20 tests del conector, los 39 del
-núcleo del SDK y ambos validadores, y el archivo de ejemplo produjo los
-resultados esperados. La lógica de medición del nodo conserva las pruebas de
-host aprobadas el 20/10: no se modificó al adaptar la configuración OTA.
-La prueba aislada en Linux/WSL y las pruebas físicas de transferencia y rollback
-quedan pendientes; compilar y leer la imagen no las reemplaza.
-
 Las pruebas C requieren un compilador (`cc`, `gcc`, `clang` o `--cc "zig cc"`).
 La primera ejecución descarga cJSON 1.7.19 oficial y comprueba SHA256. Cubren
 parches inválidos, límites, atomicidad, fallos de escritura/commit NVS, CRC,
-centinelas de sonda, alarma y calendario del DS3231. No simulan la radio ni
-demuestran la entrega real de la cola de la cátedra.
+centinelas de sonda, histéresis, energía y calendario del DS3231. La entrega real
+de la cola de la cátedra se verifica en banco.
 
 En banco, con el raíz y el concentrador actualizados y el alta hecha por la cátedra:
 
@@ -278,14 +242,14 @@ En banco, con el raíz y el concentrador actualizados y el alta hecha por la cá
    afectar al LED local aun sin red. Probar un parche inválido: no cambia nada.
    Reiniciar y comprobar que los ajustes válidos se conservaron.
 3. Observar `hw/<hw_id>/data`, `status`, `response`, `ack` y `alerts/...` con las
-   herramientas/credenciales del banco. La configuración completa de status es
-   una verificación pendiente por el límite de tamaño explicado arriba.
+   herramientas y credenciales del banco. Probar la configuración completa
+   de status con umbrales e intervalos extremos, y con aula asignada.
 4. Cortar AURA/broker más de 5 min, dejar acumular pendientes y recuperar.
    Verificar hora original, ingest_id y retiro únicamente tras ACK. Probar
    reinicio con datos ya respaldados y documentar pérdidas en RAM/overflow.
 5. Con el circuito de alimentación confirmado, habilitar su GPIO y simular
-   red→batería→red. Debe apagarse OLED, capturarse el primer corte y conservarse
-   al reiniciar, incluso sin sondas. Su reenvío histórico queda pendiente de API.
+   red→batería→red más de una vez. Verificar la OLED y las alertas `energia`
+   de cada transición.
 6. Probar el cambio de concentrador y la asignación de aula desde AURA. No
    fijar el aula en el binario. Si la alimentación externa impide asociar la
    C3, repetir con USB de computadora: la cátedra informó un problema de antena.
@@ -294,6 +258,6 @@ En banco, con el raíz y el concentrador actualizados y el alta hecha por la cá
    Seguir el protocolo de la cátedra para verificar el rollback; no darlo por
    probado solamente porque la imagen compila.
 
-Quedan por confirmar cableado C3, circuito red/batería, datos privados de mesh,
-alta/asignación en AURA y las extensiones de API indicadas. Autonomía de batería,
-vida útil real de flash y comportamiento físico aún no están medidos.
+Quedan por confirmar cableado C3, circuito red/batería, datos privados de mesh
+y alta/asignación en AURA. Quedan por medir la autonomía de batería, la vida
+útil de la flash y el comportamiento físico.

@@ -8,8 +8,8 @@ el SDK aura_sdk de comun/python/, sin paquetes externos ni acceso a red/archivos
 |---|---|
 | conector.toml | Código, usuarios del grupo, unidad, rango físico, etiqueta y rol de las dos sondas. |
 | conector.py | Validación, guardado y alertas por cruce de umbrales. |
-| tests/test_conector.py | 20 pruebas con ContextoDePrueba, sin AURA ni hardware. |
-| tests/mensajes_ejemplo.jsonl | Seis mensajes ficticios para probar el runner por archivo. |
+| tests/test_conector.py | Pruebas con ContextoDePrueba, sin AURA ni hardware. |
+| tests/mensajes_ejemplo.jsonl | Siete mensajes ficticios para probar el runner por archivo. |
 
 ## Presentación en AURA
 
@@ -47,11 +47,15 @@ Contexto. Los fallos transitorios de AURA, como una base de datos no disponible,
 son distintos de una falla del conector y pueden dejar la muestra sin ACK para
 que el dispositivo reintente.
 
-Alertas independientes: temperatura_heladera / temperatura_freezer, warning al
-salir del rango de conservación e info al recuperarse. Una por cambio, no una
-por cada lectura. Usa hlo/hhi y flo/fhi de config_vigente(), con valores iniciales
-2..6 y -25..-15 °C. Una configuración inválida usa los valores iniciales y se
-registra. El pasado sale de ctx.serie(): recrear la instancia no reinicia la alarma.
+Cada sonda genera su alerta (temperatura_heladera o temperatura_freezer).
+Dos lecturas válidas seguidas por el mismo lado del rango disparan un warning.
+Una lectura dentro del rango, a 0,5 °C o más del umbral que se cruzó, genera
+el aviso de recuperación. Si el rango mide menos de 1 °C, el margen es la mitad
+de su ancho. El texto incluye la hora original `msg.ts` cuando está disponible.
+
+Se usan hlo/hhi y flo/fhi de config_vigente(), con valores iniciales 2..6 y
+-25..-15 °C. Una configuración inválida usa los valores iniciales y se registra.
+La alarma se reconstruye con ctx.serie() al recrear la instancia del conector.
 
 Las lecturas anteriores al último punto guardado se conservan como historial,
 sin alterar la alarma actual. Si llegan sin ts se usa su orden de llegada;
@@ -77,9 +81,9 @@ que usa AURA, sobre Linux (o una distribución Linux de WSL):
 python3 herramientas/correr_conector.py conectores/E1-PB-LECA-HFR01 --archivo conectores/E1-PB-LECA-HFR01/tests/mensajes_ejemplo.jsonl --subproceso
 ```
 
-El archivo contiene seis mensajes ficticios: lecturas normales, un cruce de
-umbral y su recuperación, un duplicado, una muestra inválida y un centinela de
-sonda. Resultado esperado: 4 persistidos, 1 descartado y 1 duplicado, con una
+El archivo contiene siete mensajes ficticios: lecturas normales, dos lecturas
+fuera de rango y una recuperación, un duplicado, una muestra inválida y un
+centinela. Resultado esperado: 5 persistidos, 1 descartado y 1 duplicado, con una
 alerta de temperatura de heladera y otra de recuperación. No se publica ningún
 ACK real ni se modifica AURA; el contexto del runner vive en memoria.
 

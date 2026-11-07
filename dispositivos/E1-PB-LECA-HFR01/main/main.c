@@ -1,6 +1,7 @@
 #include "configuracion.h"
 #include "energia.h"
 #include "hardware.h"
+#include "logica.h"
 #include "bus_i2c.h"
 #include "pantalla.h"
 #include "reloj.h"
@@ -30,16 +31,21 @@ static void tarea_dispositivo(void *arg)
     uint8_t validas = 0;
     int64_t ultima[2] = {0, 0};
     int64_t ultimo_display = 0;
+    hfr_alarma_t alarmas[2] = {0};
+    hfr_config_t anterior = hfr_config_actual();
     int64_t desconexion_en = esp_timer_get_time();
     while (true) {
         int64_t ahora = esp_timer_get_time();
         hfr_config_t cfg = hfr_config_actual();
-        bool forzar = hfr_energia_actualizar(hfr_reloj_utc(), mesh_iniciada);
+        hfr_energia_actualizar(mesh_iniciada);
         uint32_t intervalos[2] = {cfg.intervalo_s, cfg.freezer_s};
         cJSON *medicion = cJSON_CreateObject();
         bool hubo_lectura = false;
         for (unsigned i = 0; i < 2; ++i) {
-            if (!forzar && ultima[i] != 0 && ahora - ultima[i] < (int64_t)intervalos[i] * 1000000) {
+            if (cfg.minimo[i] != anterior.minimo[i] || cfg.maximo[i] != anterior.maximo[i]) {
+                alarmas[i] = (hfr_alarma_t){0};
+            }
+            if (ultima[i] != 0 && ahora - ultima[i] < (int64_t)intervalos[i] * 1000000) {
                 continue;
             }
             hubo_lectura = true;
@@ -51,6 +57,7 @@ static void tarea_dispositivo(void *arg)
             validas &= ~(1U << i);
             if (estado == HFR_SONDA_OK) {
                 validas |= 1U << i;
+                hfr_alarma_actualizar(&alarmas[i], temperatura, cfg.minimo[i], cfg.maximo[i]);
                 if (medicion != NULL) {
                     cJSON_AddNumberToObject(medicion, CAMPOS[i], round((double)temperatura * 100) / 100);
                 }
@@ -61,9 +68,7 @@ static void tarea_dispositivo(void *arg)
                                 estado == HFR_SIN_RESPUESTA ? "sin_respuesta" : "fuera_de_rango");
             }
         }
-        if (forzar) {
-            hfr_energia_completar(temperaturas, validas);
-        }
+        anterior = cfg;
         if (hubo_lectura && medicion != NULL && cJSON_GetArraySize(medicion) > 0) {
             if (!mesh_iniciada || !nodo_mesh_medicion(medicion)) {
                 ESP_LOGE("MEDICION", "Lectura no encolada; revisar inicializacion o memoria");
@@ -75,12 +80,7 @@ static void tarea_dispositivo(void *arg)
         if (conectada) {
             desconexion_en = ahora;
         }
-        bool alarma = false;
-        for (unsigned i = 0; i < 2; ++i) {
-            alarma |= (validas & (1U << i)) != 0 &&
-                      hfr_fuera_umbral(temperaturas[i], cfg.minimo[i], cfg.maximo[i]);
-        }
-        hfr_indicadores(alarma, conectada);
+        hfr_indicadores(alarmas[0].activa != 0 || alarmas[1].activa != 0, conectada);
         if (ahora - ultimo_display >= 1000000) {
             ultimo_display = ahora;
             bool oscura = hfr_energia_bateria() ||
@@ -97,10 +97,16 @@ static void tarea_dispositivo(void *arg)
 void app_main(void)
 {
     esp_err_t err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_LOGW("NVS", "NVS incompatible o sin espacio: se restauran los ajustes iniciales");
+        err = nvs_flash_erase();
+        if (err == ESP_OK) {
+            err = nvs_flash_init();
+        }
+    }
     bool nvs_lista = err == ESP_OK;
     if (!nvs_lista) {
-        /* No borrar toda la NVS automaticamente: contiene configuracion y el corte protegido. */
-        ESP_LOGE("NVS", "No disponible: %s. Solo diagnostico local; no se borra la memoria", esp_err_to_name(err));
+        ESP_LOGE("NVS", "No disponible: %s. Solo diagnostico local", esp_err_to_name(err));
     }
     ESP_ERROR_CHECK(hfr_config_iniciar(nvs_lista));
     hfr_i2c_iniciar();
