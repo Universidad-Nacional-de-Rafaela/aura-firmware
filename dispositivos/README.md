@@ -4,9 +4,36 @@
 (`README.md`: dónde está, qué hardware usa, qué envía, cómo se configura), sus bibliotecas y sus
 tests. El código de la carpeta dice **dónde está y qué es**, de un vistazo.
 
-Si otro dispositivo necesita el mismo firmware, se copia la carpeta con su propio código, y su
-ficha dice de cuál está basado (*Basado en*). Para empezar uno nuevo, copiá
-[`../ejemplos/plantilla_dispositivo/`](../ejemplos/plantilla_dispositivo/).
+Para empezar uno nuevo, copiá
+[`../ejemplos/plantilla_dispositivo/`](../ejemplos/plantilla_dispositivo/) (LoRaWAN) o
+[`../Mesh_Red_Completa/Mesh3_Hoja/`](../Mesh_Red_Completa/Mesh3_Hoja/) (mesh).
+
+## Varios dispositivos con el mismo firmware
+
+Cuando se instalan varias placas iguales (por ejemplo, las nueve puertas del Edificio 2), el
+firmware se escribe **una sola vez**, en un **modelo**: `_modelos/<MODELO>/`. El modelo tiene el
+código, las bibliotecas, los tests y una ficha técnica (hardware, qué envía, `set_config`,
+comandos). `<MODELO>` es el tipo seguido de una variante: `PUE-RFID`.
+
+Cada dispositivo instalado conserva su carpeta con su código, pero **solo con la ficha**
+(`README.md`): ubicación, responsable, estado, lo propio de esa instalación y una línea que
+apunta al modelo:
+
+```
+**Modelo:** [`_modelos/PUE-RFID`](../_modelos/PUE-RFID/)
+```
+
+La carpeta del dispositivo no lleva firmware: un arreglo se hace en el modelo y llega a todas
+las placas. La identidad no va en el código: cada placa se presenta con su `hw_id` y AURA la
+asigna al dispositivo ([ADR-005](../docs/adr/ADR-005-identidad-por-placa-y-mapeo-en-aura.md)).
+Lo que cambia de una instalación a otra (un tiempo, si el sensor es normal abierto o cerrado)
+se configura por `set_config` y se anota en la ficha del dispositivo, no en `#define`.
+
+En un proyecto ESP-IDF dentro de `_modelos/`, la ruta a los componentes tiene un nivel más:
+`${CMAKE_CURRENT_LIST_DIR}/../../../Mesh_Red_Completa/componentes`.
+
+Con dos dispositivos iguales alcanza con copiar la carpeta y anotar *Basado en* en la ficha.
+Desde el tercero, o si se sabe de antemano que van a ser varios, va un modelo.
 
 ## Formato del código
 
@@ -29,17 +56,22 @@ Las abreviaturas siguen el modelo de ubicaciones de AURA (edificio → piso → 
 
 ### Edificios
 
-| Código | Edificio |
-|---|---|
-| `E1` | Edificio 1 |
+| Código | Edificio | Pisos |
+|---|---|---|
+| `E1` | Edificio 1 | `PB`, `P1`, `AZ` |
+| `E2` | Edificio 2 | `PB`, `P1`, `P2`, `AZ` |
 
 ### Pisos
+
+El número en AURA es el orden del piso dentro de su edificio, así que la azotea no tiene el
+mismo número en todos: va arriba del último piso.
 
 | Código | Piso | Número en AURA |
 |---|---|---|
 | `PB` | Planta baja | 0 |
 | `P1` | Primer piso | 1 |
-| `AZ` | Azotea | 2 |
+| `P2` | Segundo piso (solo E2) | 2 |
+| `AZ` | Azotea | E1: 2 · E2: 3 |
 
 ### Recintos
 
@@ -47,6 +79,18 @@ Las abreviaturas siguen el modelo de ubicaciones de AURA (edificio → piso → 
 |---|---|---|
 | `LECA` | LabECA | E1, planta baja |
 | `TERR` | Terraza (al aire libre) | E1, azotea |
+| `RECT` | Rectorado | E2, segundo piso |
+| `VICE` | Vicerrectorado | E2, segundo piso |
+| `DEC1` | Decanato 1 | E2, segundo piso |
+| `DEC2` | Decanato 2 | E2, segundo piso |
+| `CSUP` | Consejo Superior | E2, segundo piso |
+| `ACA1` | Secretaría Académica, oficina 1 | E2, segundo piso |
+| `ACA2` | Secretaría Académica, oficina 2 | E2, segundo piso |
+| `ACA3` | Secretaría Académica, oficina 3 | E2, segundo piso |
+| `SINV` | Secretaría de Investigación y Transferencia Tecnológica | E2, segundo piso |
+
+Los recintos se nombran por oficina, no por persona: si alguien cambia de oficina, el código
+no cambia.
 
 ### Tipos
 
@@ -68,6 +112,7 @@ que monitorea, o lo que acciona. Una placa que mide varias magnitudes del ambien
 | `TAB` | Tablero eléctrico (consumo) | equipo |
 | `TAN` | Tanque de agua (nivel) | equipo |
 | `CRT` | Cortina | actuador |
+| `PUE` | Puerta (cerradura y sensor de apertura) | actuador |
 | `GWM` | Raíz de la mesh (gateway hacia AURA) | infraestructura |
 | `SAL` | Relevo de la mesh (antes, nodo de sala) | infraestructura |
 

@@ -51,7 +51,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Tests de comun/, de infraestructura/, de herramientas/ y de cada dispositivo que los tenga
         run: |
-          for mk in comun/tests/Makefile infraestructura/*/tests/Makefile herramientas/tests/Makefile dispositivos/*/tests/Makefile; do
+          for mk in comun/tests/Makefile infraestructura/*/tests/Makefile herramientas/tests/Makefile dispositivos/*/tests/Makefile dispositivos/_modelos/*/tests/Makefile; do
             [ -f "$mk" ] || continue
             echo "== $(dirname "$mk") =="
             make -C "$(dirname "$mk")"
@@ -94,7 +94,7 @@ jobs:
           arduino-cli config init --overwrite --additional-urls "$ESP32_INDEX"
           arduino-cli core update-index
           arduino-cli core install "$ESP32_CORE"
-          libs=$(cat infraestructura/*/bibliotecas.txt dispositivos/*/bibliotecas.txt ejemplos/*/bibliotecas.txt 2>/dev/null \
+          libs=$(cat infraestructura/*/bibliotecas.txt dispositivos/*/bibliotecas.txt dispositivos/_modelos/*/bibliotecas.txt ejemplos/*/bibliotecas.txt 2>/dev/null \
                  | sed 's/#.*//' | tr -d '\r' | awk 'NF' | sort -u)
           if [ -n "$libs" ]; then
             echo "$libs" | xargs -d '\n' arduino-cli lib install
@@ -102,7 +102,7 @@ jobs:
       - name: Compilar
         run: |
           fallos=0
-          for sketch in infraestructura/*/ dispositivos/*/ ejemplos/*/ herramientas/*/; do
+          for sketch in infraestructura/*/ dispositivos/*/ dispositivos/_modelos/*/ ejemplos/*/ herramientas/*/; do
             nombre=$(basename "$sketch")
             [ -f "$sketch/$nombre.ino" ] || continue
             fqbn="$FQBN"
