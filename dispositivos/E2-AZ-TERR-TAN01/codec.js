@@ -18,10 +18,13 @@
 //   un transmisor 4-20 mA en su tope). Quiere decir "25 cm o menos".
 //   0xFFFF sin eco, 0xFFFD demasiado lejos o cualquier otro valor fuera de 25..600 cm: falla,
 //   el tanque no aparece en values (§3.1). El firmware ya no los manda; el codec igual los filtra.
+//   Mascara 0 (4 bytes): mensaje de estado, ningun sensor midio; los 3 bytes siguientes son la
+//   falla de cada tanque (1 sin eco, 2 demasiado lejos). No hay values: el codec devuelve
+//   errors con la falla de cada tanque. El nodo lo manda para no quedar mudo.
 // fPort 2, 16 bytes, reporte de un comando: [0] ref  [1] resultado (0 aplicado, 1 fuera de
 //   rango, 2 comando desconocido, 3 calibracion invalida)  [2..3] intervalo_s
 //   [4..9] altura de los tanques 1..3 en mm  [10..15] lleno de los tanques 1..3 en mm
-//   (0xFFFF = sin definir). Es la config vigente del nodo: va en "config".
+//   (0xFFFF = sin definir: va como null). Es la config vigente del nodo: va en "config".
 //
 // BAJADA (fPort 10). El lorawan-bridge pasa {command, params, ref}:
 //   medir_ahora -> 01 ref
@@ -35,6 +38,7 @@
 //   lleno = distancia del sensor al agua con el tanque lleno (100 %). La altura tiene que ser
 //   al menos 10 cm mayor que el lleno. Por defecto, el nodo usa el tanque Mayper de 5000 L
 //   (altura 238 cm, lleno 35 cm). cero_tanqueN_cm se acepta como otro nombre de la altura.
+//   null o 0 deja el tanque sin altura (o sin lleno): el nodo manda la distancia sin nivel.
 //   intervalo_s es cada cuanto se miden los tres tanques y se manda la medicion.
 
 var N_TANQUES = 3;
@@ -47,6 +51,7 @@ var INTERVALO_MIN_S = 60;
 var INTERVALO_MAX_S = 43200;      // 12 h; el uplink interval del device profile tiene que ser este maximo
 var MOTIVOS = { 1: "fuera_de_rango", 2: "comando_desconocido", 3: "calibracion_invalida" };
 var FALLAS = { 0xFFFF: "sin eco", 0xFFFD: "demasiado lejos" };
+var FALLAS_ESTADO = { 1: "sin eco", 2: "demasiado lejos" };
 
 function u16(bytes, i) {
   return (bytes[i] << 8) | bytes[i + 1];
@@ -65,9 +70,19 @@ function decodeUplink(input) {
   if (b.length < 1) return { errors: ["medicion vacia"] };
 
   var mascara = b[0];
+  if (mascara === 0) {
+    if (b.length !== 1 + N_TANQUES) {
+      return { errors: ["estado: " + b.length + " bytes, se esperaban " + (1 + N_TANQUES)] };
+    }
+    var fallas = [];
+    for (var k = 0; k < N_TANQUES; k++) {
+      fallas.push("tanque " + (k + 1) + " " + (FALLAS_ESTADO[b[1 + k]] || "falla " + b[1 + k]));
+    }
+    return { errors: ["ningun sensor midio: " + fallas.join(", ")] };
+  }
   var cantidad = 0;
   for (var t = 0; t < N_TANQUES; t++) if (mascara & (1 << t)) cantidad++;
-  if (cantidad === 0 || (mascara >> N_TANQUES) !== 0) {
+  if ((mascara >> N_TANQUES) !== 0) {
     return { errors: ["medicion: mascara de tanques invalida 0x" + mascara.toString(16)] };
   }
   if (b.length !== 1 + 4 * cantidad) {
@@ -108,8 +123,8 @@ function decodificarReporte(b) {
   for (var t = 0; t < N_TANQUES; t++) {
     var cero = u16(b, 4 + 2 * t);
     var lleno = u16(b, 4 + 2 * N_TANQUES + 2 * t);
-    if (cero !== SIN_CALIBRAR) config["altura_tanque" + (t + 1) + "_cm"] = decimas(cero);
-    if (lleno !== SIN_CALIBRAR) config["lleno_tanque" + (t + 1) + "_cm"] = decimas(lleno);
+    config["altura_tanque" + (t + 1) + "_cm"] = cero === SIN_CALIBRAR ? null : decimas(cero);
+    config["lleno_tanque" + (t + 1) + "_cm"] = lleno === SIN_CALIBRAR ? null : decimas(lleno);
   }
   var rep = { ref: b[0], aplicado: b[1] === 0, config: config };
   if (b[1] !== 0) rep.motivo = MOTIVOS[b[1]] || "rechazado_por_el_nodo";
@@ -154,8 +169,8 @@ function encodeDownlink(input) {
       }
       bytes.push(0x01, (v >> 8) & 0xff, v & 0xff);
     } else if (m) {
-      var mm = cmAMm(v);
-      if (mm < 0) return { errors: ["set_config: " + k + " tiene que ser un numero de 25 a 600 cm, con a lo sumo un decimal"] };
+      var mm = (v === null || v === 0) ? 0 : cmAMm(v);   // null o 0: sin altura / sin lleno
+      if (mm < 0) return { errors: ["set_config: " + k + " tiene que ser un numero de 25 a 600 cm, con a lo sumo un decimal (o null para dejarlo sin definir)"] };
       var tanque = Number(m[2]);
       var esAltura = m[1] !== "lleno";   // cero_ es el nombre viejo de la altura
       if (esAltura) {
@@ -176,7 +191,7 @@ function encodeDownlink(input) {
   // Si vienen los dos de un tanque, se controla aca; si viene uno solo, lo controla el nodo
   // contra el que tiene guardado.
   for (var t = 1; t <= N_TANQUES; t++) {
-    if (cero[t] !== undefined && lleno[t] !== undefined && cero[t] < lleno[t] + SPAN_MIN_MM) {
+    if (cero[t] && lleno[t] && cero[t] < lleno[t] + SPAN_MIN_MM) {
       return { errors: ["set_config: en el tanque " + t + " la altura tiene que ser al menos 10 cm mayor que el lleno"] };
     }
   }

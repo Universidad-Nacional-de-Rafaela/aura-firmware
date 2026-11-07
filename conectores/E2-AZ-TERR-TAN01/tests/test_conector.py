@@ -95,6 +95,20 @@ class ConectorTanques(unittest.TestCase):
         self.enviar(tanque(1, 100, 25))   # mínimo + histéresis
         self.assertEqual([a.severidad for a in self.alertas("tanque_bajo")], ["warning", "info"])
 
+    def test_horas_en_la_banda_de_histeresis_no_duplican_el_aviso(self):
+        # El caso de la revisión: 50, 15, más de 2 h en 22 (entre el mínimo y mínimo + histéresis)
+        # y después 19. Antes daba [warning, warning]; tiene que ser un solo warning.
+        # Llegan los tres tanques, como en el nodo (así la ventana corta de 2 h alcanza).
+        otros = {**tanque(2, 100, 80), **tanque(3, 100, 80)}
+        self.enviar({**tanque(1, 100, 50), **otros})
+        self.enviar({**tanque(1, 100, 15), **otros})
+        for _ in range(125):
+            self.enviar({**tanque(1, 100, 22), **otros})
+        self.enviar({**tanque(1, 100, 19), **otros})
+        self.assertEqual([a.severidad for a in self.alertas("tanque_bajo")], ["warning"])
+        self.enviar({**tanque(1, 100, 30), **otros})
+        self.assertEqual([a.severidad for a in self.alertas("tanque_bajo")], ["warning", "info"])
+
     def test_cada_tanque_alerta_por_separado(self):
         self.enviar({**tanque(1, 100, 10), **tanque(2, 100, 80), **tanque(3, 100, 50)})
         self.assertEqual([a.mensaje[:9] for a in self.alertas("tanque_bajo")], ["Tanque 1:"])
@@ -146,9 +160,13 @@ class ConectorTanques(unittest.TestCase):
         self.ciclos(1, paso=paso)
         self.assertEqual([a.severidad for a in self.alertas("sensor")], ["warning", "info"])
 
-    def test_si_fallan_los_tres_no_hay_alerta_de_sensor(self):
+    def test_si_fallan_los_tres_lo_avisa_el_codec_no_el_conector(self):
+        # Si fallan los tres, el nodo manda un mensaje de estado (máscara 0) y el codec lo
+        # traduce a errors: el bridge no publica data y al conector no llega nada. Un mensaje
+        # vacío (que AURA descarta antes) tampoco tiene que disparar alertas acá.
         self.ciclos(2)
-        self.enviar({})   # AURA lo descarta antes de llegar al conector de verdad
+        r = self.enviar({})
+        self.assertEqual(r.resultado, "descartado")
         self.assertEqual(self.alertas("sensor"), [])
 
 

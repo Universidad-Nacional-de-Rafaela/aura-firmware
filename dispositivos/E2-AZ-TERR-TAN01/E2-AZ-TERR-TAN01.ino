@@ -8,11 +8,13 @@
  * de los bytes de uno, cambia el otro.
  *
  * --- CICLO: MIDE LOS 3 Y MANDA ---
- * Cada intervalo_s (60 s por defecto) se miden los 3 tanques, uno detras del otro (menos de 2 s),
+ * Cada intervalo_s (300 s por defecto) se miden los 3 tanques, uno detras del otro (menos de 2 s),
  * y enseguida sale un uplink con los tres. Si set_config cambia intervalo_s, el ciclo arranca de
  * nuevo con el intervalo nuevo. Los ciclos se cuentan desde el primero, sin deriva.
  * Un sensor que no da una medicion valida (sin eco, demasiado lejos) no va en el mensaje: el
  * conector nota que ese tanque dejo de llegar. El agua dentro de la zona ciega (tanque lleno) si va.
+ * Si no mide NINGUNO, igual sale un mensaje de estado (mascara 0 y la falla de cada sensor): asi
+ * el nodo no queda mudo, sigue recibiendo comandos y el codec avisa la falla.
  *
  * --- TANQUES: ALTURA Y LLENO (cambiables desde AURA con set_config) ---
  * Por tanque, en mm (cm x 10): altura = distancia del sensor (en la tapa) al fondo, o sea lo que
@@ -20,7 +22,8 @@
  * (100 %). Con las dos, el nodo calcula el nivel en % y lo manda junto con la distancia.
  * Por defecto, las del tanque Mayper de 5000 L (folleto del fabricante): 2380 mm de alto hasta
  * la tapa y 1770 mm de diametro, asi que 5000 L llegan a unos 2030 mm del fondo: altura 2380 mm,
- * lleno 350 mm. Si se cambian los tanques, se cambian por comando, sin reflashear.
+ * lleno 350 mm. Si se cambian los tanques, se cambian por comando, sin reflashear. Un valor 0
+ * deja ese tanque sin altura (o sin lleno): manda solo la distancia, sin nivel.
  *
  * --- RED: SE RECUPERA SOLA ---
  * El join no bloquea: si falla, reintenta con espera creciente (30 s ... 5 min, con algo de azar)
@@ -38,6 +41,8 @@
  *   tanque de la mascara, en orden: distancia en mm (uint16) + nivel en decimas de % (uint16,
  *   0..1000; 0xFFFF = sin calibrar). Big endian. Con los 3 tanques: 13 bytes.
  *   Distancia 0xFFFE = agua en la zona ciega (tanque lleno): el codec la informa como 25 cm.
+ *   Mascara 0 = ningun sensor midio: le siguen 3 bytes con la falla de cada tanque (1 sin eco,
+ *   2 demasiado lejos). 4 bytes.
  * fPort 2, reporte de un comando (contrato 3.4), 16 bytes:
  *   [0] ref   [1] resultado: 0 aplicado, 1 fuera de rango, 2 comando desconocido,
  *   3 calibracion invalida   [2..3] intervalo_s   [4..9] altura de los tanques 1..3 en mm
@@ -46,8 +51,10 @@
  * --- BAJADA (fPort 10; el lorawan-bridge pone el ref) ---
  *   01 ref                  medir_ahora: mide los 3 tanques ya (sin mover el ciclo) y los manda.
  *   02 ref (id hi lo)...    set_config: una entrada por parametro. id 0x01 intervalo_s (s,
- *                           60..43200); 0x11..0x13 altura del tanque 1..3 (mm, 250..6000);
- *                           0x21..0x23 lleno del tanque 1..3 (mm, 250..6000). Se valida todo
+ *                           60..43200); 0x11..0x13 altura del tanque 1..3 (mm, 250..6000,
+ *                           o 0 = sin altura);
+ *                           0x21..0x23 lleno del tanque 1..3 (mm, 250..6000, o 0 = sin
+ *                           lleno). Se valida todo
  *                           y, si algo no valida, no se aplica nada (contrato 3.3). La altura
  *                           tiene que ser al menos 100 mm mayor que el lleno.
  *   02 ref hi lo            set_config solo de intervalo_s (s), en 4 bytes. Es lo que manda el
@@ -104,10 +111,7 @@ const uint8_t PIN_TRIG[N_TANQUES] = {D0, D2, D4};
 const uint8_t PIN_ECHO[N_TANQUES] = {D1, D3, D5};
 
 const uint8_t       N_MUESTRAS       = 5;
-const uint8_t       MIN_VALIDAS      = 3;
-// Con el agua en la zona ciega el AJ-SR04M devuelve ecos cortos mezclados con lecturas sin eco:
-// alcanzan 2 de 5 "demasiado cerca" para decir que el tanque esta lleno y no que el sensor falla.
-const uint8_t       MIN_CERCA        = 2;
+const uint8_t       MIN_VALIDAS      = 3;   // de 5; vale tambien para demasiado cerca y lejos
 const uint16_t      DIST_MIN_MM      = 250;
 const uint16_t      DIST_MAX_MM      = 6000;
 const unsigned long TIMEOUT_ECO_US   = 38000UL;
@@ -161,18 +165,24 @@ const uint8_t RES_COMANDO_DESCONOCIDO  = 2;
 const uint8_t RES_CALIBRACION_INVALIDA = 3;
 
 const size_t TAM_MEDICION_MAX = 1 + 4 * N_TANQUES;  // 13 bytes
+const uint8_t FALLA_SIN_ECO   = 1;   // en el mensaje de estado (mascara 0)
+const uint8_t FALLA_LEJOS     = 2;
 const size_t TAM_REPORTE      = 4 + 4 * N_TANQUES;  // 16 bytes
 
 // ===== INTERVALO DE MEDICION (set_config) =====
-// Con 60 s queda lugar entre ciclos para un uplink con sus reintentos y para el join.
-const uint16_t INTERVALO_MIN_S = 60;
+// Con 60 s queda lugar entre ciclos para un uplink con sus reintentos y para el join. Por defecto
+// 300 s: para tanques alcanza, y cada uplink confirmado es un ACK de bajada en el gateway
+// compartido (288 por dia en vez de 1440 con 60 s).
+const uint16_t INTERVALO_MIN_S     = 60;
+const uint16_t INTERVALO_DEFECTO_S = 300;
 const uint16_t INTERVALO_MAX_S = 43200;               // 12 h, igual que el codec
-uint16_t       intervaloS      = INTERVALO_MIN_S;     // cada cuanto se miden los 3 tanques
+uint16_t       intervaloS      = INTERVALO_DEFECTO_S; // cada cuanto se miden los 3 tanques
 
 // ===== ENVIOS PENDIENTES =====
 // Tanques medidos que todavia no se entregaron. El payload se arma al enviar, con la ultima
 // medicion de cada uno: si un reintento se demora hasta el ciclo siguiente, sale la nueva.
 uint8_t       medicionMascara        = 0;
+bool          avisoSinSensores       = false;   // el ultimo ciclo no midio ningun tanque
 uint16_t      medicionIntentos       = 0;
 unsigned long medicionProximoIntento = 0;
 
@@ -217,6 +227,7 @@ bool esValida(uint16_t d);
 uint16_t nivelDecimas(uint8_t t, uint16_t d);
 void medirCiclo();
 void medirTodos();
+void medirLosTres();
 void reiniciarCiclo();
 void atenderRed();
 void intentarMedicion();
@@ -357,9 +368,23 @@ void medirCiclo() {
     Serial.print(F("[MED] ciclos salteados: "));
     Serial.println(perdidos);
   }
+  medirLosTres();
+  medicionPedida = false;   // un medir_ahora pendiente queda cubierto por esta medicion
+}
+
+// Mide los 3 tanques. Si ninguno da una medicion valida, deja pendiente el mensaje de estado.
+void medirLosTres() {
+  bool alguno = false;
   for (uint8_t t = 0; t < N_TANQUES; t++) {
     unsigned long inicio = millis();
-    guardarMedicion(t, leerDistanciaMm(t), inicio);
+    uint16_t d = leerDistanciaMm(t);
+    guardarMedicion(t, d, inicio);
+    if (esValida(d)) alguno = true;
+  }
+  avisoSinSensores = !alguno;
+  if (!alguno) {
+    Serial.println(F("[MED] ningun sensor midio: sale un mensaje de estado"));
+    if (medicionIntentos == 0) medicionProximoIntento = millis();
   }
 }
 
@@ -367,10 +392,7 @@ void medirCiclo() {
 // No toca el ciclo: el siguiente sale cuando le toca.
 void medirTodos() {
   Serial.println(F("[MED] medir_ahora: midiendo los 3 tanques"));
-  for (uint8_t t = 0; t < N_TANQUES; t++) {
-    unsigned long inicio = millis();
-    guardarMedicion(t, leerDistanciaMm(t), inicio);
-  }
+  medirLosTres();
   medicionPedida = false;
 }
 
@@ -404,7 +426,9 @@ uint16_t leerDistanciaMm(uint8_t i) {
     }
     return validas[nValidas / 2];   // mediana
   }
-  if (nCerca >= MIN_CERCA && nCerca >= nLejos) return DEMASIADO_CERCA;   // tanque lleno
+  // Tanque lleno solo con mayoria de ecos cortos: 2 cortos y 3 sin eco es mas probable una
+  // falla del sensor que agua en la zona ciega, y se informa como falla, no como 100 %.
+  if (nCerca >= MIN_VALIDAS) return DEMASIADO_CERCA;
   if (nLejos >= MIN_VALIDAS) return DEMASIADO_LEJOS;
   return SIN_ECO;
 }
@@ -450,7 +474,7 @@ void atenderRed() {
   // Primero los reportes: confirman el comando y son lo que espera quien lo mando.
   if (nReportes > 0 && msHasta(reporteProximoIntento) <= 0) {
     intentarReporte();
-  } else if (medicionMascara != 0 && msHasta(medicionProximoIntento) <= 0) {
+  } else if ((medicionMascara != 0 || avisoSinSensores) && msHasta(medicionProximoIntento) <= 0) {
     intentarMedicion();
   }
 }
@@ -460,6 +484,12 @@ void intentarMedicion() {
   uint8_t mascara = medicionMascara;
   size_t  n = 0;
   payload[n++] = mascara;
+  if (mascara == 0) {
+    // Mensaje de estado: ningun sensor midio. La falla de cada uno, para que el codec la diga.
+    for (uint8_t t = 0; t < N_TANQUES; t++) {
+      payload[n++] = (ultima[t].dist == DEMASIADO_LEJOS) ? FALLA_LEJOS : FALLA_SIN_ECO;
+    }
+  }
   for (uint8_t t = 0; t < N_TANQUES; t++) {
     if (!(mascara & (1 << t))) continue;
     ponerU16(&payload[n], ultima[t].dist);
@@ -476,6 +506,7 @@ void intentarMedicion() {
 
   if (enviarUplink(PUERTO_MEDICION, payload, n)) {
     medicionMascara &= ~mascara;   // lo que se midio mientras tanto sigue pendiente
+    if (mascara == 0) avisoSinSensores = false;
     medicionIntentos       = 0;
     medicionProximoIntento = millis();
     return;
@@ -634,12 +665,13 @@ void aplicarSetConfig(uint8_t ref, const uint8_t* entradas, size_t tam) {
         Serial.println(F(">>> set_config RECHAZADO: tanque inexistente <<<"));
         return;
       }
-      if (v < DIST_MIN_MM || v > DIST_MAX_MM) {
+      if (v != 0 && (v < DIST_MIN_MM || v > DIST_MAX_MM)) {
         encolarReporte(ref, RES_FUERA_DE_RANGO);
         Serial.println(F(">>> set_config RECHAZADO: altura o lleno fuera de 25..600 cm <<<"));
         return;
       }
-      if ((id & 0xF0) == PAR_ALTURA) nuevaAltura[t] = v; else nuevoLleno[t] = v;
+      uint16_t valor = (v == 0) ? SIN_CALIBRAR : v;   // 0: el tanque queda sin altura / sin lleno
+      if ((id & 0xF0) == PAR_ALTURA) nuevaAltura[t] = valor; else nuevoLleno[t] = valor;
     } else {
       encolarReporte(ref, RES_COMANDO_DESCONOCIDO);
       Serial.print(F(">>> set_config RECHAZADO: parametro desconocido 0x"));
@@ -665,14 +697,16 @@ void aplicarSetConfig(uint8_t ref, const uint8_t* entradas, size_t tam) {
   bool cambiaIntervalo = (nuevoIntervalo != intervaloS);
   intervaloS = nuevoIntervalo;
   if (almacen.getUInt(NVS_INTERVALO, 0) != intervaloS) almacen.putUInt(NVS_INTERVALO, intervaloS);
+  // En flash, sin altura o sin lleno se guarda como 0, para distinguirlo de nunca configurado
+  // (no hay clave: vale el de fabrica).
   for (uint8_t t = 0; t < N_TANQUES; t++) {
-    alturaMm[t]  = nuevaAltura[t];
-    llenoMm[t] = nuevoLleno[t];
-    if (alturaMm[t] != SIN_CALIBRAR && almacen.getUShort(NVS_CERO[t], SIN_CALIBRAR) != alturaMm[t]) {
-      almacen.putUShort(NVS_CERO[t], alturaMm[t]);
+    if (nuevaAltura[t] != alturaMm[t]) {
+      alturaMm[t] = nuevaAltura[t];
+      almacen.putUShort(NVS_CERO[t], alturaMm[t] == SIN_CALIBRAR ? 0 : alturaMm[t]);
     }
-    if (llenoMm[t] != SIN_CALIBRAR && almacen.getUShort(NVS_LLENO[t], SIN_CALIBRAR) != llenoMm[t]) {
-      almacen.putUShort(NVS_LLENO[t], llenoMm[t]);
+    if (nuevoLleno[t] != llenoMm[t]) {
+      llenoMm[t] = nuevoLleno[t];
+      almacen.putUShort(NVS_LLENO[t], llenoMm[t] == SIN_CALIBRAR ? 0 : llenoMm[t]);
     }
   }
   encolarReporte(ref, RES_APLICADO);
@@ -812,15 +846,19 @@ void restaurarNonces() {
 // corrupto) se ignora y queda el valor por defecto.
 void cargarConfig() {
   if (almacen.isKey(NVS_INTERVALO)) {
-    uint32_t s = almacen.getUInt(NVS_INTERVALO, INTERVALO_MIN_S);
+    uint32_t s = almacen.getUInt(NVS_INTERVALO, INTERVALO_DEFECTO_S);
     if (s >= INTERVALO_MIN_S && s <= INTERVALO_MAX_S) intervaloS = (uint16_t)s;
   }
   for (uint8_t t = 0; t < N_TANQUES; t++) {
-    uint16_t a = almacen.getUShort(NVS_CERO[t], SIN_CALIBRAR);
-    uint16_t l = almacen.getUShort(NVS_LLENO[t], SIN_CALIBRAR);
-    if (a >= DIST_MIN_MM && a <= DIST_MAX_MM) alturaMm[t] = a;
-    if (l >= DIST_MIN_MM && l <= DIST_MAX_MM) llenoMm[t] = l;
-    if ((long)alturaMm[t] < (long)llenoMm[t] + SPAN_MIN_MM) {
+    // Sin clave: el de fabrica. 0: se dejo sin altura / sin lleno por set_config.
+    uint16_t a = almacen.getUShort(NVS_CERO[t], ALTURA_DEFECTO_MM);
+    uint16_t l = almacen.getUShort(NVS_LLENO[t], LLENO_DEFECTO_MM);
+    if (a == 0) alturaMm[t] = SIN_CALIBRAR;
+    else if (a >= DIST_MIN_MM && a <= DIST_MAX_MM) alturaMm[t] = a;
+    if (l == 0) llenoMm[t] = SIN_CALIBRAR;
+    else if (l >= DIST_MIN_MM && l <= DIST_MAX_MM) llenoMm[t] = l;
+    if (alturaMm[t] != SIN_CALIBRAR && llenoMm[t] != SIN_CALIBRAR &&
+        (long)alturaMm[t] < (long)llenoMm[t] + SPAN_MIN_MM) {
       // Par inconsistente (no deberia pasar: set_config lo valida): vuelve a los de fabrica.
       alturaMm[t] = ALTURA_DEFECTO_MM;
       llenoMm[t]  = LLENO_DEFECTO_MM;

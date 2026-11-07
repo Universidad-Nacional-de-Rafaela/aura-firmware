@@ -65,8 +65,15 @@ caso("si ningun tanque es valido no hay data", () => {
   assert.ok(r.errors[0].includes("sin lecturas validas"));
 });
 
+caso("estado (mascara 0): ningun sensor midio -> errors con la falla de cada uno", () => {
+  const r = decodeUplink({ fPort: 1, bytes: [0x00, 1, 2, 1] });
+  assert.strictEqual(r.data, undefined);
+  assert.deepStrictEqual(r.errors,
+    ["ningun sensor midio: tanque 1 sin eco, tanque 2 demasiado lejos, tanque 3 sin eco"]);
+  assert.ok(decodeUplink({ fPort: 1, bytes: [0x00] }).errors[0].includes("se esperaban 4"));
+});
+
 caso("mascara invalida o largo que no coincide es error", () => {
-  assert.ok(decodeUplink({ fPort: 1, bytes: [0x00] }).errors);
   assert.ok(decodeUplink({ fPort: 1, bytes: [0x08, ...be(1000, SC)] }).errors);
   assert.ok(decodeUplink({ fPort: 1, bytes: [0x03, ...be(1000, SC)] }).errors[0].includes("se esperaban 9"));
   assert.ok(decodeUplink({ fPort: 1, bytes: [] }).errors);
@@ -84,13 +91,16 @@ caso("fPort desconocido es error", () => {
 // ---------- subida: reporte (fPort 2) ----------
 caso("reporte aplicado sin calibrar", () => {
   const r = decodeUplink({ fPort: 2, bytes: reporte(7, 0, 300, [SC, SC, SC], [SC, SC, SC]) });
-  assert.deepStrictEqual(r.data, { ref: 7, aplicado: true, config: { intervalo_s: 300 } });
+  assert.deepStrictEqual(r.data, { ref: 7, aplicado: true, config: { intervalo_s: 300,
+    altura_tanque1_cm: null, lleno_tanque1_cm: null, altura_tanque2_cm: null, lleno_tanque2_cm: null,
+    altura_tanque3_cm: null, lleno_tanque3_cm: null } });
 });
 
 caso("reporte con calibracion de un tanque", () => {
   const r = decodeUplink({ fPort: 2, bytes: reporte(9, 0, 60, [1600, SC, SC], [300, SC, SC]) });
   assert.deepStrictEqual(r.data, {
-    ref: 9, aplicado: true, config: { intervalo_s: 60, altura_tanque1_cm: 160, lleno_tanque1_cm: 30 },
+    ref: 9, aplicado: true, config: { intervalo_s: 60, altura_tanque1_cm: 160, lleno_tanque1_cm: 30,
+      altura_tanque2_cm: null, lleno_tanque2_cm: null, altura_tanque3_cm: null, lleno_tanque3_cm: null },
   });
 });
 
@@ -143,6 +153,15 @@ caso("set_config altura y lleno de un tanque, en cm con un decimal", () => {
 caso("set_config solo la altura (cambio de tanque)", () => {
   const r = encodeDownlink({ data: { command: "set_config", ref: 4, params: { altura_tanque3_cm: 238 } } });
   assert.deepStrictEqual(r, { bytes: [0x02, 4, 0x13, ...be(2380)] });
+});
+
+caso("null o 0 deja el tanque sin altura / sin lleno (bytes 0)", () => {
+  const r = encodeDownlink({ data: { command: "set_config", ref: 6,
+    params: { altura_tanque1_cm: null, lleno_tanque1_cm: 0 } } });
+  assert.deepStrictEqual(r, { bytes: [0x02, 6, 0x11, 0, 0, 0x21, 0, 0] });
+  // sin lleno no se controla la diferencia con la altura
+  assert.deepStrictEqual(encodeDownlink({ data: { command: "set_config", ref: 6,
+    params: { altura_tanque2_cm: 100, lleno_tanque2_cm: null } } }).bytes, [0x02, 6, 0x12, ...be(1000), 0x22, 0, 0]);
 });
 
 caso("cero_tanqueN_cm es otro nombre de la altura (mismos bytes)", () => {

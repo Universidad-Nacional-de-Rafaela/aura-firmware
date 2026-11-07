@@ -9,7 +9,8 @@ Alertas:
   nivel: un mensaje sin nivel no cuenta. El nodo solo mide; la bomba la maneja
   un control externo, y este aviso sirve para saber que no llenó a tiempo.
 - `sensor`: un tanque dejó de llegar mientras los otros siguen llegando. El nodo no manda un
-  tanque cuyo sensor no midió, así que la falla se nota porque falta en los mensajes.
+  tanque cuyo sensor no midió, así que la falla se nota porque falta en los mensajes. Si fallan
+  los tres, el nodo manda un mensaje de estado que el codec traduce a `errors` (no llega acá).
 
 `25` cm de distancia llega cuando el agua está en la zona ciega del sensor (tanque lleno): no es
 una falla. Lo que está fuera de los rangos de conector.toml lo quita AURA al guardar.
@@ -38,6 +39,8 @@ class ConectorTanques(Conector):
     MENSAJES_SIN_DATOS = 3
     # Hasta dónde mira hacia atrás: primero poco (lo normal) y, si no alcanza, más.
     VENTANAS = (timedelta(hours=2), timedelta(days=3))
+    # Para decidir si un tanque estaba bajo, si toda la historia cae en la banda de histéresis.
+    VENTANAS_NIVEL = (timedelta(days=3), timedelta(days=30))
 
     def al_recibir_datos(self, msg, ctx):
         ts = msg.ts or datetime.now(timezone.utc)
@@ -49,7 +52,7 @@ class ConectorTanques(Conector):
             return   # no quedó nada válido: AURA descarta el mensaje (sin_campos_validos)
 
         self._avisar_sensores(guardado, historia, ctx)
-        self._avisar_nivel(guardado, historia, ctx)
+        self._avisar_nivel(guardado, historia, ctx, ts)
 
     # ---------------------------------------------------------------- historia
 
@@ -103,27 +106,38 @@ class ConectorTanques(Conector):
 
     # ---------------------------------------------------------------- nivel
 
-    def _estaba_bajo(self, puntos):
-        """Si el tanque estaba bajo, según los niveles anteriores y sin guardar estado.
-
-        Busca hacia atrás el último nivel fuera de la banda de histéresis: por debajo del
-        mínimo estaba bajo; en el mínimo + histéresis o más, no. Si todos caen en la banda (o no
-        hay), se toma como que no estaba bajo.
-        """
+    def _decidir(self, puntos):
+        """El último nivel fuera de la banda de histéresis dice si estaba bajo: por debajo del
+        mínimo, sí; en el mínimo + histéresis o más, no. None si todos caen en la banda."""
         for _, valor in reversed(puntos):
             if valor < self.NIVEL_MINIMO_PCT:
                 return True
             if valor >= self.NIVEL_MINIMO_PCT + self.HISTERESIS_PCT:
                 return False
-        return False
+        return None
 
-    def _avisar_nivel(self, guardado, h, ctx):
+    def _estaba_bajo(self, ctx, campo, puntos, ts):
+        """Si el tanque estaba bajo, según los niveles anteriores y sin guardar estado.
+
+        Si todo lo de la ventana corta cae en la banda de histéresis (el nivel quedó horas entre
+        el mínimo y el mínimo + histéresis), busca más atrás. Si nunca salió de la banda, o no
+        hay historia, no estaba bajo.
+        """
+        decision = self._decidir(puntos)
+        for ventana in self.VENTANAS_NIVEL:
+            if decision is not None:
+                break
+            anteriores = [(t, v) for t, v in ctx.serie(campo, desde=ts - ventana) if t < ts]
+            decision = self._decidir(anteriores)
+        return bool(decision)
+
+    def _avisar_nivel(self, guardado, h, ctx, ts):
         for indice, campo in enumerate(NIVELES):
             if campo not in guardado:
                 continue   # no vino en este mensaje
             numero = indice + 1
             nivel = guardado[campo]
-            estaba_bajo = self._estaba_bajo(h[campo])
+            estaba_bajo = self._estaba_bajo(ctx, campo, h[campo], ts)
             if estaba_bajo:
                 esta_bajo = nivel < self.NIVEL_MINIMO_PCT + self.HISTERESIS_PCT
             else:
