@@ -99,7 +99,7 @@ class ConectorTanques(unittest.TestCase):
         self.enviar({**tanque(1, 100, 10), **tanque(2, 100, 80), **tanque(3, 100, 50)})
         self.assertEqual([a.mensaje[:9] for a in self.alertas("tanque_bajo")], ["Tanque 1:"])
 
-    def test_sin_calibrar_no_hay_tanque_bajo(self):
+    def test_sin_nivel_no_hay_tanque_bajo(self):
         for d in (100, 300, 590):
             self.enviar(tanque(1, d))
         self.assertEqual(self.alertas("tanque_bajo"), [])

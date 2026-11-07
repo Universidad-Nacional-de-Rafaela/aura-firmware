@@ -90,7 +90,17 @@ caso("reporte aplicado sin calibrar", () => {
 caso("reporte con calibracion de un tanque", () => {
   const r = decodeUplink({ fPort: 2, bytes: reporte(9, 0, 60, [1600, SC, SC], [300, SC, SC]) });
   assert.deepStrictEqual(r.data, {
-    ref: 9, aplicado: true, config: { intervalo_s: 60, cero_tanque1_cm: 160, lleno_tanque1_cm: 30 },
+    ref: 9, aplicado: true, config: { intervalo_s: 60, altura_tanque1_cm: 160, lleno_tanque1_cm: 30 },
+  });
+});
+
+caso("reporte con la altura y el lleno de fabrica (Mayper 5000 L)", () => {
+  const r = decodeUplink({ fPort: 2, bytes: reporte(3, 0, 60, [2380, 2380, 2380], [350, 350, 350]) });
+  assert.deepStrictEqual(r.data.config, {
+    intervalo_s: 60,
+    altura_tanque1_cm: 238, lleno_tanque1_cm: 35,
+    altura_tanque2_cm: 238, lleno_tanque2_cm: 35,
+    altura_tanque3_cm: 238, lleno_tanque3_cm: 35,
   });
 });
 
@@ -120,19 +130,32 @@ caso("set_config solo intervalo_s: forma corta de 4 bytes", () => {
 
 caso("set_config intervalo_s con calibracion: entradas id hi lo", () => {
   const r = encodeDownlink({ data: { command: "set_config", ref: 7,
-    params: { intervalo_s: 300, cero_tanque1_cm: 160 } } });
+    params: { intervalo_s: 300, altura_tanque1_cm: 160 } } });
   assert.deepStrictEqual(r, { bytes: [0x02, 7, 0x01, 0x01, 0x2c, 0x11, ...be(1600)] });
 });
 
-caso("set_config cero y lleno de un tanque, en cm con un decimal", () => {
+caso("set_config altura y lleno de un tanque, en cm con un decimal", () => {
   const r = encodeDownlink({ data: { command: "set_config", ref: 8,
-    params: { cero_tanque2_cm: 160.5, lleno_tanque2_cm: 30 } } });
+    params: { altura_tanque2_cm: 160.5, lleno_tanque2_cm: 30 } } });
   assert.deepStrictEqual(r, { bytes: [0x02, 8, 0x12, ...be(1605), 0x22, ...be(300)] });
+});
+
+caso("set_config solo la altura (cambio de tanque)", () => {
+  const r = encodeDownlink({ data: { command: "set_config", ref: 4, params: { altura_tanque3_cm: 238 } } });
+  assert.deepStrictEqual(r, { bytes: [0x02, 4, 0x13, ...be(2380)] });
+});
+
+caso("cero_tanqueN_cm es otro nombre de la altura (mismos bytes)", () => {
+  const a = encodeDownlink({ data: { command: "set_config", ref: 4, params: { cero_tanque1_cm: 200 } } });
+  const b = encodeDownlink({ data: { command: "set_config", ref: 4, params: { altura_tanque1_cm: 200 } } });
+  assert.deepStrictEqual(a, b);
+  assert.ok(encodeDownlink({ data: { command: "set_config", ref: 4,
+    params: { cero_tanque1_cm: 200, altura_tanque1_cm: 200 } } }).errors);
 });
 
 caso("set_config con todo junto (7 parametros, 23 bytes)", () => {
   const params = { intervalo_s: 120 };
-  for (const t of [1, 2, 3]) { params[`cero_tanque${t}_cm`] = 160; params[`lleno_tanque${t}_cm`] = 30; }
+  for (const t of [1, 2, 3]) { params[`altura_tanque${t}_cm`] = 238; params[`lleno_tanque${t}_cm`] = 35; }
   const r = encodeDownlink({ data: { command: "set_config", params, ref: 1 } });
   assert.strictEqual(r.bytes.length, 23);
 });
@@ -142,7 +165,7 @@ caso("set_config en los bordes", () => {
     [2, 255, 0xa8, 0xc0]);
   assert.deepStrictEqual(encodeDownlink({ data: { command: "set_config", params: { intervalo_s: 60 }, ref: 1 } }).bytes,
     [2, 1, 0, 60]);
-  assert.deepStrictEqual(encodeDownlink({ data: { command: "set_config", params: { cero_tanque3_cm: 600 }, ref: 1 } }).bytes,
+  assert.deepStrictEqual(encodeDownlink({ data: { command: "set_config", params: { altura_tanque3_cm: 600 }, ref: 1 } }).bytes,
     [2, 1, 0x13, ...be(6000)]);
   assert.deepStrictEqual(encodeDownlink({ data: { command: "set_config", params: { lleno_tanque1_cm: 25 }, ref: 1 } }).bytes,
     [2, 1, 0x21, ...be(250)]);
@@ -150,9 +173,10 @@ caso("set_config en los bordes", () => {
 
 caso("set_config invalido no codifica nada", () => {
   for (const params of [{}, { intervalo_s: 59 }, { intervalo_s: 43201 }, { intervalo_s: 90.5 },
-                        { intervalo_s: "300" }, { umbral: 1 }, { cero_tanque4_cm: 100 },
-                        { cero_tanque1_cm: 24.9 }, { lleno_tanque1_cm: 600.1 }, { cero_tanque1_cm: 100.25 },
-                        { cero_tanque1_cm: "160" }, { cero_tanque1_cm: 35, lleno_tanque1_cm: 30 }]) {
+                        { intervalo_s: "300" }, { umbral: 1 }, { altura_tanque4_cm: 100 },
+                        { altura_tanque1_cm: 24.9 }, { lleno_tanque1_cm: 600.1 }, { altura_tanque1_cm: 100.25 },
+                        { altura_tanque1_cm: "160" }, { altura_tanque1_cm: 35, lleno_tanque1_cm: 30 },
+                        { altura: 238 }]) {
     const r = encodeDownlink({ data: { command: "set_config", params, ref: 2 } });
     assert.ok(r.errors, JSON.stringify(params));
     assert.strictEqual(r.bytes, undefined);

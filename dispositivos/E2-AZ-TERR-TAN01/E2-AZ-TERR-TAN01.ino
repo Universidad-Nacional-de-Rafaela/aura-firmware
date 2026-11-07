@@ -14,10 +14,13 @@
  * Un sensor que no da una medicion valida (sin eco, demasiado lejos) no va en el mensaje: el
  * conector nota que ese tanque dejo de llegar. El agua dentro de la zona ciega (tanque lleno) si va.
  *
- * --- CALIBRACION (cero y lleno, desde AURA con set_config) ---
- * Por tanque: cero = distancia del sensor al agua con el tanque vacio (0 %), lleno = distancia
- * con el tanque lleno (100 %), en mm (cm x 10). Con los dos, el nodo calcula el nivel en % y lo
- * manda junto con la distancia. Sin calibrar, manda solo la distancia.
+ * --- TANQUES: ALTURA Y LLENO (cambiables desde AURA con set_config) ---
+ * Por tanque, en mm (cm x 10): altura = distancia del sensor (en la tapa) al fondo, o sea lo que
+ * mide con el tanque vacio (0 %); lleno = distancia del sensor al agua con el tanque lleno
+ * (100 %). Con las dos, el nodo calcula el nivel en % y lo manda junto con la distancia.
+ * Por defecto, las del tanque Mayper de 5000 L (folleto del fabricante): 2380 mm de alto hasta
+ * la tapa y 1770 mm de diametro, asi que 5000 L llegan a unos 2030 mm del fondo: altura 2380 mm,
+ * lleno 350 mm. Si se cambian los tanques, se cambian por comando, sin reflashear.
  *
  * --- RED: SE RECUPERA SOLA ---
  * El join no bloquea: si falla, reintenta con espera creciente (30 s ... 5 min, con algo de azar)
@@ -37,16 +40,16 @@
  *   Distancia 0xFFFE = agua en la zona ciega (tanque lleno): el codec la informa como 25 cm.
  * fPort 2, reporte de un comando (contrato 3.4), 16 bytes:
  *   [0] ref   [1] resultado: 0 aplicado, 1 fuera de rango, 2 comando desconocido,
- *   3 calibracion invalida   [2..3] intervalo_s   [4..9] cero de los tanques 1..3 en mm
- *   [10..15] lleno de los tanques 1..3 en mm (0xFFFF = sin calibrar). Es la config vigente.
+ *   3 calibracion invalida   [2..3] intervalo_s   [4..9] altura de los tanques 1..3 en mm
+ *   [10..15] lleno de los tanques 1..3 en mm. Es la config vigente.
  *
  * --- BAJADA (fPort 10; el lorawan-bridge pone el ref) ---
  *   01 ref                  medir_ahora: mide los 3 tanques ya (sin mover el ciclo) y los manda.
  *   02 ref (id hi lo)...    set_config: una entrada por parametro. id 0x01 intervalo_s (s,
- *                           60..43200); 0x11..0x13 cero del tanque 1..3 (mm, 250..6000);
+ *                           60..43200); 0x11..0x13 altura del tanque 1..3 (mm, 250..6000);
  *                           0x21..0x23 lleno del tanque 1..3 (mm, 250..6000). Se valida todo
- *                           y, si algo no valida, no se aplica nada (contrato 3.3). El cero
- *                           tiene que quedar al menos 100 mm mas lejos que el lleno.
+ *                           y, si algo no valida, no se aplica nada (contrato 3.3). La altura
+ *                           tiene que ser al menos 100 mm mayor que el lleno.
  *   02 ref hi lo            set_config solo de intervalo_s (s), en 4 bytes. Es lo que manda el
  *                           codec cuando el comando trae solo el intervalo: entra en un profile
  *                           con aura_max_downlink_bytes = 4.
@@ -73,7 +76,7 @@ Preferences almacen;
 const char* NVS_ESPACIO   = "lorawan";
 const char* NVS_NONCES    = "nonces";
 const char* NVS_INTERVALO = "intervalo_s";
-const char* NVS_CERO[3]   = {"cero1", "cero2", "cero3"};
+const char* NVS_CERO[3]   = {"cero1", "cero2", "cero3"};    // la altura (antes "cero"): mismas claves
 const char* NVS_LLENO[3]  = {"lleno1", "lleno2", "lleno3"};
 
 // ===== PINES DEL WIO-SX1262 =====
@@ -114,12 +117,15 @@ const uint16_t SIN_ECO         = 0xFFFF;
 const uint16_t DEMASIADO_CERCA = 0xFFFE;
 const uint16_t DEMASIADO_LEJOS = 0xFFFD;
 
-// ===== CALIBRACION =====
-const uint16_t SIN_CALIBRAR      = 0xFFFF;
-const uint16_t SPAN_MIN_MM       = 100;     // el cero tiene que estar al menos 10 cm mas lejos que el lleno
+// ===== TANQUES: ALTURA Y LLENO =====
+// Por defecto, el tanque Mayper de 5000 L. Lo que se cambie por set_config queda en NVS.
+const uint16_t ALTURA_DEFECTO_MM  = 2380;   // sensor en la tapa -> fondo
+const uint16_t LLENO_DEFECTO_MM   = 350;    // sensor -> agua con 5000 L (fuera de la zona ciega)
+const uint16_t SIN_CALIBRAR       = 0xFFFF;
+const uint16_t SPAN_MIN_MM        = 100;    // la altura tiene que ser al menos 10 cm mayor que el lleno
 const uint16_t NIVEL_SIN_CALIBRAR = 0xFFFF;
-uint16_t ceroMm[N_TANQUES]  = {SIN_CALIBRAR, SIN_CALIBRAR, SIN_CALIBRAR};
-uint16_t llenoMm[N_TANQUES] = {SIN_CALIBRAR, SIN_CALIBRAR, SIN_CALIBRAR};
+uint16_t alturaMm[N_TANQUES] = {ALTURA_DEFECTO_MM, ALTURA_DEFECTO_MM, ALTURA_DEFECTO_MM};
+uint16_t llenoMm[N_TANQUES]  = {LLENO_DEFECTO_MM, LLENO_DEFECTO_MM, LLENO_DEFECTO_MM};
 
 // ===== CICLO DE MEDICION =====
 const unsigned long ARRANQUE_CICLO_MS = 1000UL;   // primer ciclo, despues de arrancar o de un set_config
@@ -146,7 +152,7 @@ const uint8_t CMD_MEDIR_AHORA = 0x01;  // 01 ref
 const uint8_t CMD_SET_CONFIG  = 0x02;  // 02 ref (id hi lo)...
 
 const uint8_t PAR_INTERVALO = 0x01;
-const uint8_t PAR_CERO      = 0x10;    // + numero de tanque (0x11..0x13)
+const uint8_t PAR_ALTURA    = 0x10;    // + numero de tanque (0x11..0x13)
 const uint8_t PAR_LLENO     = 0x20;    // + numero de tanque (0x21..0x23)
 
 const uint8_t RES_APLICADO             = 0;
@@ -226,6 +232,7 @@ void forzarJoin();
 void fijarDatarate();
 void restaurarNonces();
 void cargarConfig();
+void imprimirConfig();
 long msHasta(unsigned long instante);
 void detener();
 
@@ -315,13 +322,13 @@ void guardarMedicion(uint8_t t, uint16_t d, unsigned long instante) {
 }
 
 // Nivel en decimas de %, 0..1000, con la calibracion del tanque. La zona ciega cuenta como
-// 250 mm. Se recorta a 0..100 %: el agua apenas por encima del lleno o por debajo del cero
+// 250 mm. Se recorta a 0..100 %: el agua apenas por encima del lleno o en el fondo
 // es el tope de la escala, como en un transmisor de nivel.
 uint16_t nivelDecimas(uint8_t t, uint16_t d) {
-  if (ceroMm[t] == SIN_CALIBRAR || llenoMm[t] == SIN_CALIBRAR) return NIVEL_SIN_CALIBRAR;
+  if (alturaMm[t] == SIN_CALIBRAR || llenoMm[t] == SIN_CALIBRAR) return NIVEL_SIN_CALIBRAR;
   long dist = (d == DEMASIADO_CERCA) ? DIST_MIN_MM : d;
-  long span = (long)ceroMm[t] - (long)llenoMm[t];
-  long n    = ((long)ceroMm[t] - dist) * 1000L / span;
+  long span = (long)alturaMm[t] - (long)llenoMm[t];
+  long n    = ((long)alturaMm[t] - dist) * 1000L / span;
   if (n < 0)    n = 0;
   if (n > 1000) n = 1000;
   return (uint16_t)n;
@@ -607,8 +614,8 @@ void procesarBajada(uint8_t puerto, const uint8_t* datos, size_t tam) {
 // (contrato 3.3: si algo no valida, no se aplica nada).
 void aplicarSetConfig(uint8_t ref, const uint8_t* entradas, size_t tam) {
   uint16_t nuevoIntervalo = intervaloS;
-  uint16_t nuevoCero[N_TANQUES], nuevoLleno[N_TANQUES];
-  for (uint8_t t = 0; t < N_TANQUES; t++) { nuevoCero[t] = ceroMm[t]; nuevoLleno[t] = llenoMm[t]; }
+  uint16_t nuevaAltura[N_TANQUES], nuevoLleno[N_TANQUES];
+  for (uint8_t t = 0; t < N_TANQUES; t++) { nuevaAltura[t] = alturaMm[t]; nuevoLleno[t] = llenoMm[t]; }
 
   for (size_t i = 0; i < tam; i += 3) {
     uint8_t  id = entradas[i];
@@ -621,7 +628,7 @@ void aplicarSetConfig(uint8_t ref, const uint8_t* entradas, size_t tam) {
         return;
       }
       nuevoIntervalo = v;
-    } else if ((id & 0xF0) == PAR_CERO || (id & 0xF0) == PAR_LLENO) {
+    } else if ((id & 0xF0) == PAR_ALTURA || (id & 0xF0) == PAR_LLENO) {
       if ((id & 0x0F) < 1 || (id & 0x0F) > N_TANQUES) {
         encolarReporte(ref, RES_COMANDO_DESCONOCIDO);
         Serial.println(F(">>> set_config RECHAZADO: tanque inexistente <<<"));
@@ -629,10 +636,10 @@ void aplicarSetConfig(uint8_t ref, const uint8_t* entradas, size_t tam) {
       }
       if (v < DIST_MIN_MM || v > DIST_MAX_MM) {
         encolarReporte(ref, RES_FUERA_DE_RANGO);
-        Serial.println(F(">>> set_config RECHAZADO: cero o lleno fuera de 25..600 cm <<<"));
+        Serial.println(F(">>> set_config RECHAZADO: altura o lleno fuera de 25..600 cm <<<"));
         return;
       }
-      if ((id & 0xF0) == PAR_CERO) nuevoCero[t] = v; else nuevoLleno[t] = v;
+      if ((id & 0xF0) == PAR_ALTURA) nuevaAltura[t] = v; else nuevoLleno[t] = v;
     } else {
       encolarReporte(ref, RES_COMANDO_DESCONOCIDO);
       Serial.print(F(">>> set_config RECHAZADO: parametro desconocido 0x"));
@@ -642,14 +649,14 @@ void aplicarSetConfig(uint8_t ref, const uint8_t* entradas, size_t tam) {
     }
   }
 
-  // Con los dos definidos, el cero (vacio) tiene que quedar mas lejos que el lleno.
+  // La altura (tanque vacio) tiene que quedar mas lejos del sensor que el lleno.
   for (uint8_t t = 0; t < N_TANQUES; t++) {
-    if (nuevoCero[t] != SIN_CALIBRAR && nuevoLleno[t] != SIN_CALIBRAR &&
-        (long)nuevoCero[t] < (long)nuevoLleno[t] + SPAN_MIN_MM) {
+    if (nuevaAltura[t] != SIN_CALIBRAR && nuevoLleno[t] != SIN_CALIBRAR &&
+        (long)nuevaAltura[t] < (long)nuevoLleno[t] + SPAN_MIN_MM) {
       encolarReporte(ref, RES_CALIBRACION_INVALIDA);
       Serial.print(F(">>> set_config RECHAZADO: en el tanque "));
       Serial.print(t + 1);
-      Serial.println(F(" el cero tiene que estar al menos 10 cm mas lejos que el lleno <<<"));
+      Serial.println(F(" la altura tiene que ser al menos 10 cm mayor que el lleno <<<"));
       return;
     }
   }
@@ -659,10 +666,10 @@ void aplicarSetConfig(uint8_t ref, const uint8_t* entradas, size_t tam) {
   intervaloS = nuevoIntervalo;
   if (almacen.getUInt(NVS_INTERVALO, 0) != intervaloS) almacen.putUInt(NVS_INTERVALO, intervaloS);
   for (uint8_t t = 0; t < N_TANQUES; t++) {
-    ceroMm[t]  = nuevoCero[t];
+    alturaMm[t]  = nuevaAltura[t];
     llenoMm[t] = nuevoLleno[t];
-    if (ceroMm[t] != SIN_CALIBRAR && almacen.getUShort(NVS_CERO[t], SIN_CALIBRAR) != ceroMm[t]) {
-      almacen.putUShort(NVS_CERO[t], ceroMm[t]);
+    if (alturaMm[t] != SIN_CALIBRAR && almacen.getUShort(NVS_CERO[t], SIN_CALIBRAR) != alturaMm[t]) {
+      almacen.putUShort(NVS_CERO[t], alturaMm[t]);
     }
     if (llenoMm[t] != SIN_CALIBRAR && almacen.getUShort(NVS_LLENO[t], SIN_CALIBRAR) != llenoMm[t]) {
       almacen.putUShort(NVS_LLENO[t], llenoMm[t]);
@@ -672,22 +679,8 @@ void aplicarSetConfig(uint8_t ref, const uint8_t* entradas, size_t tam) {
 
   Serial.print(F(">>> set_config ref="));
   Serial.print(ref);
-  Serial.print(F(" aplicado: intervalo_s="));
-  Serial.print(intervaloS);
-  for (uint8_t t = 0; t < N_TANQUES; t++) {
-    Serial.print(F(", tanque "));
-    Serial.print(t + 1);
-    if (ceroMm[t] == SIN_CALIBRAR || llenoMm[t] == SIN_CALIBRAR) {
-      Serial.print(F(" sin calibrar"));
-    } else {
-      Serial.print(F(" cero "));
-      Serial.print(ceroMm[t] / 10.0, 1);
-      Serial.print(F(" cm / lleno "));
-      Serial.print(llenoMm[t] / 10.0, 1);
-      Serial.print(F(" cm"));
-    }
-  }
-  Serial.println(F(" <<<"));
+  Serial.print(F(" aplicado: "));
+  imprimirConfig();
   if (cambiaIntervalo) reiniciarCiclo();
 }
 
@@ -716,7 +709,7 @@ void encolarReporte(uint8_t ref, uint8_t resultado) {
   r.bytes[1]  = resultado;
   ponerU16(&r.bytes[2], intervaloS);
   for (uint8_t t = 0; t < N_TANQUES; t++) {
-    ponerU16(&r.bytes[4 + 2 * t], ceroMm[t]);
+    ponerU16(&r.bytes[4 + 2 * t], alturaMm[t]);
     ponerU16(&r.bytes[4 + 2 * N_TANQUES + 2 * t], llenoMm[t]);
   }
   nReportes++;
@@ -823,21 +816,36 @@ void cargarConfig() {
     if (s >= INTERVALO_MIN_S && s <= INTERVALO_MAX_S) intervaloS = (uint16_t)s;
   }
   for (uint8_t t = 0; t < N_TANQUES; t++) {
-    uint16_t c = almacen.getUShort(NVS_CERO[t], SIN_CALIBRAR);
+    uint16_t a = almacen.getUShort(NVS_CERO[t], SIN_CALIBRAR);
     uint16_t l = almacen.getUShort(NVS_LLENO[t], SIN_CALIBRAR);
-    if (c >= DIST_MIN_MM && c <= DIST_MAX_MM) ceroMm[t] = c;
+    if (a >= DIST_MIN_MM && a <= DIST_MAX_MM) alturaMm[t] = a;
     if (l >= DIST_MIN_MM && l <= DIST_MAX_MM) llenoMm[t] = l;
-    if (ceroMm[t] != SIN_CALIBRAR && llenoMm[t] != SIN_CALIBRAR &&
-        (long)ceroMm[t] < (long)llenoMm[t] + SPAN_MIN_MM) {
-      ceroMm[t] = llenoMm[t] = SIN_CALIBRAR;   // par inconsistente: mejor sin calibrar
+    if ((long)alturaMm[t] < (long)llenoMm[t] + SPAN_MIN_MM) {
+      // Par inconsistente (no deberia pasar: set_config lo valida): vuelve a los de fabrica.
+      alturaMm[t] = ALTURA_DEFECTO_MM;
+      llenoMm[t]  = LLENO_DEFECTO_MM;
     }
   }
-  Serial.print(F("Config: intervalo_s="));
+  Serial.print(F("Config: "));
+  imprimirConfig();
+}
+
+// intervalo_s y la altura y el lleno de cada tanque, en una linea del monitor serie.
+void imprimirConfig() {
+  Serial.print(F("intervalo_s="));
   Serial.print(intervaloS);
   for (uint8_t t = 0; t < N_TANQUES; t++) {
     Serial.print(F(", tanque "));
     Serial.print(t + 1);
-    Serial.print((ceroMm[t] != SIN_CALIBRAR && llenoMm[t] != SIN_CALIBRAR) ? F(" calibrado") : F(" sin calibrar"));
+    if (alturaMm[t] == SIN_CALIBRAR || llenoMm[t] == SIN_CALIBRAR) {
+      Serial.print(F(" sin altura/lleno"));
+      continue;
+    }
+    Serial.print(F(" altura "));
+    Serial.print(alturaMm[t] / 10.0, 1);
+    Serial.print(F(" cm / lleno "));
+    Serial.print(llenoMm[t] / 10.0, 1);
+    Serial.print(F(" cm"));
   }
   Serial.println();
 }

@@ -1,12 +1,12 @@
 """Conector de E2-AZ-TERR-TAN01 — nivel de 3 tanques de agua (terraza del Edificio 2).
 
 El nodo mide los tres tanques juntos cada `intervalo_s` y los manda en un mensaje. Por tanque
-llegan `distancia_tanqueN_cm` y, si el tanque está calibrado (cero y lleno, por `set_config`
-desde AURA), `nivel_tanqueN_pct`.
+llegan `distancia_tanqueN_cm` y `nivel_tanqueN_pct`, que el nodo calcula con la altura y el lleno
+del tanque (de fábrica, los del Mayper de 5000 L; se cambian por `set_config` desde AURA).
 
 Alertas:
-- `tanque_bajo`: el nivel bajó del mínimo (20 %) y, con un margen, cuando se recupera. Necesita
-  el tanque calibrado: sin nivel no hay con qué comparar. El nodo solo mide; la bomba la maneja
+- `tanque_bajo`: el nivel bajó del mínimo (20 %) y, con un margen, cuando se recupera. Usa el
+  nivel: un mensaje sin nivel no cuenta. El nodo solo mide; la bomba la maneja
   un control externo, y este aviso sirve para saber que no llenó a tiempo.
 - `sensor`: un tanque dejó de llegar mientras los otros siguen llegando. El nodo no manda un
   tanque cuyo sensor no midió, así que la falla se nota porque falta en los mensajes.
@@ -120,7 +120,7 @@ class ConectorTanques(Conector):
     def _avisar_nivel(self, guardado, h, ctx):
         for indice, campo in enumerate(NIVELES):
             if campo not in guardado:
-                continue   # tanque sin calibrar, o no vino en este mensaje
+                continue   # no vino en este mensaje
             numero = indice + 1
             nivel = guardado[campo]
             estaba_bajo = self._estaba_bajo(h[campo])

@@ -10,8 +10,9 @@ clase   = "conector:ConectorTanques"
 # auxiliar (en la ficha, aparte) u oculto. Los nombres tienen que coincidir con los que devuelve
 # el codec (dispositivos/E2-AZ-TERR-TAN01/codec.js).
 
-# Nivel de agua de cada tanque, en %, con un decimal. Lo calcula el nodo con el cero y el lleno
-# del tanque (set_config desde AURA): solo llega si el tanque está calibrado. Es lo que importa.
+# Nivel de agua de cada tanque, en %, con un decimal. Lo calcula el nodo con la altura y el lleno
+# del tanque (de fábrica, los del Mayper de 5000 L; se cambian por set_config desde AURA). Es lo
+# que importa.
 [campos.nivel_tanque1_pct]
 unidad   = "%"
 min      = 0
@@ -34,7 +35,7 @@ etiqueta = "Nivel tanque 3"
 rol      = "principal"
 
 # Distancia del sensor ultrasónico al agua, en cm con un decimal: la medición cruda, que llega
-# siempre (calibrado o no). Más agua = menos distancia. El rango es el que valida el firmware
+# siempre. Más agua = menos distancia. El rango es el que valida el firmware
 # (250 a 6000 mm). 25 quiere decir "25 cm o menos": el agua en la zona ciega del sensor, tanque
 # lleno.
 [campos.distancia_tanque1_cm]
