@@ -56,19 +56,22 @@ Las abreviaturas siguen el modelo de ubicaciones de AURA (edificio → piso → 
 
 ### Edificios
 
-| Código | Edificio |
-|---|---|
-| `E1` | Edificio 1 |
-| `E2` | Edificio 2 |
+| Código | Edificio | Pisos |
+|---|---|---|
+| `E1` | Edificio 1 | `PB`, `P1`, `AZ` |
+| `E2` | Edificio 2 | `PB`, `P1`, `P2`, `AZ` |
 
 ### Pisos
+
+El número en AURA es el orden del piso dentro de su edificio, así que la azotea no tiene el
+mismo número en todos: va arriba del último piso.
 
 | Código | Piso | Número en AURA |
 |---|---|---|
 | `PB` | Planta baja | 0 |
 | `P1` | Primer piso | 1 |
-| `P2` | Segundo piso | 2 |
-| `AZ` | Azotea | 2 |
+| `P2` | Segundo piso (solo E2) | 2 |
+| `AZ` | Azotea | E1: 2 · E2: 3 |
 
 ### Recintos
 
