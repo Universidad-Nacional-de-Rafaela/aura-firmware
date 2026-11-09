@@ -7,6 +7,10 @@ PRIMERA que llega, así que si contesta alguien que no es tu PC, se podría cone
 
 Uso, con broker.py APAGADO en esta PC:
     python buscar_brokers.py
+
+Pregunta a 255.255.255.255 y a la dirección de broadcast de la red de la PC. Esa dirección se
+arma suponiendo una red /24 (x.y.z.255), como la del banco; en una red más grande, la pregunta
+a 255.255.255.255 igual llega a toda la red local.
 """
 import socket
 import time
@@ -16,7 +20,17 @@ PREGUNTA = b"AURA_BROKER?"
 
 
 def mis_ips():
+    """Las IP de esta PC. Un socket UDP "conectado" a una dirección pública no manda nada, pero
+    dice por qué IP saldría: anda en Windows y en Linux, donde el nombre de la PC suele resolver a
+    127.0.1.1. Sin red hacia afuera, queda lo que resuelve el nombre de la PC."""
     ips = set()
+    try:
+        t = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        t.connect(("8.8.8.8", 80))
+        ips.add(t.getsockname()[0])
+        t.close()
+    except OSError:
+        pass
     try:
         for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
             ips.add(info[4][0])
@@ -27,7 +41,8 @@ def mis_ips():
 
 def main():
     propias = mis_ips()
-    destinos = {"255.255.255.255"} | {ip.rsplit(".", 1)[0] + ".255" for ip in propias if not ip.startswith("127.")}
+    # x.y.z.255 supone una red /24 (ver arriba)
+    destinos = {"255.255.255.255"} | {ip.rsplit(".", 1)[0] + ".255" for ip in propias}
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
     s.bind(("", 0))

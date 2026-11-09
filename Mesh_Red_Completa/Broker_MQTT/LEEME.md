@@ -149,10 +149,12 @@ Scripts de Python sin dependencias: corren en la terminal de ESP-IDF o en cualqu
   en `credenciales.h` del gateway (`OTA_CA_PEM` por defecto, o `BROKER_CA_PEM`).
 - **`buscar_brokers.py`**: hace la misma pregunta que el gateway con `DESCUBRIR_BROKER 1`
   (`AURA_BROKER?` por broadcast, UDP 18830) y muestra quién contesta. Se corre con `broker.py`
-  apagado: si contesta otra computadora, el gateway se podría conectar a ese broker.
+  apagado: si contesta otra computadora, el gateway se podría conectar a ese broker. Además de
+  `255.255.255.255`, pregunta a la dirección de broadcast de la red suponiendo una /24, como la del
+  banco.
 - **`mandar_comando.py <hw_id> <comando> [clave=texto ...] [clave:=número ...]`**: manda a una placa
-  cualquier comando, también uno propio del dispositivo que el tablero no tiene, y muestra la
-  respuesta. Los parámetros van sin comillas ni llaves, así no hay problemas de comillas en
+  de la mesh (`mac-…`) cualquier comando, también uno propio del dispositivo que el tablero no
+  tiene, y muestra la respuesta. Las placas LoRaWAN (`eui-…`) no pasan por `broker.py`. Los parámetros van sin comillas ni llaves, así no hay problemas de comillas en
   PowerShell.
 
 Si en la PC hay un Mosquitto instalado como servicio de Windows, escucha en `127.0.0.1:1883` y le

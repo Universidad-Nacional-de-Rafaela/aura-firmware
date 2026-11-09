@@ -4,6 +4,8 @@
 Uso (en la PC donde corre broker.py, con broker.py corriendo):
     python mandar_comando.py <hw_id> <comando> [clave=valor ...] [clave:=numero ...]
 
+    Solo para placas de la mesh (hw_id mac-…): las de LoRaWAN (eui-…) no pasan por broker.py.
+
     clave=valor    va como texto        (codigo=12AB34CD ->  "codigo": "12AB34CD")
     clave:=valor   va como número/JSON  (intervalo_s:=30 ->  "intervalo_s": 30)
 
@@ -76,6 +78,9 @@ def main():
                 broker = valor
             else:
                 esperar = float(valor)
+    if len(args) >= 1 and args[0].startswith("eui-"):
+        sys.exit(f"{args[0]} es una placa LoRaWAN: no pasa por broker.py. Este script es para las "
+                 "placas de la mesh (mac-…).")
     if len(args) < 2 or not args[0].startswith("mac-"):
         sys.exit(__doc__)
     hw, comando, params = args[0], args[1], {}
