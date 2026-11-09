@@ -13,7 +13,7 @@ Tienen que coincidir con lo que manda el firmware (`values`, contrato §3.1).
 | `v_an_v` | V | 0 a 300 | obligatorio |
 | `i_a_a` | A | 0 a 120 | obligatorio (TI 100/5 A) |
 | `p_w` | W | −30 000 a 30 000 | obligatorio |
-| `cosphi_a` | — | 0 a 1 | obligatorio |
+| `cosphi_a` | — | 0 a 1 | obligatorio; cos φ, el factor de desplazamiento (ver abajo) |
 | `tanphi` | — | −10 a 10 | opcional; + inductivo, − capacitivo |
 | `thd_v_an_pct` | % | 0 a 100 | opcional |
 | `thd_i_a_pct` | % | 0 a 500 | opcional |
@@ -21,6 +21,11 @@ Tienen que coincidir con lo que manda el firmware (`values`, contrato §3.1).
 
 Las fases B y C están en el manifiesto, comentadas: el aula es monofásica y el firmware no las
 envía.
+
+`cosphi_a` es el cos φ: el factor de desplazamiento que entrega el PM2130 (registro 3086),
+calculado con la onda fundamental, sin armónicos. No es el factor de potencia verdadero (P / S):
+con las cargas del laboratorio, el cos φ ronda 0,98 y P / (V · I) ronda 0,77, por la distorsión
+armónica de la corriente.
 
 ## Alertas
 
@@ -38,6 +43,10 @@ con la última medición de la última hora en la que esa regla se podía evalua
 Los umbrales de tensión y de cos φ son una **propuesta**, y están arriba de todo en `conector.py`.
 La protección del circuito es una llave Schneider Easy9 C40: `TERMICA_A` es 40 A, y la alerta de
 sobrecorriente salta desde los 32 A.
+
+La alerta `bajo_cosphi` mira el cos φ, que es lo que corrige un banco de capacitores; un factor de
+potencia bajo por armónicos no se corrige así. Con el umbral de 0,85 no salta con el tablero
+funcionando normal (lo verifica el test con datos reales).
 
 Un campo que falta en una muestra no activa ni normaliza ninguna alerta: no se sabe. Un valor
 fuera de rango tampoco: AURA lo quita antes. Y una muestra así tampoco hace que se repita una

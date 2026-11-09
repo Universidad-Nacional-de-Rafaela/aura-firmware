@@ -74,6 +74,12 @@ static void test_respuestas(void)
     ex[3] = (uint8_t)(c & 0xFF); ex[4] = (uint8_t)(c >> 8);
     CHEQUEAR(pm_largo_respuesta(ex) == 5, "largo de una excepción");
     CHEQUEAR(pm_validar_respuesta(1, 2, ex, 5, w) == 0x02, "excepción 02 del medidor");
+
+    /* Una excepción con código 0 (no existe en Modbus) no puede pasar por una lectura buena */
+    uint8_t ex0[5] = {0x01, 0x83, 0x00, 0, 0};
+    c = pm_crc16(ex0, 3);
+    ex0[3] = (uint8_t)(c & 0xFF); ex0[4] = (uint8_t)(c >> 8);
+    CHEQUEAR(pm_validar_respuesta(1, 2, ex0, 5, w) == PM_ERR_TRAMA, "excepción con código 0: error de trama, no PM_OK");
 }
 
 static void test_conversion(void)

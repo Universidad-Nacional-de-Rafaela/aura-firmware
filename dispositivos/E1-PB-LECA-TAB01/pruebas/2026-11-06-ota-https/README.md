@@ -118,8 +118,12 @@ a 0,96.
   PC cambia, así que hay que rehacer el certificado de la PC para la IP nueva. La CA no cambia, así
   que el gateway no se recompila por eso. Si la red es compartida, conviene comprobar que no haya
   otro `broker.py` en la red antes de conectar el gateway, porque se queda con el primero que
-  contesta: [`herramientas/buscar_brokers.py`](herramientas/buscar_brokers.py) hace la misma pregunta
-  que el gateway y muestra quién contesta.
+  contesta. Para comprobarlo usamos un script que hace la misma pregunta que el gateway y muestra
+  quién contesta; como sirve para cualquier banco, lo proponemos aparte, junto con las otras
+  herramientas.
+- **Para mandar a una placa un comando que el tablero no tiene** (uno propio del dispositivo), la
+  entrada del tablero acepta cualquiera, con PowerShell:
+  `Invoke-RestMethod -Method Post -Uri 'http://localhost:8080/cmd?hw=<hw_id>&command=<comando>&params=<JSON en formato URL>'`.
 - **Para guardar los registros:** en el monitor, `Ctrl+T` y después `Ctrl+L` (el monitor avisa con
   una línea `---` y escribe un `log.….txt` en la carpeta del proyecto). Con `ota.py`, agregar
   `| Tee-Object -FilePath <archivo>`, y correrlo con `python -u`: si no, la salida se ve recién al
@@ -221,16 +225,3 @@ Con el firmware anterior, la medición de las 19:33:29 habría llegado recién a
 18:24:40  hw/<hoja>/status         {"status": "offline", "details": {"motivo": "sin_tramas"}}
 18:52:50  hw/<hoja>/status         {"status": "online", …}
 ```
-
-## Herramientas
-
-- [`herramientas/buscar_brokers.py`](herramientas/buscar_brokers.py): pregunta en la red, como el
-  gateway, quién contesta como broker. Se corre con `broker.py` apagado: si contesta otra
-  computadora, el gateway se podría conectar ahí.
-- [`herramientas/mandar_comando.py`](herramientas/mandar_comando.py): manda a una placa un comando
-  cualquiera (por ejemplo, uno propio del dispositivo, que el tablero no tiene) y muestra la
-  respuesta. Los parámetros se escriben `clave=valor` (texto) o `clave:=valor` (número), sin
-  comillas. Con un Mosquitto en la PC, agregar `--broker <IP de la PC>`.
-
-Lo mismo se puede hacer sin script, por la entrada del tablero, con PowerShell:
-`Invoke-RestMethod -Method Post -Uri 'http://localhost:8080/cmd?hw=<hw_id>&command=<comando>&params=<JSON en formato URL>'`.

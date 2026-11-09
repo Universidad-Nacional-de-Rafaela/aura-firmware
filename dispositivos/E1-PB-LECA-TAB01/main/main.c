@@ -283,23 +283,32 @@ static bool aplicar_config(const cJSON *params, char *motivo, size_t tam)
         return false;
     }
 
-    /* Todo validó: recién ahora se aplica y se guarda. */
+    if (iv == NULL && es == NULL) return true;    /* solo aula: la maneja la biblioteca */
+
+    /* Todo validó: primero se guarda y, solo si se pudo, se aplica. Si el NVS falla no cambia
+     * nada y se contesta error_de_nvs: lo que responde la placa es lo que va a tener después de
+     * un reinicio. */
     nvs_handle_t h;
-    bool nvs = nvs_open("tab01", NVS_READWRITE, &h) == ESP_OK;
+    if (nvs_open("tab01", NVS_READWRITE, &h) != ESP_OK) {
+        snprintf(motivo, tam, "error_de_nvs");
+        return false;
+    }
+    esp_err_t err = ESP_OK;
+    if (iv != NULL) err = nvs_set_u32(h, "intervalo_s", (uint32_t)iv->valuedouble);
+    if (err == ESP_OK && es != NULL) err = nvs_set_u8(h, "id_esclavo", (uint8_t)es->valuedouble);
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    if (err != ESP_OK) {
+        snprintf(motivo, tam, "error_de_nvs");
+        return false;
+    }
+
     bool intervalo_cambio = false;
     if (iv != NULL) {
         intervalo_cambio = (uint32_t)iv->valuedouble != intervalo_s;
         intervalo_s = (uint32_t)iv->valuedouble;
-        if (nvs) nvs_set_u32(h, "intervalo_s", intervalo_s);
     }
-    if (es != NULL) {
-        id_esclavo = (uint8_t)es->valuedouble;
-        if (nvs) nvs_set_u8(h, "id_esclavo", id_esclavo);
-    }
-    if (nvs) {
-        nvs_commit(h);
-        nvs_close(h);
-    }
+    if (es != NULL) id_esclavo = (uint8_t)es->valuedouble;
     ESP_LOGI(TAG, "Configuracion: intervalo %lu s, esclavo %u", (unsigned long)intervalo_s, id_esclavo);
     if (intervalo_cambio && tarea_medicion_h != NULL) xTaskNotifyGive(tarea_medicion_h);
     return true;

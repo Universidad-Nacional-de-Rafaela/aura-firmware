@@ -42,10 +42,10 @@ descarga por HTTPS, la otra mitad de lo que pidió la cátedra, queda para la ro
 ### La firma
 
 Cada grupo usa en el banco su propia clave de prueba (RSA-3072), guardada fuera del repo. Se
-compila sin firmar y se firma aparte (`GUIA_NODOS_HOJA.md`, 2.9). Para eso usamos
-[`herramientas/firmar.py`](herramientas/firmar.py), que firma, verifica la firma y **se niega a
-firmar dos veces la misma imagen**: `espsecure sign-data` lo permite sin avisar, y la imagen queda
-deformada. La clave se le pasa siempre con `--clave`: el script nunca la busca por su cuenta. Cada
+compila sin firmar y se firma aparte (`GUIA_NODOS_HOJA.md`, 2.9). Para eso usamos un script
+propio, `firmar.py`, que firma, verifica la firma y **se niega a firmar dos veces la misma imagen**:
+`espsecure sign-data` lo permite sin avisar, y la imagen queda deformada. Como sirve para cualquier
+hoja, lo proponemos aparte, junto con las otras herramientas del banco. Cada
 placa se grabó una sola vez por USB, con su 1.0.0 firmada; después de eso, todo llegó por la malla.
 
 ### Las imágenes de prueba
@@ -264,11 +264,3 @@ El único reenvío de toda la prueba, y cómo lo contestó AURA:
 El conteo (234 mediciones, cada `ingest_id` confirmado una vez) sale de cruzar el monitor de la
 hoja con el registro del broker. Las 8 mediciones que la hoja tomó al final, después de que se
 apagó el broker, quedaron en su cola; no son parte de la prueba.
-
-## Herramientas
-
-- [`herramientas/firmar.py`](herramientas/firmar.py): firma una imagen (en el lugar o en una
-  copia), verifica la firma y no firma dos veces. Exige `--clave` con la ruta de la clave, que
-  vive fuera del repo. Se corre desde la terminal de ESP-IDF.
-- [`herramientas/pem_a_define.py`](herramientas/pem_a_define.py): convierte el certificado de una
-  CA en el `#define OTA_CA_PEM` del `credenciales.h` del gateway.

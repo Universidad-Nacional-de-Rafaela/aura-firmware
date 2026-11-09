@@ -37,7 +37,7 @@ se pudo leer o que está fuera de su rango no aparece.
 | `v_an_v` | V | 0 a 300 | siempre, cada `intervalo_s` |
 | `i_a_a` | A | 0 a 120 | siempre |
 | `p_w` | W | −30 000 a 30 000 | siempre |
-| `cosphi_a` | — | 0 a 1 | siempre |
+| `cosphi_a` | — | 0 a 1 | siempre; cos φ, el factor de desplazamiento (registro 3086) |
 | `thd_v_an_pct` / `thd_i_a_pct` | % | 0 a 100 / 0 a 500 | si `ENVIAR_THD` = 1 (`main/pm2130.h`) |
 | `tanphi` | — | −10 a 10 | si `ENVIAR_TANFI` = 1 |
 | `e_act_kwh` | kWh | 0 a 10⁹ | si `ENVIAR_ENERGIA` = 1 |
@@ -99,3 +99,9 @@ entrega). Se actualiza por la malla ([ADR-008](../../docs/adr/ADR-008-actualizac
   esa carga, la corriente, la potencia y el cos φ medidos pueden tener más error que el de la clase.
   Además, como la protección es de 40 A, el TI de 100 A nunca pasa del 40 % de su nominal: uno de
   menor relación (por ejemplo, 50/5) aprovecharía mejor la escala.
+- **El cos φ no es el factor de potencia verdadero.** `cosphi_a` es el registro 3086 del PM2130: el
+  factor de desplazamiento, calculado con la onda fundamental, sin armónicos. El factor de potencia
+  verdadero (P / S) también ve los armónicos. En el tablero, el cos φ da alrededor de 0,98, pero
+  P / (V · I) da 0,77 (mediana de las 444 mediciones de las pruebas de OTA): con las cargas
+  electrónicas del laboratorio, la corriente tiene mucha distorsión armónica. El PM2130 mide los
+  dos; para confirmar la distorsión se puede encender `ENVIAR_THD` y mirar `thd_i_a_pct`.

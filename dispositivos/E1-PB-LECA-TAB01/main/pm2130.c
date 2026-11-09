@@ -7,6 +7,8 @@ const pm_campo_t PM_CAMPOS[] = {
     {"v_an_v",       3028,     PM_FLOAT32,  0,        300,    2,   true},
     {"i_a_a",        3000,     PM_FLOAT32,  0,        120,    2,   true},   /* TI 100/5 A */
     {"p_w",          3060,     PM_KW_A_W,   -30000,   30000,  1,   true},
+    /* cos φ: factor de DESPLAZAMIENTO (de la fundamental, sin armónicos). No es el factor de
+     * potencia verdadero, que también ve los armónicos; ver la ficha. B y C: 3088 y 3090. */
     {"cosphi_a",     3086,     PM_FP_4Q,    0,        1,      2,   true},
 #if ENVIAR_FASES_BC
     {"v_bn_v",       3030,     PM_FLOAT32,  0,        300,    2,   false},
@@ -60,7 +62,8 @@ uint8_t pm_validar_respuesta(uint8_t esclavo, uint8_t cantidad, const uint8_t *r
     if (n < 5) return PM_ERR_SIN_RESPUESTA;
     if (rx[0] != esclavo) return PM_ERR_TRAMA;
     if (rx[1] == 0x83) {
-        return (pm_crc16(rx, 3) == (uint16_t)(rx[3] | (rx[4] << 8))) ? rx[2] : PM_ERR_CRC;
+        if (pm_crc16(rx, 3) != (uint16_t)(rx[3] | (rx[4] << 8))) return PM_ERR_CRC;
+        return rx[2] ? rx[2] : PM_ERR_TRAMA;          /* una excepción con código 0 no es una lectura buena */
     }
     if (rx[1] != 0x03 || rx[2] != 2 * cantidad) return PM_ERR_TRAMA;
     size_t largo = (size_t)3 + rx[2];
