@@ -137,6 +137,29 @@ Tiempos en el banco: descarga al gateway ~7 s, 1 MB por la malla ~10 s, reinicio
 `aplicado` cuando la versión nueva lleva 60 s andando. **La primera vez se graba por USB** (cambia la tabla de
 particiones); las placas con un firmware anterior contestan `rechazado` `nodo_no_responde`.
 
+## Herramientas del banco
+
+Scripts de Python sin dependencias: corren en la terminal de ESP-IDF o en cualquiera con Python 3.
+
+- **`firmar.py --clave <clave.pem> <imagen.bin> [copia.bin]`**: firma una imagen
+  (`GUIA_NODOS_HOJA.md`, 2.9) y verifica la firma, en el lugar o en una copia. No firma dos veces la
+  misma imagen (`espsecure sign-data` lo permite sin avisar, y la imagen queda deformada) y nunca
+  busca la clave por su cuenta.
+- **`pem_a_define.py <ca.pem> [NOMBRE]`**: convierte el certificado de una CA en el `#define` que va
+  en `credenciales.h` del gateway (`OTA_CA_PEM` por defecto, o `BROKER_CA_PEM`).
+- **`buscar_brokers.py`**: hace la misma pregunta que el gateway con `DESCUBRIR_BROKER 1`
+  (`AURA_BROKER?` por broadcast, UDP 18830) y muestra quién contesta. Se corre con `broker.py`
+  apagado: si contesta otra computadora, el gateway se podría conectar a ese broker.
+- **`mandar_comando.py <hw_id> <comando> [clave=texto ...] [clave:=número ...]`**: manda a una placa
+  cualquier comando, también uno propio del dispositivo que el tablero no tiene, y muestra la
+  respuesta. Los parámetros van sin comillas ni llaves, así no hay problemas de comillas en
+  PowerShell.
+
+Si en la PC hay un Mosquitto instalado como servicio de Windows, escucha en `127.0.0.1:1883` y le
+gana a `broker.py`: `ota.py` y `mandar_comando.py`, que por defecto se conectan a `127.0.0.1`, le
+hablan a Mosquitto y se quedan esperando sin error. Se detecta con
+`Get-NetTCPConnection -LocalPort 1883 -State Listen` y se resuelve con `--broker <IP de la PC>`.
+
 ## Cómo probar
 
 1. **Firewall (una sola vez, como administrador):** permitir `python.exe` en redes **privadas**.
