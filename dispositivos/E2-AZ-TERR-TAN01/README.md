@@ -59,6 +59,14 @@ cuando el tanque deja de llegar mientras los otros siguen llegando.
 igual un mensaje de estado, con la falla de cada sensor, que el codec traduce a `errors`: así no
 queda mudo, ChirpStack lo sigue viendo y, como es clase A, sigue recibiendo comandos.
 
+**Ese estado no llega a AURA.** Cuando el codec devuelve solo `errors`, ChirpStack lo anota en el
+registro de eventos del dispositivo y el bridge publica `status` `online` sin `data`. El nodo no
+queda `offline` (bien), pero **en AURA nadie ve que se cayeron los tres sensores**: no hay
+mediciones nuevas, no hay alerta (el conector tampoco avisa `sensor`, porque no llega ningún
+mensaje con los otros tanques) y el nodo figura en línea. Solo se ve en ChirpStack. Es una
+limitación conocida del contrato ([pendiente 19](../../docs/CONTRATO_MQTT.md)): no esperar una
+alerta en AURA por esto.
+
 **Precisión.** La distancia sale del tiempo del eco con la velocidad del sonido a unos 20 °C
 (343 m/s), fija. En la azotea, entre 0 y 45 °C, eso da un error de hasta unos ±7 cm a 1,5 m
 (unos ±4 %). Para el aviso de tanque bajo alcanza; si hiciera falta más precisión, habría que
@@ -75,9 +83,14 @@ o menos". No dispara la alerta `sensor` ni `tanque_bajo`.
 `nivel = (altura − distancia) / (altura − lleno)`, recortado a 0..100 %. Si a un tanque se le
 saca la altura o el lleno (con 0 o `null`, ver *Comandos*), manda solo la distancia.
 
+**Sin calibrar igual da nivel.** Con los valores de fábrica (ver *Comandos*) el nodo ya manda un
+nivel. Si un sensor no queda en la tapa, o el tanque no es el Mayper de 5000 L, ese porcentaje
+parece creíble pero está mal. Por eso la instalación incluye medir la altura real de cada tanque
+y mandarla por `set_config` (ver *Instalación*).
+
 Alertas (contrato §3.5). El nodo LoRaWAN no publica alertas propias: las genera el conector.
 - `sensor`: un tanque falta en 3 mensajes seguidos que traen a los otros (3 ciclos, sea cual sea
-  el intervalo); `info` cuando vuelve.
+  el intervalo); `info` cuando vuelve. Si fallan los tres a la vez no hay aviso (ver arriba).
 - `tanque_bajo`: `warning` cuando el nivel baja del 20 % e `info` cuando vuelve a 25 % o más.
   La bomba la maneja un control externo: el aviso sirve para saber
   que no llenó a tiempo.
@@ -112,9 +125,8 @@ estimaciones del folleto: conviene ajustarlas una vez instalado el nodo.
 **Cambiar la altura de los tanques** (si se cambian por otros, o para ajustar a la medida real):
 `set_config {"altura_tanque1_cm": 245}`, o los tres juntos, con el lleno si cambia:
 `set_config {"altura_tanque1_cm": 245, "lleno_tanque1_cm": 40, "altura_tanque2_cm": 245, ...}`.
-Para medirlas: con `medir_ahora`, la distancia con el tanque lleno es el lleno; la altura se
-puede medir con una cinta desde la cara del sensor hasta el fondo. Para volver a los de fábrica,
-mandarlos explícitos (`238` y `35`).
+Cómo medirlas: ver *Instalación*. Para volver a los de fábrica, mandarlos explícitos (`238` y
+`35`).
 
 **Clase A**: el nodo solo escucha después de transmitir, así que un comando llega con el próximo
 mensaje: hasta `intervalo_s` después de encolarlo (5 min con 300 s; 12 h con el máximo).
@@ -178,8 +190,25 @@ firmware y el codec a la vez. Los tests están en [`tests/`](tests/) (`make -C t
 4. **No borrar la flash** al cargar el firmware (en el IDE, *Erase All Flash Before Sketch Upload*
    en *Disabled*): ahí están los DevNonce, el intervalo y la altura y el lleno de los tanques.
 
+## Instalación
+
+Hasta completar los pasos 2 y 3, el nivel que llega a AURA sale del folleto y no hay que confiar
+en él.
+
+1. Montar cada sensor en la tapa de su tanque, mirando derecho hacia abajo, sin que el haz toque
+   la pared ni la entrada de agua.
+2. Medir con una cinta la **altura real** de cada tanque: desde la cara del sensor hasta el fondo.
+3. Mandarla por `set_config`, las tres juntas:
+   `set_config {"altura_tanque1_cm": …, "altura_tanque2_cm": …, "altura_tanque3_cm": …}`.
+   El reporte tiene que volver `aplicado`, con esas alturas en `config`.
+4. Con un tanque lleno (cuando la bomba termina de llenar), pedir `medir_ahora`: la distancia que
+   llega es el lleno de ese tanque. Si difiere de 35 cm, mandarlo con `lleno_tanqueN_cm`.
+5. Pedir `medir_ahora` y comprobar que el nivel de cada tanque coincide con lo que se ve.
+
 ## Notas
 
 - Pendiente: probar en la placa y en ChirpStack.
-- Pendiente: ajustar la altura y el lleno de cada tanque desde AURA con la medida real, una vez
-  instalado (los de fábrica salen del folleto del Mayper de 5000 L).
+- Pendiente: la instalación (ver *Instalación*), con la altura y el lleno reales de cada tanque
+  (los de fábrica salen del folleto del Mayper de 5000 L).
+- Si fallan los tres sensores, AURA no se entera: solo se ve en ChirpStack (pendiente 19 del
+  contrato).
