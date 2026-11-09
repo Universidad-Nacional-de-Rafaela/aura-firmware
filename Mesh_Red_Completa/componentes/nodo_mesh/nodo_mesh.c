@@ -394,8 +394,7 @@ void nodo_mesh_reportar(void)
         cJSON_AddNumberToObject(d, "capa", esp_mesh_get_layer());
     }
     /* La trama tiene 180 B: si no entra, se sacan primero los datos accesorios (nunca fw ni config) */
-    static const char *const accesorios[] = {"descartadas", "rssi", "capa", "alimentacion", "modo", "pendientes",
-                                             "en_flash", "eventos_perdidos"};
+    static const char *const accesorios[] = {"descartadas", "rssi", "capa", "alimentacion", "modo", "pendientes"};
     for (int i = 0; i < (int)(sizeof(accesorios) / sizeof(accesorios[0])); i++) {
         char *txt = cJSON_PrintUnformatted(d);
         size_t n = txt ? strlen(txt) : 0;

@@ -11,6 +11,18 @@ T = datetime(2026, 10, 8, 12, tzinfo=timezone.utc)
 H, F = "temp_heladera_c", "temp_freezer_c"
 
 
+class ContextoConVentanas(ContextoDePrueba):
+    def __init__(self, manifiesto):
+        super().__init__(manifiesto)
+        self.consultas = []
+
+    def serie(self, campo, desde=None, hasta=None):
+        if desde is None or hasta is None:
+            raise AssertionError("Todas las consultas deben tener ambos límites")
+        self.consultas.append((campo, desde, hasta))
+        return super().serie(campo, desde, hasta)
+
+
 class TestConector(unittest.TestCase):
     def setUp(self):
         self.manifiesto, self.conector = cargar_conector(CARPETA)
@@ -152,6 +164,58 @@ class TestConector(unittest.TestCase):
         self.assertEqual(self.ctx.alertas, [])
         self.enviar({H: 9}, T + timedelta(minutes=3))
         self.assertEqual([a.tipo for a in self.ctx.alertas], ["temperatura_heladera"])
+
+    def test_camino_normal_usa_una_sola_ventana(self):
+        self.ctx = ContextoConVentanas(self.manifiesto)
+        ahora = datetime.now(timezone.utc)
+        self.enviar({H: 4}, ahora - timedelta(minutes=1))
+        self.ctx.consultas.clear()
+
+        self.enviar({H: 4.5}, ahora)
+
+        self.assertEqual(self.ctx.consultas, [(H, ahora - timedelta(days=1), ahora + timedelta(days=1))])
+
+    def test_alarma_de_hace_seis_dias_se_recupera(self):
+        self.ctx = ContextoConVentanas(self.manifiesto)
+        ahora = datetime.now(timezone.utc)
+        for ts, temperatura in [
+            (ahora - timedelta(days=6, minutes=1), 8),
+            (ahora - timedelta(days=6), 8),
+            (ahora - timedelta(days=2), 6),
+            (ahora - timedelta(minutes=1), 6),
+        ]:
+            self.enviar({H: temperatura}, ts)
+        self.ctx.consultas.clear()
+
+        self.enviar({H: 5.5}, ahora)
+
+        self.assertEqual([a.severidad for a in self.ctx.alertas], ["warning", "info"])
+        self.assertEqual(
+            [desde for _, desde, _ in self.ctx.consultas],
+            [ahora - timedelta(days=dias) for dias in (1, 3, 7)],
+        )
+
+    def test_lectura_en_borde_de_ventana_no_cuenta_dos_veces(self):
+        self.ctx = ContextoConVentanas(self.manifiesto)
+        ahora = datetime.now(timezone.utc)
+        self.enviar({H: 8}, ahora - timedelta(days=1))
+
+        self.enviar({H: 4}, ahora)
+
+        self.assertEqual(self.ctx.alertas, [])
+
+    def test_dato_atrasado_varios_dias_detecta_muestra_reciente(self):
+        self.ctx = ContextoConVentanas(self.manifiesto)
+        ahora = datetime.now(timezone.utc)
+        self.enviar({H: 8}, ahora - timedelta(days=3, minutes=1))
+        self.enviar({H: 4}, ahora - timedelta(minutes=1))
+        self.ctx.consultas.clear()
+
+        self.enviar({H: 8}, ahora - timedelta(days=3))
+
+        self.assertEqual(len(self.ctx.mediciones), 3)
+        self.assertEqual(self.ctx.alertas, [])
+        self.assertEqual(len(self.ctx.consultas), 2)
 
     def test_no_prediccion_opcional(self):
         self.assertIsNone(self.manifiesto.prediccion)

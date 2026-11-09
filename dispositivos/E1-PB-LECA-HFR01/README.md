@@ -145,8 +145,11 @@ a persistencia inmediata de todas las lecturas.
 
 La entrada de alimentación, cuando está habilitada, reporta transiciones
 con la alerta `energia`. La hoja sigue midiendo según los intervalos configurados.
-El reporte de estado prioriza la versión de firmware y todos los ajustes frente
-a los diagnósticos opcionales cuando se acerca al límite de 180 bytes.
+El reporte de estado tiene un límite de 180 bytes. Con valores extremos
+de configuración y diagnósticos como `en_flash` o `eventos_perdidos`,
+puede superar el límite incluso después del recorte de la biblioteca y no
+publicarse. Es una limitación del reporte. La configuración aplicada y
+guardada en la placa sigue vigente.
 
 ## Compilar y cargar
 

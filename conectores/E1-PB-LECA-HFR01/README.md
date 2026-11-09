@@ -55,12 +55,18 @@ de su ancho. El texto incluye la hora original `msg.ts` cuando está disponible.
 
 Se usan hlo/hhi y flo/fhi de config_vigente(), con valores iniciales 2..6 y
 -25..-15 °C. Una configuración inválida usa los valores iniciales y se registra.
-La alarma se reconstruye con ctx.serie() al recrear la instancia del conector.
+El conector reconstruye la alarma con `ctx.serie()`. Busca en las últimas
+24 horas de la medición y amplía la búsqueda hacia atrás a tres y luego a siete
+días solo si todavía falta evidencia. Si al llegar a ese límite no encontró
+una alarma confirmada, parte del estado normal. Usa los umbrales vigentes, por
+lo que el estado reconstruido puede diferir de las alertas emitidas antes de un
+cambio de configuración.
 
-Las lecturas anteriores al último punto guardado se conservan como historial,
-sin alterar la alarma actual. Si llegan sin ts se usa su orden de llegada;
-no se puede distinguir un dato histórico sin timestamp. Cambiar umbrales vuelve
-a comparar con la configuración vigente; el SDK no ofrece historial de ajustes.
+Si encuentra una muestra posterior, guarda la medición histórica sin emitir
+alertas. Para detectar ese caso consulta hasta 24 horas por delante de su
+marca de tiempo y, si llega tarde, también las 24 horas previas a su llegada.
+Una muestra posterior que solo exista entre esas ventanas puede pasar
+inadvertida. Cuando falta `ts`, usa la hora de llegada para acotar la búsqueda.
 
 Este conector no implementa predicción y no la declara en el manifiesto. Las fallas físicas de sondas/energía son alertas del firmware, no
 temperaturas inventadas por el conector.
