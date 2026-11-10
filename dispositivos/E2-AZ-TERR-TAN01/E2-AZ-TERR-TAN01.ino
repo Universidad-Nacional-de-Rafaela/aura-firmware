@@ -2,10 +2,10 @@
  * E2-AZ-TERR-TAN01 - nivel de 3 tanques de agua, terraza del Edificio 2 (LoRaWAN, clase A)
  *
  * Tres sensores ultrasonicos AJ-SR04M miden la distancia al agua de 3 tanques.
- * Implementa el contrato MQTT v4.0 por LoRaWAN (hw_id = eui-<DevEUI>): medicion en el fPort 1,
- * reporte de comandos en el fPort 2 y comandos con "ref" en el fPort 10, como el codec de
- * E1-AZ-TERR-TAN01. El par de este sketch es codec.js, en esta carpeta: si cambia el formato
- * de los bytes de uno, cambia el otro.
+ * Implementa la parte LoRaWAN del contrato MQTT v4.4, igual desde la v4.0 (hw_id = eui-<DevEUI>):
+ * medicion en el fPort 1, reporte de comandos en el fPort 2 y comandos con "ref" en el fPort 10,
+ * como el codec de E1-AZ-TERR-TAN01. El par de este sketch es codec.js, en esta carpeta: si
+ * cambia el formato de los bytes de uno, cambia el otro.
  *
  * --- CICLO: MIDE LOS 3 Y MANDA ---
  * Cada intervalo_s (300 s por defecto) se miden los 3 tanques, uno detras del otro (menos de 2 s),

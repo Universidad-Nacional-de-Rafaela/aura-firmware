@@ -8,7 +8,7 @@ Va por LoRaWAN (`hw_id` `eui-<DevEUI>`).
 |---|---|
 | Guardar | `distancia_tanqueN_cm` (cm con un decimal, de 25 a 600) y `nivel_tanqueN_pct` (0 a 100 %, lo calcula el nodo con la altura y el lleno del tanque). Cada mensaje trae los tres tanques (salvo uno cuyo sensor no midió). Lo que está fuera de rango lo quita AURA. `25` cm significa "25 cm o menos": el agua en la zona ciega del sensor, tanque lleno |
 | Alertar | `tanque_bajo`: `warning` cuando el nivel baja de `NIVEL_MINIMO_PCT` (20 %) e `info` cuando vuelve a superar el mínimo + `HISTERESIS_PCT` (25 %), una vez por cruce y por tanque. |
-| Alertar | `sensor`: `warning` cuando un tanque falta en `MENSAJES_SIN_DATOS` (3) mensajes seguidos que traen a los otros (el nodo no manda un tanque cuyo sensor no midió) e `info` cuando vuelve. No depende del intervalo |
+| Alertar | `sensor`: `warning` cuando un tanque falta en `MENSAJES_SIN_DATOS` (3) mensajes seguidos que traen a los otros (el nodo no manda un tanque cuyo sensor no midió) e `info` cuando vuelve. No depende del intervalo. Si fallan los tres a la vez no hay aviso: el mensaje de estado del nodo no llega a AURA (pendiente 19 del contrato; ver la [ficha](../../dispositivos/E2-AZ-TERR-TAN01/README.md)) |
 | Predecir | todavía no |
 
 El dispositivo solo mide: la bomba la maneja un control externo, y `tanque_bajo` avisa si no llenó
