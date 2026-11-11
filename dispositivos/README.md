@@ -56,19 +56,22 @@ Las abreviaturas siguen el modelo de ubicaciones de AURA (edificio → piso → 
 
 ### Edificios
 
-| Código | Edificio |
-|---|---|
-| `E1` | Edificio 1 |
-| `E2` | Edificio 2 |
+| Código | Edificio | Pisos |
+|---|---|---|
+| `E1` | Edificio 1 | `PB`, `P1`, `AZ` |
+| `E2` | Edificio 2 | `PB`, `P1`, `P2`, `AZ` |
 
 ### Pisos
+
+El número en AURA es el orden del piso dentro de su edificio, así que la azotea no tiene el
+mismo número en todos: va arriba del último piso.
 
 | Código | Piso | Número en AURA |
 |---|---|---|
 | `PB` | Planta baja | 0 |
 | `P1` | Primer piso | 1 |
-| `P2` | Segundo piso | 2 |
-| `AZ` | Azotea | 2 |
+| `P2` | Segundo piso (solo E2) | 2 |
+| `AZ` | Azotea | E1: 2 · E2: 3 |
 
 ### Recintos
 
@@ -128,3 +131,4 @@ que monitorea, o lo que acciona. Una placa que mide varias magnitudes del ambien
 | [`E2-P2-ACA2-PUE01`](E2-P2-ACA2-PUE01/) | Puerta con llavero de proximidad: Secretaría Académica, oficina 2 (modelo [`PUE-RFID`](_modelos/PUE-RFID/)) | losHijosDelStackOverFlow (IC IV 2026) | en desarrollo |
 | [`E2-P2-ACA3-PUE01`](E2-P2-ACA3-PUE01/) | Puerta con llavero de proximidad: Secretaría Académica, oficina 3 (modelo [`PUE-RFID`](_modelos/PUE-RFID/)) | losHijosDelStackOverFlow (IC IV 2026) | en desarrollo |
 | [`E2-P2-SINV-PUE01`](E2-P2-SINV-PUE01/) | Puerta con llavero de proximidad: Secretaría de Investigación y Transferencia Tecnológica (modelo [`PUE-RFID`](_modelos/PUE-RFID/)) | losHijosDelStackOverFlow (IC IV 2026) | en desarrollo |
+| [`E1-PB-LECA-TAB01`](E1-PB-LECA-TAB01/) | Medidor de energía del tablero del LabECA | grupo de IC III 2026 | en desarrollo |
