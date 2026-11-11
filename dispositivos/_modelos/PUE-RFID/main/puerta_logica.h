@@ -96,7 +96,6 @@ typedef struct {
     bool abierta;
     int64_t abierta_desde_ms;
     cerradura_t cerradura;
-    bool pulso_activo;
     bool doble_activa;
     int64_t doble_hasta_ms;
     bool aviso_pendiente;              /* puerta abierta: falta que pase aviso_s para avisar */
@@ -197,6 +196,22 @@ static inline void p_simple(puerta_t *p, accion_tipo_t tipo, int32_t valor)
     if (a) a->valor = valor;
 }
 
+/* Olvida los rechazos anteriores (un llavero autorizado, o un bloqueo recien armado) */
+static inline void p_limpiar_rechazos(puerta_t *p)
+{
+    for (int i = 0; i < RECHAZOS_PARA_BLOQUEO; i++) p->rechazos[i] = -VENTANA_RECHAZOS_MS * 100LL;
+}
+
+/* Termina la intrusion (se cerro la puerta o se desarmo): corta la sirena si sonaba */
+static inline void p_terminar_intrusion(puerta_t *p)
+{
+    p->intrusion = false;
+    if (p->intrusion_sonando) {
+        p->intrusion_sonando = false;
+        p_aviso(p, AVISO_NADA, 0, 0);
+    }
+}
+
 /* ---------- inicio ---------- */
 /* Llamar una vez al arrancar, con lo guardado en NVS y el estado real del sensor. */
 static inline void puerta_iniciar(puerta_t *p, int64_t ahora_ms, bool armada, bool abierta,
@@ -209,7 +224,7 @@ static inline void puerta_iniciar(puerta_t *p, int64_t ahora_ms, bool armada, bo
     p->armada = armada;
     p->abierta = abierta;
     p->abierta_desde_ms = ahora_ms;
-    for (int i = 0; i < RECHAZOS_PARA_BLOQUEO; i++) p->rechazos[i] = -VENTANA_RECHAZOS_MS * 100LL;
+    p_limpiar_rechazos(p);
     if (armada && abierta) {
         /* U11: la placa no sabe que paso mientras estuvo apagada. Alerta propia y sin sonido. */
         p_alerta(p, "arranque_puerta_abierta", SEV_HIGH, "Arranco armada y con la puerta abierta");
@@ -233,9 +248,8 @@ static inline bool puerta_sensor_sospechoso(const puerta_t *p, int64_t ahora_ms)
 /* ---------- pulso ---------- */
 static inline void p_cortar_pulso(puerta_t *p, int64_t ahora_ms)
 {
-    if (!p->pulso_activo) return;
+    if (!p->cerradura.energizada) return;        /* la unica verdad sobre el pulso en curso */
     cerradura_cortar(&p->cerradura, ahora_ms);
-    p->pulso_activo = false;
     p_simple(p, ACC_CORTAR_PULSO, 0);
     p_aviso(p, AVISO_NADA, 0, 0);
 }
@@ -249,7 +263,6 @@ static inline bool p_dar_pulso(puerta_t *p, int64_t ahora_ms)
         p_alerta(p, "limite_pulsos", SEV_WARNING, "Se llego al limite de pulsos por minuto de la cerradura");
         return false;
     }
-    p->pulso_activo = true;
     p_simple(p, ACC_PULSO, (int32_t)concedido);
     p_aviso(p, AVISO_PITIDOS_PULSO, ahora_ms, ahora_ms + concedido);
     return true;
@@ -298,11 +311,7 @@ static inline void puerta_sensor(puerta_t *p, int64_t ahora_ms, bool abierta)
     /* Se cerro */
     p_evento(p, "cierre", NULL, 0, false);
     if (p->intrusion) {
-        p->intrusion = false;
-        if (p->intrusion_sonando) {
-            p->intrusion_sonando = false;
-            p_aviso(p, AVISO_NADA, 0, 0);
-        }
+        p_terminar_intrusion(p);
         p_alerta(p, "puerta_cerrada", SEV_INFO, "Se cerro la puerta despues de la intrusion");
     }
     if (p->aviso_alertado) {
@@ -310,6 +319,22 @@ static inline void puerta_sensor(puerta_t *p, int64_t ahora_ms, bool abierta)
         p_alerta(p, "puerta_cerrada", SEV_INFO, "La puerta que estaba abierta de mas se cerro");
     }
     p_callar_aviso_abierta(p);
+}
+
+/* Cambio el TIPO de sensor (set_config): la lectura nueva es como se ve la puerta ahora, no un
+   movimiento de la puerta. Se toma como estado sin eventos ni alertas (una armada que "pasa a
+   abierta" por reinterpretar el pin no es una intrusion). */
+static inline void puerta_sensor_resincronizar(puerta_t *p, int64_t ahora_ms, bool abierta)
+{
+    if (abierta == p->abierta) return;
+    p->abierta = abierta;
+    p->abierta_desde_ms = ahora_ms;
+    if (abierta && !p->armada) {
+        p_programar_aviso_abierta(p, ahora_ms);
+    } else if (!abierta) {
+        p_callar_aviso_abierta(p);
+        p->aviso_alertado = false;
+    }
 }
 
 /* ---------- tarjeta ---------- */
@@ -323,25 +348,28 @@ static inline void p_registrar_rechazo(puerta_t *p, int64_t ahora_ms)
         p->bloqueado = true;
         p->bloqueo_hasta_ms = ahora_ms + BLOQUEO_MS;
         p_alerta(p, "intentos_rechazados", SEV_HIGH, "Muchos llaveros rechazados seguidos: lector frenado");
-        for (int i = 0; i < RECHAZOS_PARA_BLOQUEO; i++) p->rechazos[i] = -VENTANA_RECHAZOS_MS * 100LL;
+        p_limpiar_rechazos(p);
     }
 }
 
-/* Una pasada autorizada abre: da el pulso si la puerta esta cerrada y deja armada la ventana de
-   la doble pasada. */
-static inline void p_acceso(puerta_t *p, int64_t ahora_ms, const uint8_t *uid, uint8_t largo, bool de_la_app)
+/* Una pasada autorizada abre: da el pulso si la puerta esta cerrada. El acceso (evento y
+   sonido de OK) se registra SOLO si de verdad abrio: si el limite de pulsos por minuto no deja
+   dar el pulso, p_dar_pulso ya emitio el error y la alerta, y no hubo ningun acceso. Devuelve
+   si hubo acceso (quien llama abre la ventana de la doble pasada solo en ese caso). */
+static inline bool p_acceso(puerta_t *p, int64_t ahora_ms, const uint8_t *uid, uint8_t largo, bool de_la_app)
 {
-    p_evento(p, "acceso", uid, largo, de_la_app);
-    p_sonido(p, SON_OK);
     if (p->abierta) {
         p_programar_aviso_abierta(p, ahora_ms);      /* pasaron la tarjeta: el plazo del aviso arranca de nuevo */
         if (p->aviso_sonando) {
             p->aviso_sonando = false;
             p_aviso(p, AVISO_NADA, 0, 0);
         }
-    } else {
-        p_dar_pulso(p, ahora_ms);
+    } else if (!p_dar_pulso(p, ahora_ms)) {
+        return false;
     }
+    p_evento(p, "acceso", uid, largo, de_la_app);
+    p_sonido(p, SON_OK);
+    return true;
 }
 
 static inline void p_desarmar(puerta_t *p, int64_t ahora_ms, const uint8_t *uid, uint8_t largo, bool de_la_app)
@@ -351,11 +379,7 @@ static inline void p_desarmar(puerta_t *p, int64_t ahora_ms, const uint8_t *uid,
     p_evento(p, "desarmado", uid, largo, de_la_app);
     p_simple(p, ACC_REPORTAR, 0);                    /* el latido deja de ser el de armada */
     if (p->intrusion) {                              /* corta la sirena */
-        p->intrusion = false;
-        if (p->intrusion_sonando) {
-            p->intrusion_sonando = false;
-            p_aviso(p, AVISO_NADA, 0, 0);
-        }
+        p_terminar_intrusion(p);
         if (p->abierta) p_programar_aviso_abierta(p, ahora_ms);
     }
 }
@@ -385,14 +409,15 @@ static inline void puerta_tarjeta(puerta_t *p, int64_t ahora_ms, const uint8_t *
         p_registrar_rechazo(p, ahora_ms);
         return;
     }
-    for (int i = 0; i < RECHAZOS_PARA_BLOQUEO; i++) p->rechazos[i] = -VENTANA_RECHAZOS_MS * 100LL;
+    p_limpiar_rechazos(p);
 
     if (p->armada) {
         /* U9: una pasada desarma (y corta la sirena si sonaba). Si la puerta esta cerrada, tambien abre. */
         p_desarmar(p, ahora_ms, uid, largo, false);
-        p_acceso(p, ahora_ms, uid, largo, false);
-        p->doble_activa = true;
-        p->doble_hasta_ms = ahora_ms + DOBLE_PASADA_MS;
+        if (p_acceso(p, ahora_ms, uid, largo, false)) {
+            p->doble_activa = true;
+            p->doble_hasta_ms = ahora_ms + DOBLE_PASADA_MS;
+        }
         return;
     }
 
@@ -412,9 +437,10 @@ static inline void puerta_tarjeta(puerta_t *p, int64_t ahora_ms, const uint8_t *
         return;
     }
 
-    p_acceso(p, ahora_ms, uid, largo, false);
-    p->doble_activa = true;
-    p->doble_hasta_ms = ahora_ms + DOBLE_PASADA_MS;
+    if (p_acceso(p, ahora_ms, uid, largo, false)) {
+        p->doble_activa = true;
+        p->doble_hasta_ms = ahora_ms + DOBLE_PASADA_MS;
+    }
 }
 
 /* Orden remota de abrir (solo si se compilo habilitada). Desarma y abre; no cuenta para la

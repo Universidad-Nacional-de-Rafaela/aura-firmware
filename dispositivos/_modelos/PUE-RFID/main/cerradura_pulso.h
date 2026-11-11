@@ -69,11 +69,6 @@ static inline int64_t cerradura_usado_ms(const cerradura_t *c, int64_t ahora_ms)
     return total;
 }
 
-/* Pide un pulso de pedido_ms (con su tope maximo_ms, que es set_config pero nunca mas que
-   PULSO_TOPE_MS). Devuelve cuantos ms se conceden, o 0 si no se puede (se llego al limite por
-   minuto). Si ya habia un pulso en curso, ese se termina primero y cuenta como uno aparte. */
-static inline int64_t cerradura_pedir(cerradura_t *c, int64_t ahora_ms, int64_t pedido_ms, int64_t maximo_ms);
-
 static inline void cerradura_cortar(cerradura_t *c, int64_t ahora_ms)
 {
     if (!c->energizada) return;
@@ -87,14 +82,24 @@ static inline void cerradura_cortar(cerradura_t *c, int64_t ahora_ms)
     c->energizada = false;
 }
 
+/* Pide un pulso de pedido_ms (con su tope maximo_ms, que es set_config pero nunca mas que
+   PULSO_TOPE_MS). Devuelve cuantos ms se conceden, o 0 si no se puede (se llego al limite por
+   minuto). Si ya habia un pulso en curso y el pedido se concede, ese se termina primero y cuenta
+   como uno aparte. Si se rechaza (0), NO se toca el pulso en curso: el rele sigue energizado
+   hasta su vencimiento y quien lo corta es cerradura_vencio(). */
 static inline int64_t cerradura_pedir(cerradura_t *c, int64_t ahora_ms, int64_t pedido_ms, int64_t maximo_ms)
 {
-    cerradura_cortar(c, ahora_ms);
     int64_t tope = maximo_ms < PULSO_TOPE_MS ? maximo_ms : PULSO_TOPE_MS;
     int64_t concedido = pedido_ms < tope ? pedido_ms : tope;
-    int64_t resta = LIMITE_MINUTO_MS - cerradura_usado_ms(c, ahora_ms);
+    /* Lo usado cuenta el pulso en curso como quedaria si se lo cortara ahora (con su minimo contable) */
+    int64_t usado = cerradura_usado_ms(c, ahora_ms);
+    if (c->energizada && (ahora_ms - c->inicio_ms) < PULSO_MINIMO_MS) {
+        usado += c->inicio_ms + PULSO_MINIMO_MS - ahora_ms;
+    }
+    int64_t resta = LIMITE_MINUTO_MS - usado;
     if (concedido > resta) concedido = resta;
     if (concedido < PULSO_MINIMO_MS) return 0;
+    cerradura_cortar(c, ahora_ms);
     c->energizada = true;
     c->inicio_ms = ahora_ms;
     c->vence_ms = ahora_ms + concedido;

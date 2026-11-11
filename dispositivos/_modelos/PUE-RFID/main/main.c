@@ -34,11 +34,14 @@
 #include "nodo_mesh.h"
 
 #include "almacen.h"
+#include "config_validacion.h"
 #include "lector.h"
+#include "latido_logica.h"
 #include "lista_tarjetas.h"
 #include "pines.h"
 #include "puerta_logica.h"
 #include "rele.h"
+#include "sensor_logica.h"
 #include "sonido.h"
 
 #if __has_include("config_local.h")
@@ -59,15 +62,14 @@ static const char *TAG = "PUERTA";
 #define PERIODO_LOGICA_MS 10
 #define PERIODO_LECTOR_MS 5000
 #define LECTOR_CAIDO_REINICIO_MS (5 * 60 * 1000)   /* un lector que no vuelve en 5 min: se reinicia la placa */
-#define ANTIREBOTE_SENSOR_MS 50
 
 /* ---------- Estado compartido con la mesh ---------- */
-static SemaphoreHandle_t lock_lista;
+static SemaphoreHandle_t lock_lista;       /* protege `lista` (lecturas cortas) */
+static SemaphoreHandle_t lock_cambio_lista;   /* serializa un cambio entero: copiar, modificar, guardar, asignar */
 static lista_t lista;                      /* lo que decide quien entra; lo cambia AURA */
 static SemaphoreHandle_t lock_cfg;
 static config_puerta_t cfg;                /* set_config */
-static volatile int latido_s = LATIDO_DESARMADA_S;
-static volatile bool latir_ya;
+static latido_t latido;                    /* intervalo informado y cuando toca el proximo latido */
 static QueueHandle_t cola_lecturas;
 static QueueHandle_t cola_abrir;           /* ordenes de abrir de AURA, hacia la tarea de la logica */
 
@@ -80,9 +82,12 @@ static inline int64_t ahora_ms(void) { return esp_timer_get_time() / 1000; }
 /*  Lista de llaveros                                                  */
 /* ================================================================== */
 /* Persiste primero y recien despues cambia la lista viva: si la flash falla, no queda una lista
-   en RAM distinta de la guardada. */
+   en RAM distinta de la guardada. Todo el cambio va bajo lock_cambio_lista: dos cambios a la vez
+   (AURA y la consola de banco) no se pisan. lock_lista se toma solo para copiar y para asignar,
+   asi la tarea de la logica no espera la escritura en flash al leer un llavero. */
 static lista_resultado_t lista_cambiar(bool agregar, const uint8_t *uid, size_t largo, bool *guardado)
 {
+    xSemaphoreTake(lock_cambio_lista, portMAX_DELAY);
     lista_t copia;
     xSemaphoreTake(lock_lista, portMAX_DELAY);
     copia = lista;
@@ -90,14 +95,16 @@ static lista_resultado_t lista_cambiar(bool agregar, const uint8_t *uid, size_t 
 
     lista_resultado_t r = agregar ? lista_agregar(&copia, uid, largo) : lista_quitar(&copia, uid, largo);
     *guardado = true;
-    if (r != LISTA_OK) return r;           /* ya estaba / no estaba / llena / invalido: no cambia nada */
-    if (!almacen_guardar_lista(&copia)) {
-        *guardado = false;
-        return r;
+    if (r == LISTA_OK) {                   /* ya estaba / no estaba / llena / invalido: no cambia nada */
+        if (almacen_guardar_lista(&copia)) {
+            xSemaphoreTake(lock_lista, portMAX_DELAY);
+            lista = copia;
+            xSemaphoreGive(lock_lista);
+        } else {
+            *guardado = false;
+        }
     }
-    xSemaphoreTake(lock_lista, portMAX_DELAY);
-    lista = copia;
-    xSemaphoreGive(lock_lista);
+    xSemaphoreGive(lock_cambio_lista);
     return r;
 }
 
@@ -108,6 +115,11 @@ static const char *sensor_nombre(sensor_tipo_t s) { return s == SENSOR_BOTON ? "
 
 static bool aplicar_config(const cJSON *params, char *motivo, size_t tam)
 {
+    /* params tiene que ser un objeto: un arreglo ("params":[5000]) no trae nombres de campo */
+    if (!cJSON_IsObject(params)) {
+        snprintf(motivo, tam, "params_invalido");
+        return false;
+    }
     /* Primero se valida TODO; solo despues se aplica (contrato 3.3) */
     config_puerta_t nueva;
     xSemaphoreTake(lock_cfg, portMAX_DELAY);
@@ -116,21 +128,25 @@ static bool aplicar_config(const cJSON *params, char *motivo, size_t tam)
 
     const cJSON *p;
     cJSON_ArrayForEach(p, params) {
+        if (p->string == NULL) {
+            snprintf(motivo, tam, "params_invalido");
+            return false;
+        }
         if (strcmp(p->string, "aula") == 0) continue;           /* la maneja la biblioteca */
         if (strcmp(p->string, "pulso_ms") == 0) {
-            if (!cJSON_IsNumber(p) || p->valuedouble != (int32_t)p->valuedouble ||
-                p->valuedouble < PULSO_MINIMO_MS || p->valuedouble > PULSO_TOPE_MS) {
+            int32_t valor;
+            if (!cJSON_IsNumber(p) || !entero_en_rango(p->valuedouble, PULSO_MINIMO_MS, PULSO_TOPE_MS, &valor)) {
                 snprintf(motivo, tam, "pulso_ms_fuera_de_rango");
                 return false;
             }
-            nueva.pulso_ms = (int32_t)p->valuedouble;
+            nueva.pulso_ms = valor;
         } else if (strcmp(p->string, "aviso_s") == 0) {
-            if (!cJSON_IsNumber(p) || p->valuedouble != (int32_t)p->valuedouble ||
-                p->valuedouble < AVISO_MIN_S || p->valuedouble > AVISO_MAX_S) {
+            int32_t valor;
+            if (!cJSON_IsNumber(p) || !entero_en_rango(p->valuedouble, AVISO_MIN_S, AVISO_MAX_S, &valor)) {
                 snprintf(motivo, tam, "aviso_s_fuera_de_rango");
                 return false;
             }
-            nueva.aviso_s = (int32_t)p->valuedouble;
+            nueva.aviso_s = valor;
         } else if (strcmp(p->string, "sensor") == 0) {
             if (cJSON_IsString(p) && strcmp(p->valuestring, "reed") == 0) {
                 nueva.sensor = SENSOR_REED;
@@ -172,7 +188,7 @@ static void describir_config(cJSON *config)
     lista_hash(&l, hash);
     /* intervalo_s: la raiz infiere que la placa se cayo con 3 intervalos sin datos. Armada, el
        latido es mas seguido y por eso este numero cambia (ADR-009, decision 7). */
-    cJSON_AddNumberToObject(config, "intervalo_s", latido_s);
+    cJSON_AddNumberToObject(config, "intervalo_s", latido.intervalo_s);
     cJSON_AddNumberToObject(config, "pulso_ms", k.pulso_ms);
     cJSON_AddNumberToObject(config, "aviso_s", k.aviso_s);
     cJSON_AddStringToObject(config, "sensor", sensor_nombre(k.sensor));
@@ -222,7 +238,7 @@ static bool ejecutar_comando(const char *comando, const cJSON *params, bool loca
     if (strcmp(comando, "tarjeta_quitar") == 0) return comando_tarjeta(false, params, motivo, tam);
     if (strcmp(comando, "estado") == 0) {
         /* Solo lectura: manda el reporte de la placa y un latido con la puerta y el armado */
-        latir_ya = true;
+        latido.latir_ya = true;
         nodo_mesh_reportar();
         return true;
     }
@@ -329,7 +345,8 @@ static void ejecutar_acciones(void)
             almacen_guardar_armada(a.valor != 0);
             break;
         case ACC_REPORTAR:
-            latir_ya = true;
+            /* el intervalo_s del reporte tiene que ser el de ahora (armada o no), no el anterior */
+            latido_al_reportar(&latido, &puerta);
             nodo_mesh_reportar();
             break;
         }
@@ -339,12 +356,6 @@ static void ejecutar_acciones(void)
 /* ================================================================== */
 /*  Tarea de la logica                                                 */
 /* ================================================================== */
-static bool sensor_abierta_cruda(sensor_tipo_t t)
-{
-    int nivel = gpio_get_level(PIN_SENSOR);
-    return t == SENSOR_REED ? nivel == 1 : nivel == 0;
-}
-
 static void tarea_puerta(void *arg)
 {
     (void)arg;
@@ -356,14 +367,14 @@ static void tarea_puerta(void *arg)
     xSemaphoreGive(lock_cfg);
 
     vTaskDelay(pdMS_TO_TICKS(100));        /* que la pull-up del sensor se estabilice */
-    bool estable = sensor_abierta_cruda(k.sensor);
-    bool ultima = estable;
-    int64_t cambio_en = ahora_ms();
+    sensor_filtro_t sensor;
+    sensor_filtro_iniciar(&sensor, k.sensor, gpio_get_level(PIN_SENSOR), ahora_ms());
+    bool estable = sensor.estable;
 
     puerta_iniciar(&puerta, ahora_ms(), almacen_cargar_armada(), estable, k.pulso_ms, k.aviso_s);
     ESP_LOGI(TAG, "Arranca %s, puerta %s", puerta.armada ? "ARMADA" : "desarmada", estable ? "abierta" : "cerrada");
 
-    int64_t proximo_latido = 0, proximo_lector = ahora_ms() + PERIODO_LECTOR_MS, lector_caido_desde = 0;
+    int64_t proximo_lector = ahora_ms() + PERIODO_LECTOR_MS, lector_caido_desde = 0;
     bool sensor_sospechoso = false;
 
     while (true) {
@@ -377,15 +388,19 @@ static void tarea_puerta(void *arg)
         }
         puerta.pulso_ms = k.pulso_ms;
         puerta.aviso_s = k.aviso_s;
-        bool cruda = sensor_abierta_cruda(k.sensor);
-        if (cruda != ultima) {
-            ultima = cruda;
-            cambio_en = ahora;
-        }
-        if (cruda != estable && (ahora - cambio_en) >= ANTIREBOTE_SENSOR_MS) {
-            estable = cruda;
-            ESP_LOGI(TAG, "Puerta %s", estable ? "ABIERTA" : "cerrada");
-            puerta_sensor(&puerta, ahora, estable);
+        bool abierta;
+        switch (sensor_filtro_paso(&sensor, ahora, k.sensor, gpio_get_level(PIN_SENSOR), &abierta)) {
+        case SENSOR_CAMBIO:
+            ESP_LOGI(TAG, "Puerta %s", abierta ? "ABIERTA" : "cerrada");
+            puerta_sensor(&puerta, ahora, abierta);
+            break;
+        case SENSOR_RESINCRONIZADO:
+            /* set_config cambio el tipo de sensor: la lectura nueva es el estado, no un movimiento */
+            ESP_LOGI(TAG, "Sensor %s: la puerta se ve %s", sensor_nombre(k.sensor), abierta ? "abierta" : "cerrada");
+            puerta_sensor_resincronizar(&puerta, ahora, abierta);
+            break;
+        case SENSOR_IGUAL:
+            break;
         }
         ejecutar_acciones();
 
@@ -437,16 +452,7 @@ static void tarea_puerta(void *arg)
         }
 
         /* 6. Latido: mas seguido con la puerta armada (se supervisa que no la hayan arrancado) */
-        int nuevo_latido = puerta_latido_s(&puerta);
-        if (nuevo_latido != latido_s) {
-            latido_s = nuevo_latido;
-            latir_ya = true;
-        }
-        if (latir_ya || (ahora - proximo_latido) >= 0) {
-            latir_ya = false;
-            proximo_latido = ahora + (int64_t)latido_s * 1000;
-            emitir_latido();
-        }
+        if (latido_toca(&latido, &puerta, ahora)) emitir_latido();
 
         vTaskDelay(pdMS_TO_TICKS(PERIODO_LOGICA_MS));
     }
@@ -541,6 +547,8 @@ void app_main(void)
     ESP_ERROR_CHECK(gpio_config(&entrada));
 
     lock_lista = xSemaphoreCreateMutex();
+    lock_cambio_lista = xSemaphoreCreateMutex();
+    latido_iniciar(&latido, LATIDO_DESARMADA_S);       /* antes de la mesh: describir_config lo lee */
     lock_cfg = xSemaphoreCreateMutex();
     cola_lecturas = xQueueCreate(4, sizeof(lectura_t));
     cola_abrir = xQueueCreate(2, sizeof(uint8_t));

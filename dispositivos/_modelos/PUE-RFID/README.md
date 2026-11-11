@@ -156,10 +156,14 @@ llaveros y su hash, el tope y el límite por minuto del pulso, la máquina de es
 | `main/cerradura_pulso.h` | tope del pulso y límite por minuto (ventana móvil de 60 s) |
 | `main/lista_tarjetas.h` | UID, lista y hash (también lo usa el lector de banco) |
 | `main/sonido_logica.h` | qué suena y cuándo |
+| `main/latido_logica.h` | intervalo del latido (30 s armada, 120 s desarmada) y cuándo toca: se actualiza antes de cada reporte |
+| `main/sensor_logica.h` | antirrebote del sensor y qué pasa si `set_config` cambia el tipo (se resincroniza, sin evento) |
+| `main/lector_logica.h` | cuándo el lector está sano, hay que reintentar `rc522_start()` o reiniciarlo |
+| `main/config_validacion.h` | entero dentro de rango, comparando antes de convertir |
 | `main/rele.c` | **lo único que toca la cerradura**; su `esp_timer` la traba aunque la lógica se cuelgue |
 | `main/sonido.c` | tarea propia: ningún sonido frena la lectura |
-| `main/lector.c` | RC522 sobre `abobija/rc522` 4.0.1; revisa que siga vivo y lo reinicia |
-| `main/almacen.c` | NVS, escribiendo solo si el valor cambia |
+| `main/lector.c` | RC522 sobre `abobija/rc522` 4.0.1; revisa que lea y, si no, reintenta el arranque o lo reinicia |
+| `main/almacen.c` | NVS, escribiendo solo si el valor cambia; la config va en un solo blob (todo o nada) |
 | `main/main.c` | cablea todo y ejecuta las acciones en orden |
 
 - **Tiempo de 64 bits** (`esp_timer_get_time()`): no hay rollover de `millis()` a los 49,7 días, y aun así se

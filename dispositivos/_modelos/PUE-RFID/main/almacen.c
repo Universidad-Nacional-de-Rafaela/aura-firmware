@@ -29,14 +29,6 @@ static bool blob_si_cambia(const char *clave, const void *datos, size_t n)
     return nvs_set_blob(h, clave, datos, n) == ESP_OK && nvs_commit(h) == ESP_OK;
 }
 
-static bool u32_si_cambia(const char *clave, uint32_t valor)
-{
-    if (!abierto) return false;
-    uint32_t actual;
-    if (nvs_get_u32(h, clave, &actual) == ESP_OK && actual == valor) return true;
-    return nvs_set_u32(h, clave, valor) == ESP_OK && nvs_commit(h) == ESP_OK;
-}
-
 void almacen_cargar_lista(lista_t *l)
 {
     lista_vaciar(l);
@@ -73,23 +65,40 @@ bool almacen_guardar_armada(bool armada)
     return nvs_set_u8(h, "armada", armada ? 1 : 0) == ESP_OK && nvs_commit(h) == ESP_OK;
 }
 
+/* Lo que se guarda de la config. Todos los campos de 4 bytes: sin relleno. */
+#define CONFIG_BLOB_VERSION 1
+typedef struct {
+    uint32_t version;
+    int32_t pulso_ms;
+    int32_t aviso_s;
+    uint32_t sensor;
+} config_blob_t;
+
 void almacen_cargar_config(config_puerta_t *c)
 {
     c->pulso_ms = PULSO_DEFECTO_MS;
     c->aviso_s = AVISO_DEFECTO_S;
     c->sensor = SENSOR_REED;
     if (!abierto) return;
-    uint32_t v;
-    /* Lo guardado se vuelve a validar contra el rango: si esta fuera, queda el valor por defecto */
-    if (nvs_get_u32(h, "pulso_ms", &v) == ESP_OK && v >= PULSO_MINIMO_MS && v <= PULSO_TOPE_MS) c->pulso_ms = (int32_t)v;
-    if (nvs_get_u32(h, "aviso_s", &v) == ESP_OK && v >= AVISO_MIN_S && v <= AVISO_MAX_S) c->aviso_s = (int32_t)v;
-    if (nvs_get_u32(h, "sensor", &v) == ESP_OK && v <= SENSOR_BOTON) c->sensor = (sensor_tipo_t)v;
+    config_blob_t b;
+    size_t n = sizeof(b);
+    if (nvs_get_blob(h, "config", &b, &n) != ESP_OK || n != sizeof(b) || b.version != CONFIG_BLOB_VERSION) return;
+    /* Se vuelve a validar contra el rango: si algo esta fuera, no se usa nada de lo guardado */
+    if (b.pulso_ms < PULSO_MINIMO_MS || b.pulso_ms > PULSO_TOPE_MS) return;
+    if (b.aviso_s < AVISO_MIN_S || b.aviso_s > AVISO_MAX_S) return;
+    if (b.sensor > (uint32_t)SENSOR_BOTON) return;
+    c->pulso_ms = b.pulso_ms;
+    c->aviso_s = b.aviso_s;
+    c->sensor = (sensor_tipo_t)b.sensor;
 }
 
 bool almacen_guardar_config(const config_puerta_t *c)
 {
-    bool ok = u32_si_cambia("pulso_ms", (uint32_t)c->pulso_ms);
-    ok = u32_si_cambia("aviso_s", (uint32_t)c->aviso_s) && ok;
-    ok = u32_si_cambia("sensor", (uint32_t)c->sensor) && ok;
-    return ok;
+    config_blob_t b;
+    memset(&b, 0, sizeof(b));
+    b.version = CONFIG_BLOB_VERSION;
+    b.pulso_ms = c->pulso_ms;
+    b.aviso_s = c->aviso_s;
+    b.sensor = (uint32_t)c->sensor;
+    return blob_si_cambia("config", &b, sizeof(b));
 }

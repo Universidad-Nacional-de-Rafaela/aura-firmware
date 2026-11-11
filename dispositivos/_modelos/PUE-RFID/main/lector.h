@@ -9,6 +9,7 @@
 #include "esp_err.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
+#include "lector_logica.h"
 #include "lista_tarjetas.h"
 
 typedef struct {
@@ -16,15 +17,11 @@ typedef struct {
     uint8_t uid[UID_MAX_BYTES];
 } lectura_t;
 
-typedef enum {
-    LECTOR_OK = 0,
-    LECTOR_RECUPERADO,      /* estaba apagado (se reinicio) y se lo volvio a levantar */
-    LECTOR_CAIDO            /* no responde ni reiniciandolo */
-} lector_salud_t;
-
 /* Arranca el SPI y el lector. Cada lectura va a `cola` (de elementos lectura_t). */
 esp_err_t lector_iniciar(QueueHandle_t cola);
 
-/* Revisa que el RC522 siga vivo (version y antena) y, si se reinicio, lo levanta. Llamar cada
-   unos segundos desde una tarea que no sea la del lector. */
+/* Revisa que el RC522 siga vivo y leyendo, y si no, lo levanta. Si rc522_start() no se completo
+   (cable flojo al encender) lo reintenta: mientras no lea, no es LECTOR_OK. Si ademas se
+   reinicio (version y antena), lo reinicia. Llamar cada unos segundos desde una tarea que no
+   sea la del lector. Las reglas estan en lector_logica.h. */
 lector_salud_t lector_revisar(void);

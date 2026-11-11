@@ -19,7 +19,8 @@ extern esp_err_t rc522_pcd_read(const rc522_handle_t rc522, int addr, uint8_t *v
 #define REG_TX_CONTROL 0x14
 #define REG_VERSION 0x37
 
-static rc522_handle_t lector;
+static rc522_handle_t lector;           /* NULL hasta que el driver este creado y con su evento */
+static bool arrancado;                  /* rc522_start() se completo: recien ahi la tarea lee tarjetas */
 static QueueHandle_t cola_lecturas;
 static SemaphoreHandle_t mutex_lector;
 
@@ -60,31 +61,46 @@ esp_err_t lector_iniciar(QueueHandle_t cola)
     e = rc522_driver_install(driver);
     if (e != ESP_OK) return e;
     rc522_config_t cfg = {.driver = driver, .task_mutex = mutex_lector};
-    e = rc522_create(&cfg, &lector);
+    rc522_handle_t creado = NULL;
+    e = rc522_create(&cfg, &creado);
     if (e != ESP_OK) return e;
-    e = rc522_register_events(lector, RC522_EVENT_PICC_STATE_CHANGED, al_cambiar_tarjeta, NULL);
-    if (e != ESP_OK) return e;
+    e = rc522_register_events(creado, RC522_EVENT_PICC_STATE_CHANGED, al_cambiar_tarjeta, NULL);
+    if (e != ESP_OK) return e;              /* sin el evento no hay lectura posible: queda sin lector */
+    lector = creado;
     /* start() hace el reinicio, la prueba de lectura/escritura y la configuracion: si el RC522
-       no esta conectado falla aca */
-    return rc522_start(lector);
+       no esta conectado falla aca. La tarea del driver ya existe pero no lee hasta que start()
+       termina bien, asi que lector_revisar() lo reintenta. */
+    e = rc522_start(lector);
+    arrancado = (e == ESP_OK);
+    return e;
 }
 
 lector_salud_t lector_revisar(void)
 {
-    if (lector == NULL) return LECTOR_CAIDO;
-    if (xSemaphoreTake(mutex_lector, pdMS_TO_TICKS(500)) != pdTRUE) return LECTOR_OK;   /* ocupado leyendo */
+    bool creado = lector != NULL;
+    if (creado && xSemaphoreTake(mutex_lector, pdMS_TO_TICKS(500)) != pdTRUE) {
+        return arrancado ? LECTOR_OK : LECTOR_CAIDO;       /* ocupado leyendo */
+    }
     uint8_t version = 0, antena = 0;
-    esp_err_t ev = rc522_pcd_read(lector, REG_VERSION, &version);
-    esp_err_t ea = rc522_pcd_read(lector, REG_TX_CONTROL, &antena);
-    lector_salud_t r = LECTOR_OK;
-    bool vivo = ev == ESP_OK && version != 0x00 && version != 0xFF;
-    if (!vivo || ea != ESP_OK || (antena & 0x03) != 0x03) {
+    bool registros_bien = false;
+    if (creado && arrancado) {
+        esp_err_t ev = rc522_pcd_read(lector, REG_VERSION, &version);
+        esp_err_t ea = rc522_pcd_read(lector, REG_TX_CONTROL, &antena);
+        registros_bien = ev == ESP_OK && version != 0x00 && version != 0xFF && ea == ESP_OK && (antena & 0x03) == 0x03;
+    }
+    lector_paso_t paso = lector_proximo_paso(creado, arrancado, registros_bien);
+    bool salio_bien = false;
+    if (paso == LECTOR_PASO_ARRANCAR) {
+        ESP_LOGW(TAG, "El RC522 nunca termino de arrancar: reintento rc522_start()");
+        salio_bien = rc522_start(lector) == ESP_OK;
+        arrancado = salio_bien;
+    } else if (paso == LECTOR_PASO_REINICIAR) {
         ESP_LOGW(TAG, "El RC522 se reinicio o no responde (version=0x%02X antena=0x%02X): lo reinicio", version, antena);
         esp_err_t e = rc522_pcd_reset(lector, 150);
         if (e == ESP_OK) e = rc522_pcd_rw_test(lector);
         if (e == ESP_OK) e = rc522_pcd_init(lector);
-        r = (e == ESP_OK) ? LECTOR_RECUPERADO : LECTOR_CAIDO;
+        salio_bien = (e == ESP_OK);
     }
-    xSemaphoreGive(mutex_lector);
-    return r;
+    if (creado) xSemaphoreGive(mutex_lector);
+    return lector_salud_tras(paso, salio_bien);
 }

@@ -401,6 +401,54 @@ int main() {
     VERIFICAR(orden_vigente(true, ahora + 60, 0) == ORDEN_SIN_HORA);
   }
 
+  // ---- Review: un pulso rechazado por el limite no es un acceso ni abre la doble pasada ----
+  {
+    puerta_t p = nueva();
+    int64_t t = 0;
+    for (int i = 0; i < 4; i++) {            // cuatro pulsos de 5 s agotan los 20 s por minuto
+      puerta_tarjeta(&p, t, A, 4, true);
+      VERIFICAR(contar(vaciar(p), ACC_PULSO) == 1);
+      puerta_tick(&p, t + 5000);
+      vaciar(p);
+      t += 6000;
+    }
+    puerta_tarjeta(&p, t, A, 4, true);       // rechazada por el limite
+    auto v = vaciar(p);
+    VERIFICAR(contar(v, ACC_PULSO) == 0);
+    VERIFICAR(!hay(v, ACC_EVENTO, "acceso"));
+    VERIFICAR(!hay_sonido(v, SON_OK));
+    VERIFICAR(hay_sonido(v, SON_ERROR));
+    VERIFICAR(hay(v, ACC_ALERTA, "limite_pulsos"));
+    VERIFICAR(!(p.doble_activa && (t - p.doble_hasta_ms) < 0));   // la ventana no quedo abierta
+    puerta_tarjeta(&p, t + 1000, A, 4, true);  // dentro de los 3 s: no es "segunda pasada", no arma
+    v = vaciar(p);
+    VERIFICAR(!p.armada);
+    VERIFICAR(!hay(v, ACC_EVENTO, "armado"));
+    VERIFICAR(!hay(v, ACC_EVENTO, "acceso"));
+  }
+
+  // ---- Review: un pedido rechazado con el pulso en curso no deja el rele colgado ----
+  {
+    puerta_t p = nueva();
+    p.pulso_ms = 10000;
+    puerta_tarjeta(&p, 0, A, 4, true);
+    vaciar(p);
+    puerta_tick(&p, 10000);
+    VERIFICAR(contar(vaciar(p), ACC_CORTAR_PULSO) == 1);
+    puerta_tarjeta(&p, 11000, A, 4, true);   // pulso en curso hasta 21000
+    VERIFICAR(contar(vaciar(p), ACC_PULSO) == 1);
+    puerta_tarjeta(&p, 20600, A, 4, true);   // 19600 ms usados: se rechaza
+    auto v = vaciar(p);
+    VERIFICAR(hay(v, ACC_ALERTA, "limite_pulsos"));
+    VERIFICAR(p.cerradura.energizada);       // el pulso en curso sigue siendo el que era
+    VERIFICAR(contar(v, ACC_CORTAR_PULSO) == 0);
+    puerta_tick(&p, 20999);
+    VERIFICAR(contar(vaciar(p), ACC_CORTAR_PULSO) == 0);
+    puerta_tick(&p, 21000);                  // y se corta cuando vence, no se queda energizado
+    VERIFICAR(contar(vaciar(p), ACC_CORTAR_PULSO) == 1);
+    VERIFICAR(!p.cerradura.energizada);
+  }
+
   // La cola de acciones no se desborda ni se corrompe
   {
     puerta_t p = nueva();

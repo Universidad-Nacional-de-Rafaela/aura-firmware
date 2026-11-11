@@ -82,6 +82,24 @@ int main() {
   VERIFICAR(cerradura_pedir(&c, 1000, 5000, 5000) == 5000);
   VERIFICAR(c.inicio_ms == 1000);
 
+  // Review: un pedido rechazado por el limite NO toca el pulso en curso (ni lo corta ni lo
+  // recorta): el rele sigue energizado hasta su vencimiento y ese tiempo sigue contando
+  cerradura_iniciar(&c);
+  VERIFICAR(cerradura_pedir(&c, 0, 10000, 10000) == 10000);
+  cerradura_cortar(&c, 10000);
+  VERIFICAR(cerradura_pedir(&c, 10000, 10000, 10000) == 10000);       // en curso hasta 20000
+  VERIFICAR(cerradura_pedir(&c, 19800, 10000, 10000) == 0);           // 19800 ms usados: no entra
+  VERIFICAR(c.energizada);
+  VERIFICAR(c.inicio_ms == 10000);
+  VERIFICAR(c.vence_ms == 20000);
+  VERIFICAR(!cerradura_vencio(&c, 19999));
+  VERIFICAR(cerradura_vencio(&c, 20000));                             // y vence normalmente
+  // El pulso en curso cortado por un pedido aceptado se cuenta con su minimo contable
+  cerradura_iniciar(&c);
+  cerradura_pedir(&c, 0, 5000, 5000);
+  VERIFICAR(cerradura_pedir(&c, 100, 5000, 5000) == 5000);            // corta el de 100 ms (cuenta 500)
+  VERIFICAR(cerradura_usado_ms(&c, 100) == PULSO_MINIMO_MS);
+
   // Tiempos enormes de 64 bits: no hay rollover a los 49,7 dias ni a los 100 dias
   cerradura_iniciar(&c);
   int64_t cien_dias = 100LL * 24 * 3600 * 1000;

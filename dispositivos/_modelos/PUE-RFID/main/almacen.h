@@ -7,11 +7,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "lista_tarjetas.h"
-
-typedef enum {
-    SENSOR_REED = 0,        /* abierta = pin en ALTO (iman lejos o cable cortado: un corte se lee "abierta") */
-    SENSOR_BOTON            /* abierta = pin en BAJO (boton de banco que simula la puerta) */
-} sensor_tipo_t;
+#include "sensor_logica.h"
 
 typedef struct {
     int32_t pulso_ms;
@@ -28,5 +24,7 @@ bool almacen_guardar_lista(const lista_t *l);
 bool almacen_cargar_armada(void);
 bool almacen_guardar_armada(bool armada);
 
+/* La config se guarda de una sola vez (un blob, un commit): o queda la nueva entera o la vieja
+   entera. Si lo guardado no es valido, la carga devuelve los valores por defecto de los tres. */
 void almacen_cargar_config(config_puerta_t *c);
 bool almacen_guardar_config(const config_puerta_t *c);
