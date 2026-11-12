@@ -2,5 +2,5 @@
 
 - **Nombre:** Matias Lang
 - **Materia:** Ingeniería en Computación IV, 2026
-- **Grupo / dispositivo:** E1-PB-LECA-PRE01 (propuesto, a confirmar; presencia por cámara)
+- **Grupo / dispositivo:** E1-PB-LECA-PRE01
 
