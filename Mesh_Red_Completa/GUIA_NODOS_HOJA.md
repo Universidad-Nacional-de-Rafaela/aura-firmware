@@ -309,8 +309,9 @@ verifica la firma antes de instalarla (`CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT
   se aplica a las opciones que el `sdkconfig` todavía no tiene. Sin la verificación de firma la compilación se frena con
   un `#error`, en vez de generar una imagen que acepta cualquier OTA.
 - **Siempre grabar por USB una imagen firmada:** una placa que arranca con una imagen sin firma no acepta ninguna OTA.
-- **Placas de la instalación:** solo la cátedra tiene la clave definitiva. Un grupo le pasa su `.bin` sin firmar y la
-  cátedra lo firma.
+- **Placas de la instalación:** solo la cátedra tiene la clave definitiva. El grupo entrega el **código** por PR; después
+  del merge, la cátedra compila desde `main` con las credenciales de la instalación y firma esa imagen. No se firman
+  `.bin` compilados por otros, y la imagen firmada no se publica (lleva las credenciales de la malla).
 - **Banco y desarrollo:** cada grupo se genera su propia clave de prueba (una vez) y la guarda fuera del repo:
   ```
   python -m espsecure generate-signing-key --version 2 --scheme rsa3072 <ruta>/firma_prueba.pem
