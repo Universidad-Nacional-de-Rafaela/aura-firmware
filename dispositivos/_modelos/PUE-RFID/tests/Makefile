@@ -1,6 +1,6 @@
 CXXFLAGS = -std=c++17 -Wall -Wextra -Werror -g
 
-TESTS = test_lista test_cerradura test_puerta test_sonido test_latido test_sensor test_lector test_config
+TESTS = test_lista test_cerradura test_puerta test_sonido test_latido test_sensor test_lector test_config test_autenticacion
 
 .PHONY: test clean
 test: $(TESTS)
@@ -30,6 +30,9 @@ test_lector: test_lector.cpp ../main/lector_logica.h
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
 test_config: test_config.cpp ../main/config_validacion.h
+	$(CXX) $(CXXFLAGS) -o $@ $<
+
+test_autenticacion: test_autenticacion.cpp ../main/autenticacion_logica.h ../main/lista_tarjetas.h ../../../../comun/ntag424.h ../../../../comun/sha256_hmac.h ../../../../comun/tests/tarjeta_sim.h
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
 clean:

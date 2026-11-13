@@ -34,6 +34,13 @@
 #include "nodo_mesh.h"
 
 #include "almacen.h"
+#include "autenticacion_logica.h"
+#include "esp_random.h"
+#if CONFIG_PUERTA_MAESTRA_EFUSE
+#include "esp_efuse.h"
+#include "esp_hmac.h"
+#endif
+#include "../../../../comun/sha256_hmac.h"
 #include "config_validacion.h"
 #include "lector.h"
 #include "latido_logica.h"
@@ -69,6 +76,51 @@ static SemaphoreHandle_t lock_cambio_lista;   /* serializa un cambio entero: cop
 static lista_t lista;                      /* lo que decide quien entra; lo cambia AURA */
 static SemaphoreHandle_t lock_cfg;
 static config_puerta_t cfg;                /* set_config */
+#if CONFIG_PUERTA_AUTENTICACION
+static bool hay_maestra;
+#if CONFIG_PUERTA_MAESTRA_EFUSE
+static hmac_key_id_t id_hmac;              /* la maestra esta en el eFuse: aca no hay copia */
+
+static bool clave_de_tarjeta_banco(void *ctx, const uint8_t *uid, size_t largo, uint8_t out[16])
+{
+    (void)ctx;
+    uint8_t h[32];
+    if (!hay_maestra || (largo != 4 && largo != 7 && largo != 10)) return false;
+    if (esp_hmac_calculate(id_hmac, uid, largo, h) != ESP_OK) return false;
+    memcpy(out, h, 16);                    /* mismos 16 bytes que clave_de_tarjeta() de comun/ */
+    ntag_borrar(h, sizeof(h));
+    return true;
+}
+#else
+static uint8_t maestra[32];                /* de BANCO, en RAM */
+
+static bool clave_de_tarjeta_banco(void *ctx, const uint8_t *uid, size_t largo, uint8_t out[16])
+{
+    (void)ctx;
+    if (!hay_maestra) return false;
+    return clave_de_tarjeta(maestra, uid, largo, out) == 0;
+}
+#endif
+
+static bool azar_hw(void *ctx, uint8_t out[16])
+{
+    (void)ctx;
+    esp_fill_random(out, 16);
+    return true;
+}
+
+/* Corre en la tarea del lector, con la tarjeta en el campo */
+static int8_t verificar_tarjeta(const uint8_t *uid, uint8_t largo, lector_apdu_fn apdu, void *ctx)
+{
+    lista_t copia;
+    xSemaphoreTake(lock_lista, portMAX_DELAY);
+    copia = lista;
+    xSemaphoreGive(lock_lista);
+    auth_ops_t ops = {.apdu = apdu, .clave_de_tarjeta = clave_de_tarjeta_banco, .azar = azar_hw, .ctx = ctx};
+    return (int8_t)auth_verificar(&copia, uid, largo, &ops);
+}
+#endif
+
 static latido_t latido;                    /* intervalo informado y cuando toca el proximo latido */
 static QueueHandle_t cola_lecturas;
 static QueueHandle_t cola_abrir;           /* ordenes de abrir de AURA, hacia la tarea de la logica */
@@ -420,7 +472,13 @@ static void tarea_puerta(void *arg)
             xSemaphoreTake(lock_lista, portMAX_DELAY);
             bool autorizada = lista_autorizada(&lista, l.uid, l.largo);
             xSemaphoreGive(lock_lista);
+#if CONFIG_PUERTA_AUTENTICACION
+            const char *motivo_auth = l.auth >= 0 ? auth_texto((auth_resultado_t)l.auth) : "sin_verificador";
+            autorizada = autorizada && l.auth == AUTH_OK;
+            ESP_LOGI(TAG, "Llavero %s -> %s (%s)", hex, autorizada ? "autorizado" : "RECHAZADO", motivo_auth);
+#else
             ESP_LOGI(TAG, "Llavero %s -> %s", hex, autorizada ? "autorizado" : "RECHAZADO");
+#endif
             puerta_tarjeta(&puerta, ahora, l.uid, l.largo, autorizada);
             ejecutar_acciones();
         }
@@ -470,10 +528,10 @@ static void tarea_consola(void *arg)
     usb_serial_jtag_vfs_use_driver();
     setvbuf(stdin, NULL, _IONBF, 0);
     printf("\nCONSOLA DE BANCO: agregar <UID> | quitar <UID> | listar | config <clave> <valor>\n");
-    char linea[64];
+    char linea[96];
     while (fgets(linea, sizeof(linea), stdin) != NULL) {
-        char orden[16] = "", uidtxt[32] = "";
-        sscanf(linea, "%15s %31s", orden, uidtxt);
+        char orden[16] = "", uidtxt[72] = "";
+        sscanf(linea, "%15s %71s", orden, uidtxt);
         if (strcmp(orden, "listar") == 0) {
             lista_t l;
             xSemaphoreTake(lock_lista, portMAX_DELAY);
@@ -499,6 +557,27 @@ static void tarea_consola(void *arg)
                 printf("%s\n", !guardado ? "error de NVS" : r == LISTA_OK ? "hecho" : r == LISTA_LLENA ? "lista llena" : "ya estaba asi");
                 if (guardado && r == LISTA_OK) nodo_mesh_reportar();
             }
+#if CONFIG_PUERTA_AUTENTICACION && !CONFIG_PUERTA_MAESTRA_EFUSE
+        } else if (strcmp(orden, "maestra") == 0) {
+            /* maestra <64 hex>: clave maestra de banco (NO segura, queda en flash) */
+            uint8_t k[32];
+            bool bien = strlen(uidtxt) == 0 ? false : true;
+            size_t nh = strlen(uidtxt);
+            if (nh != 64) bien = false;
+            for (size_t i = 0; bien && i < 32; i++) {
+                unsigned v;
+                char par[3] = {uidtxt[2 * i], uidtxt[2 * i + 1], 0};
+                if (sscanf(par, "%2x", &v) != 1) bien = false; else k[i] = (uint8_t)v;
+            }
+            if (bien && almacen_guardar_maestra(k)) {
+                memcpy(maestra, k, 32);
+                hay_maestra = true;
+                printf("hecho\n");
+            } else {
+                printf("uso: maestra <64 hex>\n");
+            }
+            memset(k, 0, sizeof(k));
+#endif
         } else if (strcmp(orden, "config") == 0) {
             /* Lo mismo que un set_config de AURA (misma validacion), para probar sin gateway:
                config sensor boton | config pulso_ms 3000 | config aviso_s 10 */
@@ -560,6 +639,23 @@ void app_main(void)
 
     sonido_iniciar();
 
+#if CONFIG_PUERTA_AUTENTICACION
+#if CONFIG_PUERTA_MAESTRA_EFUSE
+    esp_efuse_block_t bloque_hmac;
+    hay_maestra = esp_efuse_find_purpose(ESP_EFUSE_KEY_PURPOSE_HMAC_UP, &bloque_hmac);
+    if (hay_maestra) id_hmac = (hmac_key_id_t)(bloque_hmac - EFUSE_BLK_KEY0);
+#else
+    hay_maestra = almacen_cargar_maestra(maestra);
+#endif
+#if CONFIG_PUERTA_MAESTRA_EFUSE
+#define MAESTRA_DONDE "eFuse"
+#else
+#define MAESTRA_DONDE "flash, SOLO BANCO"
+#endif
+    ESP_LOGW(TAG, "Autenticacion de llaveros ACTIVA (maestra en %s); maestra %s", MAESTRA_DONDE,
+             hay_maestra ? "cargada" : "FALTA (ningun llavero abre)");
+    lector_set_verificador(verificar_tarjeta);
+#endif
     err = lector_iniciar(cola_lecturas);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "El lector RC522 no arranca (%s): sin lector no se abre con llavero", esp_err_to_name(err));

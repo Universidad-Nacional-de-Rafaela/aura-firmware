@@ -2,4 +2,3 @@
 ## Versiones fijas, como las bibliotecas de los sketches.
 dependencies:
   espressif/cjson: "*"
-  abobija/rc522: "4.0.1"
