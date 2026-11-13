@@ -27,6 +27,9 @@
 /dispositivos/E1-AZ-TERR-TAN01/   @FerChaparro27 @romerof7
 /conectores/E1-AZ-TERR-TAN01/     @FerChaparro27 @romerof7
 
+/dispositivos/E1-PB-LECA-CDC01/   @AgosBracaccini @JulietaCordoba @luisina-milanese
+/conectores/E1-PB-LECA-CDC01/     @AgosBracaccini @JulietaCordoba @luisina-milanese
+
 # Puertas del Edificio 2, piso 2 (modelo PUE-RFID y sus nueve instalaciones)
 /dispositivos/_modelos/PUE-RFID/   @romerof7
 /dispositivos/E2-P2-RECT-PUE01/   @romerof7

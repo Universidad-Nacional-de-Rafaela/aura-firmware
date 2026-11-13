@@ -9,7 +9,7 @@
 | **Transporte** | Interior: hoja ESP-WIFI-MESH; no reenvía tráfico de otras placas. |
 | **Contrato** | [Copia MQTT v4.4 (propuesta)](../../docs/CONTRATO_MQTT.md), [ADR-007](../../docs/adr/ADR-007-mesh-en-esp-idf-con-concentrador-por-aula.md) y [ADR-008](../../docs/adr/ADR-008-actualizacion-por-la-malla-y-tipo-de-firmware.md). |
 | **Basado en** | [Mesh3_Hoja](../../Mesh_Red_Completa/Mesh3_Hoja/) y su biblioteca pública `nodo_mesh`. |
-| **Firmware** | Tipo `aura-heladera-freezer`, versión `1.0.1`; mismo binario para las placas del mismo uso. |
+| **Firmware** | Tipo `aura-heladera-freezer`, versión `1.0.2`; mismo binario para las placas del mismo uso. |
 | **Códigos anteriores** | Ninguno confirmado. |
 
 ## Qué hace
@@ -57,14 +57,16 @@ de los D0…D5 de la XIAO. Confirmar cableado y niveles antes de energizar.
 | DS18B20 freezer | GPIO4, otro bus con su pull-up de 4,7 kΩ a 3,3 V. |
 | LED umbral, externo con resistencia | GPIO7, activo alto. |
 | LED desconexión, externo con resistencia | GPIO10, activo alto. |
-| OLED SH1106 128×64 | SDA GPIO5, SCL GPIO6; dirección 0x3c. |
+| OLED SH1106 128×64 | SDA GPIO8, SCL GPIO9; dirección 0x3c. |
 | RTC DS3231 con pila | Mismo I2C, dirección 0x68; hora guardada en UTC. |
 | Detección de alimentación | Deshabilitada (`HFR_PIN_ALIMENTACION = -1`) hasta confirmar el circuito. |
 
-Evitar GPIO18/19 (USB) y GPIO2/8/9 (arranque) en este cableado. Todos los GPIO
-trabajan a 3,3 V; revisar también los pull-up de los módulos I2C. Las sondas se
-usan con alimentación externa, sin modo parásito. La resolución es de 9 bits
-(0,5 °C); cada conversión ocupa unos 100 ms de la tarea de medición.
+Reservar GPIO18/19 para USB y GPIO2 para arranque. GPIO8 y GPIO9 se usan para
+I2C y también intervienen en el arranque. El bus usa pull-ups a 3,3 V y
+ningún módulo debe mantener SCL (GPIO9) en bajo al reiniciar.
+
+Las sondas se usan con alimentación externa, sin modo parásito. La resolución
+es de 9 bits (0,5 °C) y cada conversión ocupa unos 100 ms de la tarea de medición.
 
 La alarma se recupera al entrar 0,5 °C en el rango desde el umbral que se
 cruzó. Para rangos menores a 1 °C, el margen es la mitad de su ancho. Si una
@@ -203,7 +205,7 @@ de prueba fuera del repo, firmar la primera imagen USB y usar la misma clave
 para las siguientes OTA. La placa verifica la firma al actualizar por la mesh.
 Esta configuración no quema eFuses.
 
-El proyecto declara `project(aura-heladera-freezer)` y `PROJECT_VER = 1.0.1`
+El proyecto declara `project(aura-heladera-freezer)` y `PROJECT_VER = 1.0.2`
 en `CMakeLists.txt`. La imagen es `build/aura-heladera-freezer.bin`. El tipo
 describe el uso, no la ubicación ni una placa particular. Se informa como
 `details.firmware.tipo` y `details.firmware.version` en AURA. Incrementar la versión para cada
