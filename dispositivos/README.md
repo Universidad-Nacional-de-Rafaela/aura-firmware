@@ -105,6 +105,7 @@ que monitorea, o lo que acciona. Una placa que mide varias magnitudes del ambien
 | `LUZ` | Intensidad de luz | magnitud |
 | `CDC` | Dióxido de carbono (CO2) del ambiente | magnitud |
 | `AMB` | Varias magnitudes del ambiente en una placa | magnitud |
+| `PRE` | Presencia de personas en el recinto | magnitud |
 | `HFR` | Heladera con freezer | equipo |
 | `HEL` | Heladera | equipo |
 | `FRZ` | Freezer | equipo |
@@ -124,4 +125,5 @@ que monitorea, o lo que acciona. Una placa que mide varias magnitudes del ambien
 | [`E1-AZ-TERR-TAN01`](E1-AZ-TERR-TAN01/) | Nivel de dos tanques de agua de la terraza (LoRaWAN) | losHijosDelStackOverFlow (IC IV 2026) | instalado |
 | [`E1-PB-LECA-HFR01`](E1-PB-LECA-HFR01/) | Heladera-freezer del LabECA | grupo de IC IV 2026 | en desarrollo |
 | [`E1-PB-LECA-CDC01`](E1-PB-LECA-CDC01/) | CO2 del LabECA (mesh ESP-WIFI-MESH) | grupo de IC IV 2026 | en desarrollo |
+| [`E1-PB-LECA-PRE01`](E1-PB-LECA-PRE01/) | Presencia de personas por cámara (Raspberry Pi + hoja mesh) | grupo MCCV (IC IV 2026) | en desarrollo |
 | [`E1-PB-LECA-TAB01`](E1-PB-LECA-TAB01/) | Medidor de energía del tablero del LabECA | grupo de IC III 2026 | en desarrollo |
