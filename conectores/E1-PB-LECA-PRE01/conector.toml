@@ -1,0 +1,23 @@
+# Manifiesto del conector de E1-PB-LECA-PRE01 (presencia de personas por cámara, grupo MCCV).
+# Ver CONTRIBUTING.md, "Tu conector".
+nombre  = "E1-PB-LECA-PRE01"
+version = "0.1.0"
+sdk     = ">=1.2,<2"
+autores = ["MatiLang1", "AndresFranco1"]
+clase   = "conector:ConectorPresencia"
+
+# La hoja manda {"presencia": true|false, "conf_pct": 0..100}. AURA guarda solo números, así
+# que el conector convierte presencia a 1 (hay personas) o 0 (no hay).
+[campos.presencia]
+unidad   = "adimensional"
+min      = 0
+max      = 1
+etiqueta = "Presencia (1 = hay personas)"
+rol      = "principal"
+
+[campos.conf_pct]
+unidad   = "%"
+min      = 0
+max      = 100
+etiqueta = "Confianza de la detección"
+rol      = "auxiliar"
