@@ -1,7 +1,8 @@
 /*
  * E1-AZ-TERR-TAN01 — nivel de dos tanques de agua de la terraza del E1, por LoRaWAN.
  *
- * Mide la distancia del sensor a la superficie del agua en cada tanque y la manda
+ * Mide la distancia del sensor a la superficie del agua en cada tanque (mediana de 5
+ * lecturas seguidas, para descartar ecos falsos) y la manda
  * cruda: el porcentaje y los litros los calcula el conector en AURA, que conoce las
  * medidas de cada tanque (conectores/E1-AZ-TERR-TAN01/conector.py). Asi un error en
  * una medida se corrige sin reflashear la placa y la historia se puede recalcular.
@@ -88,6 +89,13 @@ const float VELOCIDAD_SONIDO_CM_US = 0.0343;
 const unsigned long TIMEOUT_ECO_US = 35000;   // ~600 cm ida y vuelta
 const unsigned long PAUSA_ENTRE_SENSORES_MS = 60;   // que el eco de uno no lo lea el otro
 
+// Cada medicion es la mediana de varias lecturas seguidas: un eco falso suelto (se vieron
+// picos de ~47 cm en el tanque 1) queda en un extremo y no llega a ser la mediana. Si no
+// hay al menos LECTURAS_MIN_VALIDAS buenas, no se manda ese tanque.
+const int LECTURAS_POR_MEDICION = 5;
+const int LECTURAS_MIN_VALIDAS  = 3;
+const unsigned long PAUSA_ENTRE_LECTURAS_MS = 60;
+
 // Por encima de 600 cm la lectura no es confiable: no se manda. Por debajo de 20 cm
 // (zona ciega del JSN-SR04T) se manda igual: es el agua por encima de la marca de lleno
 // o el sensor obstruido, y el conector avisa con la alerta nivel_alto.
@@ -143,6 +151,28 @@ float medirDistancia(int trig, int echo) {
   float distancia = (duracion * VELOCIDAD_SONIDO_CM_US) / 2.0;
   if (distancia < DIST_MIN_CM || distancia > DIST_MAX_CM) return NAN;
   return distancia;
+}
+
+// Mediana de LECTURAS_POR_MEDICION lecturas, o NAN si no hubo LECTURAS_MIN_VALIDAS buenas.
+// Las lecturas sin eco o fuera de rango se descartan, no se reemplazan por otro valor.
+float medirMediana(int trig, int echo) {
+  float v[LECTURAS_POR_MEDICION];
+  int n = 0;
+  for (int i = 0; i < LECTURAS_POR_MEDICION; i++) {
+    if (i > 0) delay(PAUSA_ENTRE_LECTURAS_MS);
+    float d = medirDistancia(trig, echo);
+    if (!isnan(d)) v[n++] = d;
+  }
+  if (n < LECTURAS_MIN_VALIDAS) return NAN;
+
+  for (int i = 1; i < n; i++) {   // orden por insercion: n <= 5
+    float x = v[i];
+    int j = i - 1;
+    while (j >= 0 && v[j] > x) { v[j + 1] = v[j]; j--; }
+    v[j + 1] = x;
+  }
+  if (n % 2 == 1) return v[n / 2];
+  return (v[n / 2 - 1] + v[n / 2]) / 2.0f;
 }
 
 uint16_t codificar(float distancia) {
@@ -307,9 +337,9 @@ void enviarReporte() {
 
 void medirYEnviar() {
   float d[2];
-  d[0] = medirDistancia(TRIG[0], ECHO[0]);
+  d[0] = medirMediana(TRIG[0], ECHO[0]);
   delay(PAUSA_ENTRE_SENSORES_MS);
-  d[1] = medirDistancia(TRIG[1], ECHO[1]);
+  d[1] = medirMediana(TRIG[1], ECHO[1]);
 
   uint8_t payload[4];
   for (int i = 0; i < 2; i++) {
