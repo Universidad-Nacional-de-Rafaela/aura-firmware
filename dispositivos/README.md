@@ -123,8 +123,9 @@ que monitorea, o lo que acciona. Una placa que mide varias magnitudes del ambien
 |---|---|---|---|
 | [`E1-AZ-TERR-TAN01`](E1-AZ-TERR-TAN01/) | Nivel de dos tanques de agua de la terraza (LoRaWAN) | losHijosDelStackOverFlow (IC IV 2026) | instalado |
 | [`E1-PB-LECA-HFR01`](E1-PB-LECA-HFR01/) | Heladera-freezer del LabECA | grupo de IC IV 2026 | en desarrollo |
-| [`E1-PB-LECA-CDC01`](E1-PB-LECA-CDC01/) | CO2 del LabECA (mesh ESP-WIFI-MESH) | grupo de IC IV 2026 | en desarrollo |
+| [`E1-PB-LECA-AMB01`](E1-PB-LECA-AMB01/) | Nodo de gas y CO2 del LabECA (CO2, temperatura, humedad y gas) | @LosLocoCorchos | en desarrollo |
 | [`E1-PB-LECA-TAB01`](E1-PB-LECA-TAB01/) | Medidor de energía del tablero del LabECA | grupo de IC III 2026 | en desarrollo |
+| [`E1-PB-LECA-CDC01`](E1-PB-LECA-CDC01/) | CO2 del LabECA (mesh ESP-WIFI-MESH) | grupo de IC IV 2026 | en desarrollo |
 | [`E2-AZ-TERR-TAN01`](E2-AZ-TERR-TAN01/) | Nivel de tres tanques de agua de la terraza del Edificio 2 (LoRaWAN) | grupo de IC IV 2026 | en desarrollo |
 | [`E2-P2-RECT-PUE01`](E2-P2-RECT-PUE01/) | Puerta con llavero de proximidad: Rectorado (modelo [`PUE-RFID`](_modelos/PUE-RFID/)) | losHijosDelStackOverFlow (IC IV 2026) | en desarrollo |
 | [`E2-P2-VICE-PUE01`](E2-P2-VICE-PUE01/) | Puerta con llavero de proximidad: Vicerrectorado (modelo [`PUE-RFID`](_modelos/PUE-RFID/)) | losHijosDelStackOverFlow (IC IV 2026) | en desarrollo |
