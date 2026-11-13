@@ -7,7 +7,7 @@
 > (`docs/superpowers/…`) son de `aura-app`.
 
 **Estado**: normativo en `aura-app`. Ante una discrepancia con cualquier otro documento, manda el contrato; ante una discrepancia entre esta copia y la de `aura-app`, manda la de `aura-app`.
-**Versión del contrato**: 4.4 (propuesta) · **Última actualización**: 2026-10-26
+**Versión del contrato**: 4.5 (propuesta) · **Última actualización**: 2026-11-13
 **Alcance**: mensajería entre los dispositivos IoT y la plataforma (backend FastAPI). Hay **dos
 transportes**, cada uno con su adaptador
 ([ADR-003](adr/ADR-003-dos-transportes-mesh-interior-lorawan-exterior.md)):
@@ -288,6 +288,22 @@ Un uplink **sin** `object` (el device profile no tiene codec, o el codec falló)
 publica en `data`**. El bridge publica un `status` y lo registra con `logger.warning`: publicar
 los bytes crudos en base64 dentro de `values` metería basura en la serie temporal.
 
+**Registros de evento (v4.5, [ADR-009](adr/ADR-009-puertas-con-llavero-la-puerta-decide-y-aura-supervisa.md)).**
+La excepción a "solo mediciones" son los **eventos que hay que registrar**, como cada ingreso por
+una puerta. Van en `data` con su `ingest_id`, para que no se pierdan sin red, y se reconocen por el
+campo `evento` (texto) dentro de `values`:
+
+```json
+{ "values": { "evento": "acceso", "uid": "ABE8B022", "puerta": 0, "armada": 0 },
+  "ingest_id": "…", "ts": "2026-11-13T14:03:00Z", "adaptador": "mac-…" }
+```
+
+Un mensaje lleva un solo evento y nada de mediciones. Los nombres de los eventos y sus campos los
+define el firmware de cada dispositivo, y el **conector** del dispositivo en AURA los separa de las
+mediciones. Un evento **no** es un latido ni un estado: lo que solo dice "sigo acá" o "estoy así"
+va en el reporte de la placa, que el raíz publica como `status` (§3.2). Si fuera `data`, ocuparía
+la cola de la hoja (§5) y llenaría la base con filas que nadie consulta.
+
 **Varias sondas, un mensaje.** Un nodo con varias sondas (§2.4) las distingue por el nombre del
 campo: `{"temp_heladera_c": 4.5, "temp_freezer_c": -18.0}`. Si las sondas tienen intervalos
 distintos, cada mensaje lleva solo las que se midieron: `values` no tiene que traer todas.
@@ -351,6 +367,14 @@ unirse a la mesh, al volver después de perderla y después de aplicar una confi
 | `firmware` | `{"tipo": "aura-acceso", "version": "1.3.0"}`: el firmware de la placa (§3.3, actualización por la malla) — v4.3 |
 
 En `config` va siempre `aula` (`null` si no tiene).
+
+**Estado del dispositivo en `config` (v4.5).** El firmware de la hoja solo puede agregar campos al
+reporte dentro de `config`. Un dispositivo que necesita informar su estado actual (no una medición
+para guardar) lo pone ahí, como campo **de solo lectura**: aparece en `config` pero no se cambia
+con `set_config`. AURA guarda `config` como la configuración vigente del dispositivo y la pisa con
+cada reporte, así que no queda historial. Lo usa la puerta (§3.3): `armada`, `abierta`, `tarjetas` y
+`hash`. Si el reporte no entra en los 180 B de la trama, la biblioteca de la mesh saca primero
+`descartadas`, `rssi`, `capa`, `alimentacion`, `modo` y `pendientes`, nunca `firmware` ni `config`.
 
 Qué pone el raíz en **su propio** `status`, cada 60 s: `rol: "raiz"`, `transporte: "mesh"`, `mac`,
 `canal`, `nodos_en_mesh`, contadores (`publicadas`, `confirmadas`, `acks_ignorados`,
@@ -495,6 +519,49 @@ permiso (un concentrador que se retira). Respuestas: `recibido` y `aplicado`; `r
 el máximo de nodos). Hasta que se lo autoriza, un concentrador nuevo no entrega los datos de sus
 hojas: quedan en las colas de las hojas.
 
+**Comandos de la puerta con llavero (mesh, v4.5,
+[ADR-009](adr/ADR-009-puertas-con-llavero-la-puerta-decide-y-aura-supervisa.md)).** Los atiende el
+firmware `aura-puerta-rfid` (modelo `_modelos/PUE-RFID` de `aura-firmware`). La puerta decide sola
+con su lista de llaveros; AURA la administra:
+
+| `command` | `params` | Qué hace |
+|---|---|---|
+| `tarjeta_agregar` | `{"uid": "ABE8B022"}` | agrega un llavero a la lista. Si ya estaba, `aplicado` igual: AURA reintenta hasta que la puerta confirma |
+| `tarjeta_quitar` | `{"uid": "ABE8B022"}` | quita un llavero. Si no estaba, `aplicado` igual |
+| `tarjetas_vaciar` | `{}` | vacía la lista. Es el primer paso de una recarga: después va un `tarjeta_agregar` por llavero |
+| `estado` | `{}` | de solo lectura: la puerta manda su reporte en el momento (`status`, §3.2) |
+| `abrir` | `{"vence": <segundos Unix>}` | destraba la cerradura con un pulso y desarma. **Deshabilitado al compilar** hasta la etapa 2 de seguridad de la mesh: hoy siempre se rechaza con `abrir_deshabilitado` |
+
+El `uid` va en hexadecimal en **mayúsculas**, sin separadores, de 4, 7 o 10 bytes (8, 14 o 20
+caracteres): el mismo formato que usa el lector de enrolamiento. Una puerta guarda hasta **32**
+llaveros.
+
+En el reporte, `config` trae el estado de la puerta, de solo lectura (§3.2): `tarjetas` (cuántos
+llaveros tiene), `hash`, `armada` y `abierta` (0 o 1), además de `intervalo_s` (30 armada, 120
+desarmada), `pulso_ms` y `aviso_s`. El **`hash`** de la lista se calcula igual en la puerta y en AURA:
+cada UID en hexadecimal en mayúsculas, ordenados de menor a mayor como texto, unidos con `,`, y el
+CRC-32 IEEE de ese texto (`zlib.crc32` en Python) en 8 dígitos hexadecimales en **minúsculas**; la
+lista vacía da `"00000000"`. Detecta un desfasaje, no es una firma. AURA lo compara solo cuando no
+tiene comandos de llaveros pendientes para esa puerta; si no coincide, manda una alerta y recarga.
+
+`set_config` de la puerta acepta `pulso_ms` (de 500 al tope de la cerradura) y `aviso_s` (`0` = sin
+aviso de puerta abierta; si no, de 5 a 600). El tipo de sensor **no** se cambia por `set_config`: se
+fija al compilar. Para `abrir`, cuando se habilite, `vence` es obligatorio y como mucho 300 s en el
+futuro, y la puerta lo rechaza si no tiene hora válida.
+
+| `motivo` | Cuándo |
+|---|---|
+| `uid_invalido` | falta `uid`, o no es hexadecimal de 4, 7 o 10 bytes |
+| `lista_llena` | la puerta ya tiene 32 llaveros |
+| `error_de_nvs` | no se pudo guardar: la lista no cambió |
+| `orden_local_no_admitida` | vino del botón del concentrador (`origen: local`): solo se acepta `estado` |
+| `abrir_deshabilitado` | `abrir` con el firmware compilado sin apertura remota |
+| `sin_vencimiento`, `sin_hora_valida`, `orden_vencida`, `vencimiento_muy_lejano`, `ocupada` | `abrir` habilitado, pero la orden no vale o ya hay un pulso en curso |
+| `pulso_ms_fuera_de_rango`, `aviso_s_fuera_de_rango`, `parametro_desconocido`, `params_invalido` | `set_config` que no valida: no se aplica nada |
+
+**AURA no manda `ota` a una puerta armada** (`config.armada: 1`): se actualiza desarmada, para que
+el reinicio no dé una alerta de "armada sin contacto".
+
 **Actualización por la malla (mesh, v4.3,
 [ADR-008](adr/ADR-008-actualizacion-por-la-malla-y-tipo-de-firmware.md)).** El comando `ota` cambia el
 firmware de una placa de la mesh —hoja, concentrador o el propio raíz— sin USB:
@@ -622,6 +689,24 @@ Tipos especificados. El tipo va en el tópico (`[a-z_]{1,24}`; el raíz no publi
 |---|---|---|
 | `sensor` | una sonda dejó de responder o da un valor fuera de su rango físico | `campo` (el nombre que tendría en `values`) y `motivo`: `sin_respuesta`, `fuera_de_rango` |
 | `energia` | el nodo pasó a batería o volvió a la red | `alimentacion`: `"bateria"` o `"red"` |
+
+**Alertas de la puerta con llavero (v4.5).** Además de `sensor` (el lector RC522 que no responde,
+`campo: "lector"`), la puerta publica:
+
+| Tipo | `severity` | Cuándo |
+|---|---|---|
+| `intrusion` | `critical` | armada, se abrió sin desarmar. Sale antes que cualquier otro mensaje de la puerta |
+| `puerta_cerrada` | `info` | se cerró después de una intrusión o de estar abierta de más |
+| `puerta_abierta` | `warning` | quedó abierta más de `aviso_s` |
+| `arranque_puerta_abierta` | `high` | arrancó armada y con la puerta abierta |
+| `intentos_rechazados` | `high` | muchos llaveros rechazados seguidos: el lector se frena |
+| `limite_pulsos` | `warning` | se llegó al límite de tiempo energizada por minuto de la cerradura |
+| `memoria_borrada` | `high` | arrancó con la memoria borrada: lista vacía, desarmada y sin aula. AURA recarga la lista |
+
+Ante una `intrusion`, AURA manda `estado` enseguida; si la puerta no responde, o vuelve
+`nodo_no_alcanzable`, es otra alerta crítica. Una puerta armada que pasa a `offline` también lo es.
+Si el raíz cae con puertas armadas, AURA lo muestra como **un solo incidente** (puertas sin
+supervisión), no una alerta por puerta.
 
 La alerta se publica **una vez por cambio**, no en cada medición: una sonda que falla durante una
 hora es una alerta, no sesenta. Cuando la sonda vuelve, se publica otra con `severity: "info"` y
@@ -869,6 +954,7 @@ MAC del medidor. Mientras no se decida, sus mensajes se descartan:
 
 | Versión | Fecha | Cambio |
 |---|---|---|
+| 4.5 | 2026-11-13 | **Propuesta. Puertas con llavero** ([ADR-009](adr/ADR-009-puertas-con-llavero-la-puerta-decide-y-aura-supervisa.md), `aura-firmware` #40 y #42). Compatible: solo agrega. Nuevos: **registros de evento** en `values` (§3.1), estado de solo lectura en `config` (§3.2), comandos **`tarjeta_agregar`**, **`tarjeta_quitar`**, **`tarjetas_vaciar`**, **`estado`** y **`abrir`** con sus motivos, formato del `hash` de la lista (§3.3) y las alertas de la puerta (§3.5). Regla: no se manda `ota` a una puerta armada. Pendiente 24. |
 | 4.4 | 2026-10-30 | **Propuesta. Seguridad de la actualización por la malla** (revisión de seguridad de la red, etapa 1). **Incompatible solo para quien use `forzar_tipo`**, que se elimina (`forzar_tipo_deshabilitado`). Nuevo comando **`autorizar_concentrador`** y `details.concentrador_autorizado` (§3.2, §3.3): el `rol` que declara una placa es solo un dato y AURA nunca autoriza por él; hasta que AURA autoriza un concentrador, el raíz no acepta los datos de sus hojas. `params.url` pasa a ser `https://`. Las imágenes van **firmadas por la cátedra** y la placa rechaza una sin firma (`imagen_invalida`). Pendiente 23 resuelto en parte (firma sin Secure Boot). |
 | 4.3 | 2026-10-22 | **Propuesta. Actualización por la malla** ([ADR-008](adr/ADR-008-actualizacion-por-la-malla-y-tipo-de-firmware.md), `aura-firmware` #24). Compatible: nada cambia de forma. Nuevos: el comando **`ota`** para cualquier placa de la mesh, incluido el raíz, que solo acepta ese comando para sí mismo (§3.3), con sus motivos de `rechazado` y el significado de cada estado (§3.4); **`details.firmware`** (`tipo` y `versión`) en el `status` de hojas, concentradores y raíz, y `details.ota` en el del raíz mientras actualiza (§3.2). Regla del tipo de firmware: `aura-<uso>`, uno por uso. Pendientes 22 y 23. |
 | 4.2 | 2026-10-21 | **Propuesta.** Nuevo motivo de `offline` en la mesh: `fuera_de_la_malla` (§3.2), además de `sin_tramas`. Compatible si el backend no valida el motivo. Sin otros cambios de formato: el modo isla del concentrador, la trama interna `ESTADO` y las hojas ausentes en la pantalla del aula son internos de la mesh (`aura-firmware/Mesh_Red_Completa/`). |
@@ -978,6 +1064,12 @@ citan.
     cátedra (sin eFuses). **Falta:** decidir quién custodia la clave de firma (pendiente 15) y, en las
     placas de la instalación final, Secure Boot V2 para que la firma se verifique también en cada
     arranque (quema eFuses).
+24. **Puertas con llavero en AURA** (v4.5, ADR-009). Falta: el conector de la puerta (separa los
+    eventos de las mediciones y asocia el UID a la persona), la administración de llaveros (alta,
+    baja, recarga con `tarjetas_vaciar` cuando el `hash` no coincide), la consulta `estado` ante una
+    intrusión, la regla de puerta armada `offline`, el incidente de raíz caído con puertas armadas,
+    no mandar `ota` a puertas armadas y las alertas en el dashboard. En `nodo_mesh` (cátedra): una
+    opción para que el dispositivo rechace `set_config` con `origen: local`.
 
 De la v1.x quedan resueltos el destino de los diagnósticos del gateway (van a `status.details`) y
 `pend`/`desc` (pasan a `pendientes`/`descartadas` en `status`). `lux_sim` sigue sin objeto.
