@@ -13,10 +13,12 @@ guarda en AURA, alertando una sola vez por cruce de estado.
 
 | Campo | Unidad | Rango | Qué es |
 |---|---|---|---|
-| `presencia` | 0/1 | 0 – 1 | 1 = hay alguien en el aula (LD2420) |
-
-Etapa 2 (cuando se conecten el BH1750 y el relé): `luz_ventana_lx`, `luz_aula_lx`,
-`rele_canal1` — declarados en el manifiesto en el mismo PR que los manda el firmware.
+| `presencia` | 0/1 | 0 – 1 | ocupación del aula (con retardo de `delay_off_s`) |
+| `luz_ventana_lx` | lx | 0 – 65535 | luz de la ventana (BH1750) |
+| `luz_aula_lx` | lx | 0 – 65535 | luz del aula (BH1750) |
+| `temp_c` | °C | -40 – 85 | temperatura (SHT30) |
+| `humedad_pct` | % | 0 – 100 | humedad (SHT30) |
+| `rele_canal1` | 0/1 | 0 – 1 | estado del relé de la luz |
 
 ## Qué hace
 

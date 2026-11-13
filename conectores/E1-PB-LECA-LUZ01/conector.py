@@ -21,18 +21,20 @@ Reglas (contrato de AURA, docs/CONTRATO_MQTT.md):
     pasado, ctx.serie(campo, desde, hasta).
 """
 from aura_sdk import Conector
+from datetime import datetime, timedelta, timezone
 
 
 class ConectorLuz01(Conector):
     def al_recibir_datos(self, msg, ctx):
         # msg.values: las mediciones ({"presencia": 1}); msg.ts: la hora de la medición (o None);
         # msg.hw_id: la placa.
-        hasta = msg.ts if getattr(msg, "ts", None) is not None else None
-        anterior = ctx.serie("presencia", hasta=hasta)[-1:]   # último estado anterior a esta muestra
+        referencia = msg.ts if getattr(msg, "ts", None) is not None else datetime.now(timezone.utc)
+        desde = referencia - timedelta(days=1)
+        anterior = ctx.serie("presencia", desde=desde, hasta=referencia)[-1:]   # último estado anterior a esta muestra
 
         guardado = ctx.guardar_medicion(msg.values, msg.ts)   # quita lo que esté fuera de rango
         if "presencia" not in guardado:
-            return   # no quedó nada válido: AURA la descarta (sin_campos_validos)
+            return   # sin presencia válida no hay cruce que alertar (otros campos pueden haberse guardado)
 
         presencia = guardado["presencia"]
         estaba = bool(anterior) and anterior[0][1] > 0

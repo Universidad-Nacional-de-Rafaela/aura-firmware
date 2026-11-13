@@ -123,4 +123,4 @@ que monitorea, o lo que acciona. Una placa que mide varias magnitudes del ambien
 | [`E1-AZ-TERR-TAN01`](E1-AZ-TERR-TAN01/) | Nivel de dos tanques de agua de la terraza (LoRaWAN) | losHijosDelStackOverFlow (IC IV 2026) | instalado |
 | [`E1-PB-LECA-HFR01`](E1-PB-LECA-HFR01/) | Heladera-freezer del LabECA | grupo de IC IV 2026 | en desarrollo |
 | [`E1-PB-LECA-TAB01`](E1-PB-LECA-TAB01/) | Medidor de energía del tablero del LabECA | grupo de IC III 2026 | en desarrollo |
-| [`E1-PB-LECA-LUZ01`](E1-PB-LECA-LUZ01/) | Control de iluminación del aula del LabECA | sebapalavecino2003, franciscoalemandi, eloykirov | en desarrollo |
+| [`E1-PB-LECA-LUZ01`](E1-PB-LECA-LUZ01/) | Control de iluminación del aula del LabECA | sebapalavecino2003, alem123q, eloykirov | en desarrollo |

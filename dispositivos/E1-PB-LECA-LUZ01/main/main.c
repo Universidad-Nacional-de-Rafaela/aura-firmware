@@ -529,12 +529,12 @@ void app_main(void)
         nodo_mesh_sonda("humedad_pct", sht_ok, "sin_respuesta");
 
         // ===== Medicion =====
-        if (!stale && presencia != presencia_publicada) publicar_ya = true;
+        if (!stale && sistema_activo != presencia_publicada) publicar_ya = true;
         bool vencio = primera_muestra ||
                       aura_millis() - ultima_muestra >= intervalo_s * 1000UL;
         if (vencio || publicar_ya) {
             cJSON *values = cJSON_CreateObject();
-            if (!stale) cJSON_AddNumberToObject(values, CAMPO_PRESENCIA, presencia ? 1 : 0);
+            if (!stale) cJSON_AddNumberToObject(values, CAMPO_PRESENCIA, sistema_activo ? 1 : 0);
             if (bh_ventana_ok) cJSON_AddNumberToObject(values, "luz_ventana_lx", redondear1(lux_ventana));
             if (bh_aula_ok) cJSON_AddNumberToObject(values, "luz_aula_lx", redondear1(lux_aula));
             if (sht_ok) {
@@ -544,7 +544,7 @@ void app_main(void)
             if (RELE_PIN >= 0) cJSON_AddNumberToObject(values, "rele_canal1", luz_encendida ? 1 : 0);
             if (!nodo_mesh_medicion(values)) ESP_LOGW(TAG, "medicion no encolada (JSON vacio o muy grande)");
             cJSON_Delete(values);
-            if (!stale) presencia_publicada = presencia;
+            if (!stale) presencia_publicada = sistema_activo;
             publicar_ya = false;
             ultima_muestra = aura_millis();
             primera_muestra = false;

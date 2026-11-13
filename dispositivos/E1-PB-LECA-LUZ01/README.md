@@ -3,18 +3,19 @@
 Mide la presencia con un radar y regula la luz del aula **localmente** mandando la luz de la
 ventana, con la del aula como respaldo para prender: la lógica vive en el firmware, AURA no
 decide en cada ciclo. Sin gente, la apaga tras `delay_off_s`. Publica presencia, lux,
-temperatura/humedad y estado del relé por la mesh, y cumple el contrato v4.0 (ack antes de
-borrar de la cola).
+temperatura/humedad y estado del relé por la mesh, y cumple el contrato v4.4 (ack antes de
+borrar de la cola). Publica como `presencia` la ocupación (con el retardo de `delay_off_s`), no el
+movimiento instantáneo.
 
 | | |
 |---|---|
 | **Ubicación** | Edificio 1, planta baja, LabECA |
-| **Responsable** | Grupo de IC IV 2026 |
+| **Responsable** | Grupo de IC III 2026 |
 | **Estado** | firmware completo: LD2420 + LED de presencia probados; BH1750 ×2, SHT30 y relé por cablear/probar |
 | **Instalado** | todavía no |
-| **Transporte** | mesh ESP-WIFI-MESH, según [ADR-006](../../docs/adr/ADR-006-esp-wifi-mesh-reemplaza-a-esp-now-en-interior.md) (nodo hoja) |
-| **Contrato que implementa** | [`CONTRATO_MQTT.md`](../../docs/CONTRATO_MQTT.md) v4.0 |
-| **Basado en** | [`../../ejemplos/plantilla_dispositivo/`](../../ejemplos/plantilla_dispositivo/) |
+| **Transporte** | mesh ESP-WIFI-MESH, según [ADR-007](../../docs/adr/ADR-007-mesh-en-esp-idf-con-concentrador-por-aula.md) (nodo hoja) |
+| **Contrato que implementa** | [`CONTRATO_MQTT.md`](../../docs/CONTRATO_MQTT.md) v4.4 |
+| **Basado en** | [`../../Mesh_Red_Completa/Mesh3_Hoja/`](../../Mesh_Red_Completa/Mesh3_Hoja/) |
 | **Códigos anteriores** | ninguno |
 
 **Identidad**: por MAC de la placa (`hw_id` `mac-…`), como todo dispositivo del repo
@@ -29,16 +30,15 @@ borrar de la cola).
 | LED de presencia | indica gente en la ventana | **GPIO1** → 220–330 Ω → LED → GND. Prende mientras la distancia reportada esté en la ventana y el radar conteste |
 | BH1750 ventana + aula | lux por I2C | SDA **GPIO4**, SCL **GPIO5**; ventana 0x23 (ADDR a GND), aula 0x5C (ADDR a 3V3) |
 | SHT30 | temperatura y humedad | mismo I2C, 0x44 |
-| Relé (1 canal) | luz del aula | IN → **GPIO0**; DC+ a 3V3 (03VDC) o 5V (05VDC), DC- a GND. Si la placa no arranca con el relé conectado, desenchufar IN al flashear y volver a conectarlo |
+| Relé (1 canal) | luz del aula | IN → **GPIO0**; DC+ a 3V3 (03VDC) o 5V (05VDC), DC- a GND. GPIO0 no interviene en el arranque del C3; probar el montaje en el banco |
 
-**Datos del datasheet** (`../../datasheet/hlk-ld2420.pdf`): alcance 8 m, precisión de distancia
+**Datos del datasheet** (`../../../datasheet/hlk-ld2420.pdf`): alcance 8 m, precisión de distancia
 **±0.35 m**, puertas de **70 cm** (0..15), y **solo informa distancia de cuerpos en
 movimiento** (sin movimiento queda el último valor y la presencia se cae).
 
 **Ventana de distancia**: la presencia solo cuenta si el radar la mide entre **`DIST_MIN_CM`
 y `DIST_MAX_CM`** (20..400 cm, hasta ~4 m) y se mantiene hasta **0..420 cm** (histéresis
-`DIST_HIST_CM`). Constantes en `main/main.c`. Al arrancar se imprime la config grabada del
-sensor; cada cambio de estado imprime
+`DIST_HIST_CM`). Constantes en `main/main.c`. Cada cambio de estado imprime
 `[RADAR] movimiento, distancia 250 cm (entra 20..400, sale 0..420) -> PRESENCIA`.
 
 ## La lógica local
@@ -98,6 +98,10 @@ No hay comandos propios (`ejecutar_comando` es NULL): la luz la manda solo la l�
 
 - Si el radar se cae, el sistema pasa a reposo y apaga la luz aunque haya gente adentro: es
   decisión de diseño (sin presencia confirmada no se mantiene encendida).
+- Condición de montaje: el sensor de la ventana debe mirar hacia afuera, sin luz directa del
+  foco. Si le llegan más de 40 lx del foco (umbral_alto - umbral_bajo), la luz puede oscilar.
+- Confirmar en el banco que con el aula vacía el radar manda `OFF` al menos una vez por
+  segundo; si no, queda stale (`stale_after_ms = 1000`) y sale la alerta `sensor`.
 
 ## Conector
 
@@ -115,6 +119,4 @@ Firmware (ESP-IDF 6.1, instalado con EIM; ver `Mesh_Red_Completa/GUIA_NODOS_HOJA
 3. Si cambiás `sdkconfig.defaults` o `partitions.csv`, borrá `sdkconfig` y `build/` antes de
    compilar.
 
-Para darlo de alta en AURA hay que agregar la fila a la tabla *Dispositivos* de
-[`../../dispositivos/README.md`](../../dispositivos/README.md) y cargar la placa con
-`herramientas/leer_mac`; los dos pasos van juntos en el mismo PR.
+El alta en AURA la hace la cátedra; no hace falta `leer_mac` ni editar la tabla.
