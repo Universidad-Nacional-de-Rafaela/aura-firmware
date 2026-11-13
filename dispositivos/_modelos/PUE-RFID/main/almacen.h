@@ -28,3 +28,8 @@ bool almacen_guardar_armada(bool armada);
    entera. Si lo guardado no es valido, la carga devuelve los valores por defecto de los tres. */
 void almacen_cargar_config(config_puerta_t *c);
 bool almacen_guardar_config(const config_puerta_t *c);
+
+/* Clave maestra de BANCO (32 bytes) en NVS: NO es segura, sirve para probar sin quemar eFuse.
+   cargar devuelve false si no hay ninguna. */
+bool almacen_cargar_maestra(uint8_t out[32]);
+bool almacen_guardar_maestra(const uint8_t in[32]);

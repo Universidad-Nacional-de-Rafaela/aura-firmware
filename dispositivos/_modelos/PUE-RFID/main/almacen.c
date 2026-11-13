@@ -102,3 +102,14 @@ bool almacen_guardar_config(const config_puerta_t *c)
     b.sensor = (uint32_t)c->sensor;
     return blob_si_cambia("config", &b, sizeof(b));
 }
+
+bool almacen_cargar_maestra(uint8_t out[32])
+{
+    size_t n = 32;
+    return nvs_get_blob(h, "maestra", out, &n) == ESP_OK && n == 32;
+}
+
+bool almacen_guardar_maestra(const uint8_t in[32])
+{
+    return nvs_set_blob(h, "maestra", in, 32) == ESP_OK && nvs_commit(h) == ESP_OK;
+}

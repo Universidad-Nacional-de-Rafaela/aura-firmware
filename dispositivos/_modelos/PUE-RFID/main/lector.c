@@ -1,106 +1,142 @@
 #include "lector.h"
-#include "pines.h"
+#include <string.h>
 #include "esp_log.h"
-#include "rc522.h"
-#include "driver/rc522_spi.h"
-#include "rc522_picc.h"
+#include "freertos/semphr.h"
+#include "freertos/task.h"
+#include "pcd_rc522.h"
+#include "../../../../comun/iso14443a.h"
+#include "../../../../comun/iso_dep.h"
 
 static const char *TAG = "LECTOR";
 
-/* Estas cuatro funciones del driver no estan en su API publica pero si exportadas (las usa
-   rc522_start). Se declaran aca, a mano, para poder revisar el lector sin copiar el driver.
-   La version de abobija/rc522 esta FIJA (4.0.1); si se cambia hay que revisar esto.
-   Los registros: VersionReg 0x37 (0x91 o 0x92 en un MFRC522 vivo) y TxControlReg 0x14
-   (bits 0 y 1 = antena). */
-extern esp_err_t rc522_pcd_reset(const rc522_handle_t rc522, uint32_t timeout_ms);
-extern esp_err_t rc522_pcd_init(const rc522_handle_t rc522);
-extern esp_err_t rc522_pcd_rw_test(const rc522_handle_t rc522);
-extern esp_err_t rc522_pcd_read(const rc522_handle_t rc522, int addr, uint8_t *valor);
-#define REG_TX_CONTROL 0x14
-#define REG_VERSION 0x37
+#define PERIODO_ESPERA_MS 80
+#define PERIODO_PRESENTE_MS 150
+#define AUSENCIAS_PARA_RETIRADA 3
 
-static rc522_handle_t lector;           /* NULL hasta que el driver este creado y con su evento */
-static bool arrancado;                  /* rc522_start() se completo: recien ahi la tarea lee tarjetas */
+typedef enum { ESPERA, PRESENTE } estado_t;
+
+static bool arrancado;                  /* el RC522 contesto y quedo configurado alguna vez */
+static estado_t estado = ESPERA;
+static int ausencias;
+static uint8_t uid_presente[ISO14443A_UID_MAX];
+static uint8_t largo_presente;
 static QueueHandle_t cola_lecturas;
 static SemaphoreHandle_t mutex_lector;
+static lector_verificador_t verificador;
 
-/* Corre en la tarea del lector: solo copia el UID a la cola y vuelve */
-static void al_cambiar_tarjeta(void *arg, esp_event_base_t base, int32_t id, void *datos)
+/* ISO-DEP de la tarjeta que se esta atendiendo */
+static isodep_t dep;
+static bool dep_listo;
+
+void lector_set_verificador(lector_verificador_t v) { verificador = v; }
+
+static const iso14443a_ops_t ops_aire = {.txrx = pcd_txrx, .ctx = NULL};
+
+static int apdu_tarjeta(void *ctx, const uint8_t *cmd, size_t n, uint8_t *resp, size_t max)
+{
+    (void)ctx;
+    if (!dep_listo) {
+        dep = (isodep_t){.trama = pcd_trama_iso, .ctx = NULL};
+        if (!isodep_rats(&dep)) return -1;
+        dep_listo = true;
+    }
+    return isodep_apdu(&dep, cmd, n, resp, max);
+}
+
+/* Saca a la tarjeta del estado ISO-DEP (apaga el campo: vuelve a IDLE) y la deja en HALT, para que
+   no conteste los REQA y se la pueda seguir viendo con WUPA sin que se lea otra vez. */
+static void dormir_tarjeta(void)
+{
+    pcd_reiniciar_campo();
+    uint8_t atqa[2];
+    iso14443a_tarjeta_t t;
+    if (iso14443a_despertar(&ops_aire, false, atqa) == ISO14443A_OK &&
+        iso14443a_seleccionar(&ops_aire, &t) == ISO14443A_OK) {
+        iso14443a_halt(&ops_aire);
+    }
+}
+
+static void atender_nueva(const iso14443a_tarjeta_t *t)
+{
+    lectura_t l = {.largo = t->largo, .auth = LECTOR_AUTH_SIN_VERIFICADOR};
+    if (t->largo > UID_MAX_BYTES) return;
+    memcpy(l.uid, t->uid, t->largo);
+    dep_listo = false;
+    if (verificador) l.auth = verificador(l.uid, l.largo, apdu_tarjeta, NULL);
+    xQueueSend(cola_lecturas, &l, 0);
+    memcpy(uid_presente, t->uid, t->largo);
+    largo_presente = t->largo;
+    dormir_tarjeta();
+    estado = PRESENTE;
+    ausencias = 0;
+}
+
+static void paso(void)
+{
+    uint8_t atqa[2];
+    iso14443a_tarjeta_t t;
+    bool wupa = (estado == PRESENTE);
+    iso14443a_resultado_t r = iso14443a_despertar(&ops_aire, wupa, atqa);
+    if (r == ISO14443A_SIN_TARJETA) {
+        if (estado == PRESENTE && ++ausencias >= AUSENCIAS_PARA_RETIRADA) {
+            estado = ESPERA;
+            ESP_LOGD(TAG, "Tarjeta retirada");
+        }
+        return;
+    }
+    if (r != ISO14443A_OK || iso14443a_seleccionar(&ops_aire, &t) != ISO14443A_OK) {
+        pcd_reiniciar_campo();          /* una tarjeta a medio seleccionar: que arranque de cero */
+        if (estado == PRESENTE) ausencias++;
+        return;
+    }
+    if (estado == PRESENTE && t.largo == largo_presente && memcmp(t.uid, uid_presente, t.largo) == 0) {
+        iso14443a_halt(&ops_aire);      /* sigue ahi: se la vuelve a dormir */
+        ausencias = 0;
+        return;
+    }
+    atender_nueva(&t);                  /* tarjeta nueva (o cambiada de golpe) */
+}
+
+static void tarea_lector(void *arg)
 {
     (void)arg;
-    (void)base;
-    (void)id;
-    const rc522_picc_state_changed_event_t *ev = (const rc522_picc_state_changed_event_t *)datos;
-    if (ev->picc->state != RC522_PICC_STATE_ACTIVE) return;     /* una vez por cada vez que se apoya */
-    lectura_t l = {.largo = ev->picc->uid.length};
-    if (l.largo > UID_MAX_BYTES) return;
-    memcpy(l.uid, ev->picc->uid.value, l.largo);
-    xQueueSend(cola_lecturas, &l, 0);
+    for (;;) {
+        xSemaphoreTake(mutex_lector, portMAX_DELAY);
+        if (arrancado) paso();
+        estado_t e = estado;
+        xSemaphoreGive(mutex_lector);
+        vTaskDelay(pdMS_TO_TICKS(e == PRESENTE ? PERIODO_PRESENTE_MS : PERIODO_ESPERA_MS));
+    }
 }
 
 esp_err_t lector_iniciar(QueueHandle_t cola)
 {
     cola_lecturas = cola;
     mutex_lector = xSemaphoreCreateMutex();
-    static spi_bus_config_t bus = {
-        .miso_io_num = PIN_RC522_MISO,
-        .mosi_io_num = PIN_RC522_MOSI,
-        .sclk_io_num = PIN_RC522_SCK,
-        .quadwp_io_num = -1,
-        .quadhd_io_num = -1,
-    };
-    static rc522_spi_config_t spi = {
-        .host_id = SPI2_HOST,
-        .bus_config = &bus,
-        .dev_config = {.spics_io_num = PIN_RC522_SS},
-        .rst_io_num = PIN_RC522_RST,
-    };
-    rc522_driver_handle_t driver;
-    esp_err_t e = rc522_spi_create(&spi, &driver);
+    esp_err_t e = pcd_bus_iniciar();
     if (e != ESP_OK) return e;
-    e = rc522_driver_install(driver);
-    if (e != ESP_OK) return e;
-    rc522_config_t cfg = {.driver = driver, .task_mutex = mutex_lector};
-    rc522_handle_t creado = NULL;
-    e = rc522_create(&cfg, &creado);
-    if (e != ESP_OK) return e;
-    e = rc522_register_events(creado, RC522_EVENT_PICC_STATE_CHANGED, al_cambiar_tarjeta, NULL);
-    if (e != ESP_OK) return e;              /* sin el evento no hay lectura posible: queda sin lector */
-    lector = creado;
-    /* start() hace el reinicio, la prueba de lectura/escritura y la configuracion: si el RC522
-       no esta conectado falla aca. La tarea del driver ya existe pero no lee hasta que start()
-       termina bien, asi que lector_revisar() lo reintenta. */
-    e = rc522_start(lector);
+    e = pcd_reiniciar();
     arrancado = (e == ESP_OK);
+    /* la tarea existe siempre: si el RC522 no estaba al encender, lector_revisar() lo levanta */
+    if (xTaskCreate(tarea_lector, "lector", 4096, NULL, 5, NULL) != pdPASS) return ESP_ERR_NO_MEM;
     return e;
 }
 
 lector_salud_t lector_revisar(void)
 {
-    bool creado = lector != NULL;
-    if (creado && xSemaphoreTake(mutex_lector, pdMS_TO_TICKS(500)) != pdTRUE) {
-        return arrancado ? LECTOR_OK : LECTOR_CAIDO;       /* ocupado leyendo */
+    if (xSemaphoreTake(mutex_lector, pdMS_TO_TICKS(2500)) != pdTRUE) {
+        return arrancado ? LECTOR_OK : LECTOR_CAIDO;       /* ocupado atendiendo una tarjeta */
     }
     uint8_t version = 0, antena = 0;
-    bool registros_bien = false;
-    if (creado && arrancado) {
-        esp_err_t ev = rc522_pcd_read(lector, REG_VERSION, &version);
-        esp_err_t ea = rc522_pcd_read(lector, REG_TX_CONTROL, &antena);
-        registros_bien = ev == ESP_OK && version != 0x00 && version != 0xFF && ea == ESP_OK && (antena & 0x03) == 0x03;
-    }
-    lector_paso_t paso = lector_proximo_paso(creado, arrancado, registros_bien);
+    bool registros_bien = pcd_vivo(&version, &antena);
+    lector_paso_t p = lector_proximo_paso(true, arrancado, registros_bien);
     bool salio_bien = false;
-    if (paso == LECTOR_PASO_ARRANCAR) {
-        ESP_LOGW(TAG, "El RC522 nunca termino de arrancar: reintento rc522_start()");
-        salio_bien = rc522_start(lector) == ESP_OK;
+    if (p == LECTOR_PASO_ARRANCAR || p == LECTOR_PASO_REINICIAR) {
+        ESP_LOGW(TAG, "El RC522 no esta bien (version=0x%02X antena=0x%02X): lo reinicio", version, antena);
+        salio_bien = pcd_reiniciar() == ESP_OK;
         arrancado = salio_bien;
-    } else if (paso == LECTOR_PASO_REINICIAR) {
-        ESP_LOGW(TAG, "El RC522 se reinicio o no responde (version=0x%02X antena=0x%02X): lo reinicio", version, antena);
-        esp_err_t e = rc522_pcd_reset(lector, 150);
-        if (e == ESP_OK) e = rc522_pcd_rw_test(lector);
-        if (e == ESP_OK) e = rc522_pcd_init(lector);
-        salio_bien = (e == ESP_OK);
+        if (salio_bien) estado = ESPERA;
     }
-    if (creado) xSemaphoreGive(mutex_lector);
-    return lector_salud_tras(paso, salio_bien);
+    xSemaphoreGive(mutex_lector);
+    return lector_salud_tras(p, salio_bien);
 }
