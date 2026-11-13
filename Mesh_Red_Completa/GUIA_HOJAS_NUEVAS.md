@@ -4,7 +4,7 @@
 
 ## Para la IA que acompaña a un grupo
 
-Esta guía está escrita para que un asistente de IA la lea y guíe a un grupo de estudiantes hasta que su hoja quede habilitada. Está basada en `main` al 13/11/2026 (commit `8c1be68`): si algo de acá no coincide con el repo, vale el repo, y hay que avisárselo al grupo.
+Esta guía está escrita para que un asistente de IA la lea y guíe a un grupo de estudiantes hasta que su hoja quede habilitada. Está basada en `main` al 13/11/2026 (commit `ccff468`): si algo de acá no coincide con el repo, vale el repo, y hay que avisárselo al grupo.
 
 1. **Guiar en orden, un paso por vez,** y pedir la evidencia de cada uno antes de seguir: la salida de la terminal o del monitor serie, no un "ya está".
 2. **Los comandos son para Windows:** la terminal de ESP-IDF es PowerShell. Si el grupo usa Linux o macOS, adaptarlos.
@@ -18,7 +18,7 @@ Esta guía está escrita para que un asistente de IA la lea y guíe a un grupo d
 
 ## El recorrido, del banco a la red final
 
-Una hoja nueva recibe las credenciales de la red final recién cuando pasó las pruebas del banco y su código está en `main`. Hasta ahí, el grupo trabaja con la red de pruebas y su propia clave de prueba; desde ahí, la red final, la firma y las actualizaciones las maneja la cátedra.
+Una hoja nueva pasa a la red final recién cuando pasó las pruebas del banco y su código está en `main`. Después del merge, la cátedra compila desde `main` con las credenciales de la instalación, firma esa imagen y la graba. Hasta ahí, el grupo trabaja con la red de pruebas y su propia clave de prueba, y nunca recibe las credenciales de la red final.
 
 ```mermaid
 flowchart TB
@@ -28,12 +28,12 @@ flowchart TB
   end
   subgraph C[Cátedra]
     direction LR
-    B1["Habilita<br/>revisa la evidencia"] --> B2["Credenciales<br/>en persona"] --> B3["Firma y graba<br/>su clave, por USB"] --> B4["Alta en AURA<br/>aula y asignación"]
+    B1["Habilita<br/>revisa la evidencia"] --> B2["Compila<br/>desde main"] --> B3["Firma y graba<br/>su clave, por USB"] --> B4["Alta en AURA<br/>aula y asignación"]
   end
   G -- pide la habilitación --> C
 ```
 
-El paso del grupo a la cátedra es el pedido de habilitación: sin las pruebas aprobadas y el PR mergeado, no hay credenciales. Pendiente de confirmar con la cátedra: en qué momento se hace la firma definitiva.
+El paso del grupo a la cátedra es el pedido de habilitación: sin las pruebas aprobadas y el PR mergeado, la cátedra no compila ni firma.
 
 ## Paso 1: crear la carpeta del dispositivo
 
@@ -161,9 +161,9 @@ Sin conector, AURA no guarda lo que manda la placa: lo que no está declarado, o
 
 Los nombres de los campos del `conector.toml` tienen que ser exactamente los de `values` en el firmware.
 
-## Paso 7: entregar y pedir las credenciales de la red final
+## Paso 7: entregar y pedir la habilitación
 
-Con las pruebas aprobadas y el PR mergeado, el grupo pide la habilitación. A partir de ahí, las credenciales de la red final y la firma definitiva las maneja la cátedra.
+Con las pruebas aprobadas y el PR mergeado, el grupo pide la habilitación. A partir de ahí, la cátedra compila, firma y graba: el grupo entrega el código, no un `.bin`, y no recibe las credenciales de la red final (`GUIA_NODOS_HOJA.md`, 2.9).
 
 **Lo que hace el grupo:**
 
@@ -174,8 +174,8 @@ Con las pruebas aprobadas y el PR mergeado, el grupo pide la habilitación. A pa
 **Lo que hace la cátedra:**
 
 1. **Revisa la evidencia** y habilita el dispositivo.
-2. **Entrega las credenciales de la red final en persona,** nunca por escrito: ni por mail, ni en un PR, ni en un issue.
-3. **Firma la imagen con su clave,** hoy desde la notebook del profe y, a futuro, en un servidor de firmas junto al nginx que sirve las imágenes. La clave definitiva nunca sale de ahí. Pendiente de confirmar con la cátedra: en qué momento del proceso se hace esta firma.
+2. **Compila desde `main`** con las credenciales de la instalación. No firma `.bin` compilados por otros, y la imagen no se publica, porque lleva las credenciales de la malla.
+3. **Firma esa imagen con su clave,** hoy desde la notebook del profe y, a futuro, en un servidor de firmas junto al nginx que sirve las imágenes. La clave definitiva nunca sale de ahí.
 4. **Primera grabación por USB,** con `erase-flash` y la imagen firmada por la cátedra. Desde ahí, la placa solo acepta actualizaciones firmadas con esa clave. Si una placa ya quedó grabada con la clave de prueba de un grupo, cómo cambiarla está en `Mesh_Red_Completa/MIGRACION_FIRMA.md`.
 5. **Alta en AURA:** con su primera medición, la placa aparece en "Placas sin asignar". La cátedra la asigna al código del dispositivo y le asigna el aula, en minúsculas; si es un concentrador, además lo autoriza.
 

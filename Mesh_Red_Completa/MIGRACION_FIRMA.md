@@ -9,7 +9,7 @@ Las tres placas instaladas el 11/11 (el gateway, el concentrador y la hoja E1-PB
 - Las tres placas se grabaron por USB el 11/11, desde `main`, con imágenes firmadas con la clave de prueba del grupo.
 - Una placa solo acepta actualizaciones firmadas con la clave de la imagen que está corriendo. Hoy, una imagen firmada por la cátedra se rechaza con `imagen_invalida`, igual que en la prueba P7 del banco (imagen firmada con otra clave).
 - El gateway quedó con `OTA_PERMITIR_HTTP 0` y sin `OTA_CA_PEM`. En `Mesh3_Gateway/main/ota_gateway.c`, sin `OTA_CA_PEM` el gateway verifica al servidor contra las CA públicas que trae ESP-IDF: solo descarga por HTTPS desde servidores con un certificado de una CA pública.
-- La firma definitiva se hace hoy desde la notebook del profe. En qué momento del proceso se firma está pendiente de confirmar.
+- Según el PR #66 (13/11), el grupo entrega el código por PR y, después del merge, la cátedra compila desde `main` con las credenciales de la instalación y firma esa imagen, hoy desde la notebook del profe. No firma `.bin` compilados por otros, y la imagen firmada no se publica.
 
 ## Por qué no conviene llevar la clave de prueba al servidor
 
@@ -38,7 +38,9 @@ ESP-IDF admite hasta tres firmas por imagen en el esquema de firma que usa el pr
 2. **Segunda OTA, firmada solo por la cátedra.** La placa la acepta porque la imagen que está corriendo ya trae la clave de la cátedra.
 3. **Desde ahí, la clave del grupo deja de valer,** porque la imagen instalada ya no la lleva.
 
-Ninguna clave cambia de lugar: el grupo firma la imagen con su clave, y la cátedra le agrega su firma en su máquina, con la opción de `espsecure sign-data` que agrega una firma a una imagen ya firmada (`--append-signatures`; conviene confirmar el nombre con `espsecure sign-data --help`). `firmar.py` del PR #47 no sirve para este paso, porque se niega a firmar una imagen que ya tiene firma.
+La imagen de transición se arma respetando el #66. La compila la cátedra desde `main`, y no sale de su máquina, porque lleva las credenciales. La firma del grupo se agrega ahí mismo: alguien del grupo trae su clave en un pendrive, firma esa imagen en la máquina de la cátedra, y se lleva la clave sin dejar copia. Después, la cátedra le agrega su firma con la opción de `espsecure sign-data` que agrega una firma a una imagen ya firmada (`--append-signatures`; conviene confirmar el nombre con `espsecure sign-data --help`).
+
+Que la clave del grupo pase por esa máquina no deja un riesgo permanente, porque en el paso 3 deja de valer. `firmar.py` del PR #47 no sirve para agregar la segunda firma: se niega a firmar una imagen que ya tiene una.
 
 Requisitos:
 
@@ -75,5 +77,4 @@ Por eso, las imágenes de producción no se suben a un servidor público, ni a r
 
 - [ ] Qué certificado tiene el servidor HTTPS de la cátedra: de una CA pública o de una propia.
 - [ ] Probar en el banco la imagen de dos firmas, y confirmar si la placa confía en las claves de todas las firmas o solo en la de la primera.
-- [ ] En qué momento del proceso se hace la firma definitiva.
 - [ ] Qué camino se usa para las tres placas.
