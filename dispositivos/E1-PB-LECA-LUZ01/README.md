@@ -32,7 +32,7 @@ movimiento instantáneo.
 | SHT30 | temperatura y humedad | mismo I2C, 0x44 |
 | Relé (1 canal) | luz del aula | IN → **GPIO0**; DC+ a 3V3 (03VDC) o 5V (05VDC), DC- a GND. GPIO0 no interviene en el arranque del C3; probar el montaje en el banco |
 
-**Datos del fabricante** ([HLK-LD2420, manual V1.3.2](http://h.hlktech.com/download/HLK-LD2420-24G/1/HLK-LD2420%e7%94%a8%e6%88%b7%e6%89%8b%e5%86%8c(V1.3.2).pdf)): alcance 8 m, precisión de distancia
+**Datos del fabricante:** alcance 8 m, precisión de distancia
 **±0.35 m**, puertas de **70 cm** (0..15), y **solo informa distancia de cuerpos en
 movimiento** (sin movimiento queda el último valor y la presencia se cae).
 
