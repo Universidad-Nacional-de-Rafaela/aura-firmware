@@ -188,6 +188,23 @@ class Hooks(unittest.TestCase):
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("claves/firma_prueba.pem", r.stderr)
 
+    def test_push_force_sobre_commits_que_no_estan_en_la_pc(self):
+        # Otro clon sube un commit; esta PC no lo baja y fuerza el push con una clave.
+        otro = os.path.join(self.tmp, "otro")
+        self.git("push", "-q", "origin", "main")
+        self.git("clone", "-q", self.remoto, otro, cwd=self.tmp)
+        with open(os.path.join(otro, "nuevo.txt"), "w") as f:
+            f.write("de otro\n")
+        self.git("add", ".", cwd=otro)
+        self.git("commit", "-q", "-m", "otro", cwd=otro)
+        self.git("push", "-q", "origin", "main", cwd=otro)
+        self.escribir("main/app.c", f"{DEFINE_WIFI}\n")
+        self.commit("--no-verify")
+        r = self.git("push", "--force", "origin", "main", ok=False)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("main/app.c:1", r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+
     def test_push_limpio_pasa(self):
         self.escribir("main/otro.c", "int y;\n")
         self.commit()

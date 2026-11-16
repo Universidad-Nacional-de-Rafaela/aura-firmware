@@ -103,6 +103,11 @@ def _git(*args: str) -> str:
     return r.stdout
 
 
+def _existe(commit: str) -> bool:
+    return subprocess.run(["git", "cat-file", "-e", f"{commit}^{{commit}}"],
+                          capture_output=True).returncode == 0
+
+
 def _lineas_agregadas(diff: str):
     """(ruta, número de línea, texto) de cada línea agregada en un diff con -U0."""
     ruta, n = None, 0
@@ -161,7 +166,9 @@ def commits_a_subir(entrada: str) -> list:
         _, local, _, remoto = partes
         if set(local) == {"0"}:  # se borra una rama
             continue
-        if set(remoto) == {"0"}:
+        if set(remoto) == {"0"} or not _existe(remoto):
+            # Rama nueva, o el remoto tiene commits que esta PC no bajó (push --force): se
+            # revisa todo lo que no está en ninguna rama remota conocida.
             rango = [local, "--not", "--remotes"]
         else:
             rango = [f"{remoto}..{local}"]
@@ -222,4 +229,9 @@ def main(argv: list) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv))
+    try:
+        sys.exit(main(sys.argv))
+    except RuntimeError as e:
+        print(f"\nAURA - revisión de secretos: no pude revisar ({e}).\n"
+              "Consultá a la cátedra antes de saltear la revisión.\n", file=sys.stderr)
+        sys.exit(1)
