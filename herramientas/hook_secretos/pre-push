@@ -1,0 +1,10 @@
+#!/bin/sh
+# Hook global de AURA: frena un push con commits que lleven claves o archivos de configuración
+# local. Ataja lo que el pre-commit no ve: git revert, cherry-pick, merge y commits hechos con
+# --no-verify. Después de revisar, corre el pre-push propio del repo, si tiene uno.
+DIR=$(cd "$(dirname "$0")" && pwd)
+. "$DIR/comun.sh"
+
+ENTRADA=$(cat)
+printf '%s\n' "$ENTRADA" | $PY "$DIR/revisar_secretos.py" pre-push || exit 1
+printf '%s\n' "$ENTRADA" | correr_hook_del_repo pre-push "$@"
