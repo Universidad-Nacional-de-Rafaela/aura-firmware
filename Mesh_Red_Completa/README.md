@@ -66,14 +66,20 @@ tienen que quedar **al lado de `componentes/`**.
 
 1. **Configuración local (no se sube al repo):**
    - En los tres proyectos, copiar `main/config_local.ejemplo.h` como `main/config_local.h` y completar `MESH_ID_BYTES` y
-     `MESH_AP_PASS` (los da la cátedra; **iguales en los tres**).
+     `MESH_AP_PASS` (**iguales en los tres**). En el banco los genera cada grupo al azar
+     ([`GUIA_BANCO_DE_PRUEBAS.md`](GUIA_BANCO_DE_PRUEBAS.md)); los de la instalación los tiene solo la cátedra.
    - En el gateway, copiar `main/credenciales.ejemplo.h` como `main/credenciales.h` y completar `REDES_WIFI` (una o más
-     redes `{"SSID", "clave"}` en orden de preferencia, 2,4 GHz, sin portal de login ni aislamiento de clientes). Contra el
-     broker de aura-app, completar `MQTT_USUARIO`/`MQTT_CLAVE` y `BROKER_URI`.
-2. **Compilar y grabar** cada proyecto, desde su carpeta:
+     redes `{"SSID", "clave"}` en orden de preferencia, 2,4 GHz, sin portal de login ni aislamiento de clientes). En el
+     banco, solo la red del banco, que no es la de producción. Contra el broker de aura-app (solo la cátedra), completar
+     `MQTT_USUARIO`/`MQTT_CLAVE` y `BROKER_URI`.
+2. **Compilar, firmar y grabar** cada proyecto, desde su carpeta. La compilación no firma, y una placa grabada con una
+   imagen sin firma no acepta ninguna OTA ([`GUIA_NODOS_HOJA.md`](GUIA_NODOS_HOJA.md), 2.9):
    ```bash
    idf.py set-target esp32s3        # esp32c3 para Mesh3_Hoja
-   idf.py -p COMx build flash monitor
+   idf.py build
+   python ../Broker_MQTT/firmar.py --clave <ruta>/firma_prueba.pem build/<tipo>.bin
+   idf.py -p COMx erase-flash
+   idf.py -p COMx flash monitor
    ```
 3. **Banco** en la PC (misma red que el gateway; en Windows, red *Privada*):
    ```bash
@@ -82,7 +88,7 @@ tienen que quedar **al lado de `componentes/`**.
    Abrir http://localhost:8080. Las placas aparecen **pendientes** (sin aula): asignarles el aula con el botón del tablero
    (hoja y concentrador con la misma). Con el backend real de AURA, arrancar el broker de banco con `--sin-aura` o no usarlo.
 4. **Actualizar por la malla** (después de la primera vez por USB, que graba la tabla de particiones): subir
-   `PROJECT_VER`, compilar y
+   `PROJECT_VER`, compilar, firmar con `firmar.py` y
    ```bash
    python Broker_MQTT/ota.py Mesh3_Hoja/build/aura-hoja-ejemplo.bin --hw mac-907069add964
    python Broker_MQTT/ota.py Mesh3_Hoja/build/aura-hoja-ejemplo.bin --todas --aula aula11
