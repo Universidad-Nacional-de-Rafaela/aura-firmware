@@ -47,9 +47,8 @@ bool hfr_config_aplicar(const cJSON *params, char *motivo, size_t tam)
         esp_err_t err = nvs_lista ? hfr_guardar_config(&siguiente) : ESP_ERR_INVALID_STATE;
         if (err == ESP_OK) {
             vigente = siguiente;
-            ESP_LOGI("CONFIG", "Heladera %lu s [%.2f, %.2f], freezer %lu s [%.2f, %.2f]",
-                     (unsigned long)vigente.intervalo_s, vigente.minimo[0] / 100.0, vigente.maximo[0] / 100.0,
-                     (unsigned long)vigente.freezer_s, vigente.minimo[1] / 100.0, vigente.maximo[1] / 100.0);
+            ESP_LOGI("CONFIG", "Heladera: intervalo %lu s, minimo %.2f C, maximo %.2f C",
+                     (unsigned long)vigente.intervalo_s, vigente.minimo / 100.0, vigente.maximo / 100.0);
         } else {
             snprintf(motivo, tam, "error_de_nvs");
             ESP_LOGE("CONFIG", "No se aplico el parche: %s", esp_err_to_name(err));

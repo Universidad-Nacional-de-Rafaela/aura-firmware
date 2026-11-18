@@ -1,4 +1,4 @@
-"""Conector AURA v4: mediciones de heladera/freezer y alertas por cruce.
+"""Conector AURA v4: mediciones de heladera y alertas por cruce.
 
 No usa red, archivos ni estado de instancia. Las decisiones se apoyan en
 config_vigente() y serie(): sobreviven a una recreación del conector.
@@ -11,8 +11,7 @@ from math import isfinite
 from aura_sdk import Conector
 
 CAMPOS = {
-    "temp_heladera_c": ("heladera", "hlo", "hhi", 2.0, 6.0),
-    "temp_freezer_c": ("freezer", "flo", "fhi", -25.0, -15.0),
+    "temp_heladera_c": ("heladera", "temperatura_min_c", "temperatura_max_c", 2.0, 6.0),
 }
 
 VENTANA_RECIENTE = timedelta(days=1)
@@ -86,7 +85,7 @@ def hora_utc(ts):
     return ts.replace(tzinfo=timezone.utc) if ts.tzinfo is None else ts.astimezone(timezone.utc)
 
 
-class ConectorHeladeraFreezer(Conector):
+class ConectorHeladera(Conector):
     def al_recibir_datos(self, msg, ctx):
         validos = {}
         for campo in CAMPOS:
@@ -109,7 +108,8 @@ class ConectorHeladeraFreezer(Conector):
         # Consultar lo ya guardado antes de agregar esta medición al historial.
         for campo, valor in validos.items():
             nombre, kmin, kmax, default_min, default_max = CAMPOS[campo]
-            inferior, superior = config.get(kmin, default_min), config.get(kmax, default_max)
+            inferior = config.get(kmin, config.get("hlo", default_min))
+            superior = config.get(kmax, config.get("hhi", default_max))
             if not (numero(inferior) and numero(superior) and -55 <= inferior < superior <= 125):
                 ctx.log.warning("%s: config de umbrales invalida; se usan valores iniciales", campo)
                 inferior, superior = default_min, default_max

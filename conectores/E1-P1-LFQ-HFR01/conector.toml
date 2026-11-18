@@ -1,0 +1,12 @@
+nombre = "E1-P1-LFQ-HFR01"
+version = "1.1.0"
+sdk = ">=1.2,<2"
+autores = ["VainstubTomas", "Bernidb", "Kinggrass265", "JuanCruz46"]
+clase = "conector:ConectorHeladera"
+
+[campos.temp_heladera_c]
+unidad = "°C"
+min = -55
+max = 125
+etiqueta = "Temperatura de la heladera"
+rol = "principal"

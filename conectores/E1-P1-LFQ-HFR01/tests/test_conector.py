@@ -8,7 +8,7 @@ sys.path.insert(0, str(CARPETA.parent.parent / "comun" / "python"))
 from aura_sdk import ContextoDePrueba, Mensaje, cargar_conector, procesar
 
 T = datetime(2026, 10, 8, 12, tzinfo=timezone.utc)
-H, F = "temp_heladera_c", "temp_freezer_c"
+H = "temp_heladera_c"
 
 
 class ContextoConVentanas(ContextoDePrueba):
@@ -34,14 +34,15 @@ class TestConector(unittest.TestCase):
         msg = Mensaje(hw_id="mac-000000000001", values=values, ts=ts, ingest_id=ingest_id or f"prueba-{self.n}")
         return procesar(self.conector, self.ctx, msg)
 
-    def test_guarda_dos_sondas(self):
-        self.assertEqual(self.enviar({H:4.5,F:-18}).resultado,"persistido")
-        self.assertEqual(self.ctx.mediciones[0].values,{H:4.5,F:-18})
+    def test_guarda_heladera_con_etiqueta_legible(self):
+        self.assertEqual(self.enviar({H: 4.5}).resultado, "persistido")
+        self.assertEqual(self.ctx.mediciones[0].values, {H: 4.5})
+        self.assertEqual(set(self.manifiesto.campos), {H})
+        self.assertEqual(self.manifiesto.campos[H].etiqueta, "Temperatura de la heladera")
 
-    def test_intervalos_independientes_no_completan_campo_ausente(self):
-        self.enviar({H:4})
-        self.enviar({F:-19})
-        self.assertEqual(self.ctx.mediciones[1].values,{F:-19})
+    def test_ignora_otra_medicion_aunque_llegue_en_la_misma_muestra(self):
+        self.enviar({H: 4, "temp_freezer_c": -19})
+        self.assertEqual(self.ctx.mediciones[0].values, {H: 4})
 
     def test_tipos_centinelas_y_rangos_invalidos(self):
         for valor in [-127,85,126,-56,float("nan"),float("inf"),10**400,True,"4",None]:
@@ -49,12 +50,14 @@ class TestConector(unittest.TestCase):
                 self.assertEqual(self.enviar({H:valor}).resultado,"descartado")
         self.assertEqual(len(self.ctx.mediciones),0)
 
-    def test_validacion_independiente(self):
-        self.enviar({H:85,F:-18,"rssi":-99})
-        self.assertEqual(self.ctx.mediciones[0].values,{F:-18})
+    def test_solo_un_campo_anterior_se_descarta(self):
+        self.assertEqual(self.enviar({"temp_freezer_c": -18}).resultado, "descartado")
+        self.assertEqual(self.ctx.mediciones, [])
+        self.assertEqual(self.ctx.alertas, [])
 
     def test_valores_fisicos_en_extremos(self):
-        self.assertEqual(self.enviar({H:-55,F:125}).resultado,"persistido")
+        for valor in (-55, 125):
+            self.assertEqual(self.enviar({H: valor}).resultado, "persistido")
 
     def test_sin_campos_validos(self):
         for values in [{},{"rssi":-80},{"temp_c":3}]:
@@ -81,19 +84,27 @@ class TestConector(unittest.TestCase):
             self.enviar({H:temp},ts=T+timedelta(minutes=n))
         self.assertEqual([a.severidad for a in self.ctx.alertas],["warning","info"])
 
-    def test_alarma_baja_freezer(self):
-        self.enviar({F:-26})
-        self.enviar({F:-27},T+timedelta(minutes=1))
-        self.enviar({F:-18},T+timedelta(minutes=2))
-        self.assertEqual([a.tipo for a in self.ctx.alertas],["temperatura_freezer"]*2)
+    def test_alarma_baja_heladera(self):
+        self.enviar({H: 1})
+        self.enviar({H: 1.5}, T + timedelta(minutes=1))
+        self.enviar({H: 2}, T + timedelta(minutes=2))
+        self.assertEqual([a.severidad for a in self.ctx.alertas], ["warning"])
+        self.enviar({H: 2.5}, T + timedelta(minutes=3))
+        self.assertEqual([a.severidad for a in self.ctx.alertas], ["warning", "info"])
 
-    def test_ambas_alarmas_independientes(self):
-        self.enviar({H: 10, F: -10})
-        self.enviar({H: 10, F: -10}, T + timedelta(minutes=1))
-        self.assertEqual({a.tipo for a in self.ctx.alertas},{"temperatura_heladera","temperatura_freezer"})
+    def test_config_con_nombres_legibles_tiene_prioridad(self):
+        self.ctx = ContextoDePrueba(self.manifiesto, config={
+            "temperatura_min_c": 0, "temperatura_max_c": 10, "hlo": 2, "hhi": 6,
+        })
+        self.enviar({H: 8})
+        self.enviar({H: 8}, T + timedelta(minutes=1))
+        self.assertEqual(self.ctx.alertas, [])
+        self.enviar({H: 11}, T + timedelta(minutes=2))
+        self.enviar({H: 11}, T + timedelta(minutes=3))
+        self.assertEqual(len(self.ctx.alertas), 1)
 
     def test_respeta_umbrales_reportados(self):
-        self.ctx = ContextoDePrueba(self.manifiesto, config={"hlo":0,"hhi":10})
+        self.ctx = ContextoDePrueba(self.manifiesto, config={"temperatura_min_c": 0, "temperatura_max_c": 10})
         self.enviar({H:8})
         self.assertEqual(self.ctx.alertas,[])
         self.enviar({H: 11}, T + timedelta(minutes=1))
@@ -135,9 +146,9 @@ class TestConector(unittest.TestCase):
         self.assertEqual([a.severidad for a in self.ctx.alertas], ["warning", "warning"])
 
     def test_limites_de_conservacion_inclusivos(self):
-        self.enviar({H:2,F:-25})
-        self.enviar({H:6,F:-15},T+timedelta(minutes=1))
-        self.assertEqual(self.ctx.alertas,[])
+        self.enviar({H: 2})
+        self.enviar({H: 6}, T + timedelta(minutes=1))
+        self.assertEqual(self.ctx.alertas, [])
 
     def test_oscilacion_y_recuperacion_con_histeresis(self):
         for n, temperatura in enumerate([6, 6.5] * 5):
@@ -157,10 +168,10 @@ class TestConector(unittest.TestCase):
         self.assertEqual([a.severidad for a in self.ctx.alertas], ["warning", "info"])
         self.assertIn((T + timedelta(minutes=4)).isoformat(), self.ctx.alertas[1].mensaje)
 
-    def test_otra_sonda_no_cuenta_para_confirmar(self):
+    def test_campo_omitido_o_invalido_no_cuenta_para_confirmar(self):
         self.enviar({H: 8})
-        self.enviar({F: -10}, T + timedelta(minutes=1))
-        self.enviar({H: 85, F: -18}, T + timedelta(minutes=2))
+        self.enviar({"otro_campo_c": -10}, T + timedelta(minutes=1))
+        self.enviar({H: 85}, T + timedelta(minutes=2))
         self.assertEqual(self.ctx.alertas, [])
         self.enviar({H: 9}, T + timedelta(minutes=3))
         self.assertEqual([a.tipo for a in self.ctx.alertas], ["temperatura_heladera"])

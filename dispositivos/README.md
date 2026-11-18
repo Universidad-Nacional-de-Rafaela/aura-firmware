@@ -78,6 +78,7 @@ mismo número en todos: va arriba del último piso.
 | Código | Recinto | Edificio y piso |
 |---|---|---|
 | `LECA` | LabECA | E1, planta baja |
+| `LFQ` | Laboratorio de Fisicoquímica | E1, primer piso |
 | `TERR` | Terraza (al aire libre) | E1 y E2, azotea |
 | `RECT` | Rectorado | E2, segundo piso |
 | `VICE` | Vicerrectorado | E2, segundo piso |
@@ -122,7 +123,7 @@ que monitorea, o lo que acciona. Una placa que mide varias magnitudes del ambien
 | Código | Qué es | Responsable | Estado |
 |---|---|---|---|
 | [`E1-AZ-TERR-TAN01`](E1-AZ-TERR-TAN01/) | Nivel de dos tanques de agua de la terraza (LoRaWAN) | losHijosDelStackOverFlow (IC IV 2026) | instalado |
-| [`E1-PB-LECA-HFR01`](E1-PB-LECA-HFR01/) | Heladera-freezer del LabECA | grupo de IC IV 2026 | en desarrollo |
+| [`E1-P1-LFQ-HFR01`](E1-P1-LFQ-HFR01/) | Heladera del Laboratorio de Fisicoquímica | grupo de IC IV 2026 | en desarrollo |
 | [`E1-PB-LECA-CDC01`](E1-PB-LECA-CDC01/) | CO2 del LabECA (mesh ESP-WIFI-MESH) | grupo de IC IV 2026 | en desarrollo |
 | [`E1-PB-LECA-TAB01`](E1-PB-LECA-TAB01/) | Medidor de energía del tablero del LabECA | grupo de IC III 2026 | en desarrollo |
 | [`E2-AZ-TERR-TAN01`](E2-AZ-TERR-TAN01/) | Nivel de tres tanques de agua de la terraza del Edificio 2 (LoRaWAN) | grupo de IC IV 2026 | en desarrollo |

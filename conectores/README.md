@@ -15,7 +15,7 @@ dispositivo ──► raíz de la mesh / lorawan-bridge ──► hw/<hw_id>/dat
 [`../dispositivos/`](../dispositivos/)):
 
 ```
-conectores/E1-PB-LECA-HFR01/
+conectores/E1-P1-LFQ-HFR01/
 ├── conector.toml      # manifiesto: campos con su rango, autores, si predice
 ├── conector.py        # la clase: al_recibir_datos() y, opcional, predecir()
 ├── README.md
