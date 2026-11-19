@@ -12,8 +12,9 @@
  *   almacen.c        NVS, escribiendo solo cuando algo cambia
  *
  * Todas las puertas llevan este MISMO binario: no hay MAC, id, aula ni nada de una puerta en
- * el codigo. Lo que cambia de una a otra (tiempo del pulso, aviso, tipo de sensor) va por
- * set_config; la lista de llaveros, por tarjeta_agregar / tarjeta_quitar.
+ * el codigo. Lo que cambia de una a otra (tiempo del pulso, aviso) va por set_config; la lista de
+ * llaveros, por tarjeta_agregar / tarjeta_quitar / tarjetas_vaciar. El tipo de sensor NO va por
+ * set_config: se fija al compilar (CONFIG_PUERTA_SENSOR_BOTON, ADR-009 decision 10).
  *
  * MESH_ID y MESH_AP_PASS: en config_local.h (igual que en el gateway y el concentrador).
  */
@@ -56,6 +57,14 @@
 #endif
 
 static const char *TAG = "PUERTA";
+
+/* Tipo de sensor: fijo al compilar. Si set_config pudiera cambiarlo, un comando falso haria que
+   una puerta armada y abierta figure cerrada. Las puertas instaladas son siempre reed. */
+#if CONFIG_PUERTA_SENSOR_BOTON
+#define SENSOR_TIPO SENSOR_BOTON
+#else
+#define SENSOR_TIPO SENSOR_REED
+#endif
 
 /* Potencia en pasos de 0,25 dBm (60 = 15 dBm). Igual que la hoja de ejemplo de la catedra. */
 #define POTENCIA_TX 60
@@ -111,8 +120,6 @@ static lista_resultado_t lista_cambiar(bool agregar, const uint8_t *uid, size_t 
 /* ================================================================== */
 /*  Lo que aporta el dispositivo a nodo_mesh                           */
 /* ================================================================== */
-static const char *sensor_nombre(sensor_tipo_t s) { return s == SENSOR_BOTON ? "boton" : "reed"; }
-
 static bool aplicar_config(const cJSON *params, char *motivo, size_t tam)
 {
     /* params tiene que ser un objeto: un arreglo ("params":[5000]) no trae nombres de campo */
@@ -142,21 +149,14 @@ static bool aplicar_config(const cJSON *params, char *motivo, size_t tam)
             nueva.pulso_ms = valor;
         } else if (strcmp(p->string, "aviso_s") == 0) {
             int32_t valor;
-            if (!cJSON_IsNumber(p) || !entero_en_rango(p->valuedouble, AVISO_MIN_S, AVISO_MAX_S, &valor)) {
+            /* 0 apaga el aviso de puerta abierta; si no es 0, de AVISO_MIN_S a AVISO_MAX_S */
+            if (!cJSON_IsNumber(p) || !entero_en_rango_o_cero(p->valuedouble, AVISO_MIN_S, AVISO_MAX_S, &valor)) {
                 snprintf(motivo, tam, "aviso_s_fuera_de_rango");
                 return false;
             }
             nueva.aviso_s = valor;
-        } else if (strcmp(p->string, "sensor") == 0) {
-            if (cJSON_IsString(p) && strcmp(p->valuestring, "reed") == 0) {
-                nueva.sensor = SENSOR_REED;
-            } else if (cJSON_IsString(p) && strcmp(p->valuestring, "boton") == 0) {
-                nueva.sensor = SENSOR_BOTON;
-            } else {
-                snprintf(motivo, tam, "sensor_invalido");
-                return false;
-            }
         } else {
+            /* incluye "sensor": el tipo se fija al compilar, no por set_config */
             snprintf(motivo, tam, "parametro_desconocido");
             return false;
         }
@@ -168,8 +168,8 @@ static bool aplicar_config(const cJSON *params, char *motivo, size_t tam)
     xSemaphoreTake(lock_cfg, portMAX_DELAY);
     cfg = nueva;
     xSemaphoreGive(lock_cfg);
-    ESP_LOGI(TAG, "Config: pulso %d ms, aviso %d s, sensor %s", (int)nueva.pulso_ms, (int)nueva.aviso_s,
-             sensor_nombre(nueva.sensor));
+    ESP_LOGI(TAG, "Config: pulso %d ms, aviso %d s%s", (int)nueva.pulso_ms, (int)nueva.aviso_s,
+             nueva.aviso_s == AVISO_APAGADO_S ? " (apagado)" : "");
     return true;
 }
 
@@ -191,9 +191,11 @@ static void describir_config(cJSON *config)
     cJSON_AddNumberToObject(config, "intervalo_s", latido.intervalo_s);
     cJSON_AddNumberToObject(config, "pulso_ms", k.pulso_ms);
     cJSON_AddNumberToObject(config, "aviso_s", k.aviso_s);
-    cJSON_AddStringToObject(config, "sensor", sensor_nombre(k.sensor));
     cJSON_AddNumberToObject(config, "tarjetas", l.n);       /* cuantos llaveros y su hash: AURA los compara con los suyos */
     cJSON_AddStringToObject(config, "hash", hash);
+    /* El latido es este reporte: el estado de la puerta viaja aca, de solo lectura (contrato 3.2) */
+    cJSON_AddNumberToObject(config, "armada", latido.armada ? 1 : 0);
+    cJSON_AddNumberToObject(config, "abierta", latido.abierta ? 1 : 0);
 }
 
 static bool comando_tarjeta(bool agregar, const cJSON *params, char *motivo, size_t tam)
@@ -227,6 +229,30 @@ static bool comando_tarjeta(bool agregar, const cJSON *params, char *motivo, siz
     return true;
 }
 
+/* Vacia la lista y la guarda. AURA lo usa cuando el hash no coincide: despues manda un
+   tarjeta_agregar por cada UID que tiene guardado (ADR-009, decision 3). Vaciar una lista vacia
+   tambien es exito: los reintentos no pueden fallar porque el primero ya se aplico. */
+static bool comando_tarjetas_vaciar(char *motivo, size_t tam)
+{
+    xSemaphoreTake(lock_cambio_lista, portMAX_DELAY);
+    lista_t vacia;
+    lista_vaciar(&vacia);
+    bool guardado = almacen_guardar_lista(&vacia);      /* persiste primero, igual que lista_cambiar */
+    if (guardado) {
+        xSemaphoreTake(lock_lista, portMAX_DELAY);
+        lista = vacia;
+        xSemaphoreGive(lock_lista);
+    }
+    xSemaphoreGive(lock_cambio_lista);
+    if (!guardado) {
+        snprintf(motivo, tam, "error_de_nvs");
+        return false;
+    }
+    ESP_LOGI(TAG, "Lista de llaveros vaciada");
+    nodo_mesh_reportar();                  /* tarjetas=0 y hash 00000000, como los otros dos comandos */
+    return true;
+}
+
 static bool ejecutar_comando(const char *comando, const cJSON *params, bool local, char *motivo, size_t tam)
 {
     /* Las ordenes del boton del concentrador (local) no pueden tocar una puerta */
@@ -236,9 +262,9 @@ static bool ejecutar_comando(const char *comando, const cJSON *params, bool loca
     }
     if (strcmp(comando, "tarjeta_agregar") == 0) return comando_tarjeta(true, params, motivo, tam);
     if (strcmp(comando, "tarjeta_quitar") == 0) return comando_tarjeta(false, params, motivo, tam);
+    if (strcmp(comando, "tarjetas_vaciar") == 0) return comando_tarjetas_vaciar(motivo, tam);
     if (strcmp(comando, "estado") == 0) {
-        /* Solo lectura: manda el reporte de la placa y un latido con la puerta y el armado */
-        latido.latir_ya = true;
+        /* Solo lectura: manda el reporte ya (el latido ES el reporte, con la puerta y el armado) */
         nodo_mesh_reportar();
         return true;
     }
@@ -301,17 +327,6 @@ static void emitir_evento(const accion_t *a)
     cJSON_Delete(v);
 }
 
-static void emitir_latido(void)
-{
-    cJSON *v = cJSON_CreateObject();
-    if (v == NULL) return;
-    cJSON_AddNumberToObject(v, "puerta", puerta.abierta ? 1 : 0);
-    cJSON_AddNumberToObject(v, "armada", puerta.armada ? 1 : 0);
-    cJSON_AddNumberToObject(v, "cerradura", rele_energizado() ? 1 : 0);
-    nodo_mesh_medicion(v);
-    cJSON_Delete(v);
-}
-
 /* Ejecuta, en el orden en que la logica las produjo, lo que la logica decidio. La alerta de
    intrusion es la primera accion de su tanda, asi que es lo primero que sale. */
 static void ejecutar_acciones(void)
@@ -368,7 +383,7 @@ static void tarea_puerta(void *arg)
 
     vTaskDelay(pdMS_TO_TICKS(100));        /* que la pull-up del sensor se estabilice */
     sensor_filtro_t sensor;
-    sensor_filtro_iniciar(&sensor, k.sensor, gpio_get_level(PIN_SENSOR), ahora_ms());
+    sensor_filtro_iniciar(&sensor, SENSOR_TIPO, gpio_get_level(PIN_SENSOR), ahora_ms());
     bool estable = sensor.estable;
 
     puerta_iniciar(&puerta, ahora_ms(), almacen_cargar_armada(), estable, k.pulso_ms, k.aviso_s);
@@ -389,14 +404,13 @@ static void tarea_puerta(void *arg)
         puerta.pulso_ms = k.pulso_ms;
         puerta.aviso_s = k.aviso_s;
         bool abierta;
-        switch (sensor_filtro_paso(&sensor, ahora, k.sensor, gpio_get_level(PIN_SENSOR), &abierta)) {
+        switch (sensor_filtro_paso(&sensor, ahora, SENSOR_TIPO, gpio_get_level(PIN_SENSOR), &abierta)) {
         case SENSOR_CAMBIO:
             ESP_LOGI(TAG, "Puerta %s", abierta ? "ABIERTA" : "cerrada");
             puerta_sensor(&puerta, ahora, abierta);
             break;
         case SENSOR_RESINCRONIZADO:
-            /* set_config cambio el tipo de sensor: la lectura nueva es el estado, no un movimiento */
-            ESP_LOGI(TAG, "Sensor %s: la puerta se ve %s", sensor_nombre(k.sensor), abierta ? "abierta" : "cerrada");
+            /* No pasa: el tipo de sensor es fijo y el filtro solo resincroniza si cambia */
             puerta_sensor_resincronizar(&puerta, ahora, abierta);
             break;
         case SENSOR_IGUAL:
@@ -451,8 +465,10 @@ static void tarea_puerta(void *arg)
             }
         }
 
-        /* 6. Latido: mas seguido con la puerta armada (se supervisa que no la hayan arrancado) */
-        if (latido_toca(&latido, &puerta, ahora)) emitir_latido();
+        /* 6. Latido: mas seguido con la puerta armada (se supervisa que no la hayan arrancado).
+           Va como REPORTE, no como data: no ocupa lugar en la cola de 400 muestras, asi que sin
+           red no desplaza a los eventos ni a las intrusiones (ADR-009, decision 7) */
+        if (latido_toca(&latido, &puerta, ahora)) nodo_mesh_reportar();
 
         vTaskDelay(pdMS_TO_TICKS(PERIODO_LOGICA_MS));
     }
@@ -501,7 +517,7 @@ static void tarea_consola(void *arg)
             }
         } else if (strcmp(orden, "config") == 0) {
             /* Lo mismo que un set_config de AURA (misma validacion), para probar sin gateway:
-               config sensor boton | config pulso_ms 3000 | config aviso_s 10 */
+               config pulso_ms 3000 | config aviso_s 10 (el sensor es de compilacion) */
             char clave[16] = "", valor[16] = "";
             sscanf(linea, "%*s %15s %15s", clave, valor);
             cJSON *params = cJSON_CreateObject();
@@ -532,8 +548,10 @@ void app_main(void)
     rele_reposo_inicial();
 
     esp_err_t err = nvs_flash_init();
+    bool memoria_borrada = false;
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
+        memoria_borrada = true;            /* arranca con la lista vacia, desarmada y sin aula: se avisa abajo */
         err = nvs_flash_init();
     }
     ESP_ERROR_CHECK(err);
@@ -576,6 +594,27 @@ void app_main(void)
     };
     ESP_ERROR_CHECK(nodo_mesh_iniciar(&mesh));
     if (err != ESP_OK) nodo_mesh_sonda("lector", false, "sin_respuesta");
+
+    /* Alertas de arranque. Van por la cola de eventos de la biblioteca, asi que salen cuando la
+       mesh se une aunque ahora no haya raiz. */
+    if (memoria_borrada) {
+        ESP_LOGW(TAG, "ALERTA memoria_borrada: lista vacia, desarmada y sin aula");
+        nodo_mesh_alerta("memoria_borrada", "high",
+                         "Arranco con la memoria borrada: lista de llaveros vacia, desarmada y sin aula", NULL);
+    }
+    /* Un corte de luz deja la puerta trabada y, sin esto, sin constancia (ADR-009, F1). Un reinicio
+       por software, por cuelgue o por OTA no cuenta: solo el arranque en frio o la caida de tension. */
+    esp_reset_reason_t causa = esp_reset_reason();
+    if (causa == ESP_RST_POWERON || causa == ESP_RST_BROWNOUT) {
+        cJSON *det = cJSON_CreateObject();
+        if (det != NULL) {
+            cJSON_AddStringToObject(det, "alimentacion", "red");
+            cJSON_AddBoolToObject(det, "volvio_la_energia", true);
+            ESP_LOGW(TAG, "ALERTA energia: volvio la energia (%s)", causa == ESP_RST_BROWNOUT ? "caida de tension" : "arranque en frio");
+            nodo_mesh_alerta("energia", "info", "La placa arranco: volvio la energia", det);
+            cJSON_Delete(det);
+        }
+    }
 
     xTaskCreate(tarea_puerta, "puerta", 6144, NULL, 5, NULL);
 #if CONFIG_PUERTA_CARGA_POR_CONSOLA

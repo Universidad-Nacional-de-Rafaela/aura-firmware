@@ -372,6 +372,75 @@ int main() {
     VERIFICAR(!puerta_sensor_sospechoso(&p, 3000 + SENSOR_SOSPECHOSO_MS));
   }
 
+  // ---- Valores por defecto (ADR-009): pulso de 3 s y sensor sospechoso a las 24 h ----
+  {
+    VERIFICAR(PULSO_DEFECTO_MS == 3000);
+    VERIFICAR(SENSOR_SOSPECHOSO_MS == 24LL * 3600 * 1000);
+    // Con 3 s, cinco accesos en un minuto entran en el limite de 20 s energizada: ninguno se recorta
+    puerta_t p = nueva();
+    int pulsos = 0;
+    for (int i = 0; i < 5; i++) {
+      int64_t t = 1000 + i * 10000;                  // uno cada 10 s: el pulso ya vencio y el llavero no es doble pasada
+      puerta_tarjeta(&p, t, A, 4, true);
+      for (auto &a : vaciar(p))
+        if (a.tipo == ACC_PULSO && a.valor == PULSO_DEFECTO_MS) pulsos++;
+      puerta_tick(&p, t + PULSO_DEFECTO_MS);
+      vaciar(p);
+      p.doble_activa = false;                        // este test no es de armado
+    }
+    VERIFICAR(pulsos == 5);
+    puerta_t q = nueva();
+    puerta_tarjeta(&q, 1000, A, 4, true);
+    auto v = vaciar(q);
+    VERIFICAR(contar(v, ACC_ALERTA) == 0);
+  }
+
+  // ---- aviso_s = 0 apaga el aviso de puerta abierta (oficina que se deja abierta) ----
+  {
+    puerta_t p;
+    puerta_iniciar(&p, 0, false, false, PULSO_DEFECTO_MS, 0);
+    puerta_sensor(&p, 1000, true);
+    vaciar(p);
+    puerta_tick(&p, 1000 + 600 * 1000);              // 10 min abierta: nada
+    puerta_tick(&p, 1000 + 8LL * 3600 * 1000);       // 8 h abierta: nada
+    auto v = vaciar(p);
+    VERIFICAR(!hay_aviso(v, AVISO_PUERTA_ABIERTA));
+    VERIFICAR(contar(v, ACC_ALERTA) == 0);
+    puerta_sensor(&p, 1000 + 9LL * 3600 * 1000, false);
+    v = vaciar(p);
+    VERIFICAR(hay(v, ACC_EVENTO, "cierre"));
+    VERIFICAR(contar(v, ACC_ALERTA) == 0);           // no hubo alerta, asi que no hay "puerta_cerrada"
+  }
+  // Arranca con la puerta abierta y aviso apagado: tampoco avisa
+  {
+    puerta_t p;
+    puerta_iniciar(&p, 0, false, true, PULSO_DEFECTO_MS, 0);
+    puerta_tick(&p, 3600 * 1000);
+    auto v = vaciar(p);
+    VERIFICAR(!hay_aviso(v, AVISO_PUERTA_ABIERTA));
+    VERIFICAR(contar(v, ACC_ALERTA) == 0);
+  }
+  // set_config pone aviso_s en 0 con el aviso ya programado: se apaga y no suena
+  {
+    puerta_t p = nueva();
+    puerta_sensor(&p, 1000, true);
+    vaciar(p);
+    p.aviso_s = 0;                                   // lo que hace main.c con la config nueva
+    puerta_tick(&p, 1000 + AVISO_DEFECTO_S * 1000 + 1);
+    auto v = vaciar(p);
+    VERIFICAR(!hay_aviso(v, AVISO_PUERTA_ABIERTA));
+    VERIFICAR(contar(v, ACC_ALERTA) == 0);
+  }
+  // Armada, la intrusion sigue sonando igual con el aviso apagado (aviso_s no la toca)
+  {
+    puerta_t p;
+    puerta_iniciar(&p, 0, true, false, PULSO_DEFECTO_MS, 0);
+    puerta_sensor(&p, 1000, true);
+    auto v = vaciar(p);
+    VERIFICAR(hay(v, ACC_ALERTA, "intrusion"));
+    VERIFICAR(hay_aviso(v, AVISO_INTRUSION));
+  }
+
   // ---- Sin rollover: todo anda igual a los 100 dias de uptime ----
   {
     int64_t t0 = 100LL * 24 * 3600 * 1000;

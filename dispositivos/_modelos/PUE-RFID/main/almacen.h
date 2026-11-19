@@ -7,12 +7,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "lista_tarjetas.h"
-#include "sensor_logica.h"
 
 typedef struct {
     int32_t pulso_ms;
-    int32_t aviso_s;
-    sensor_tipo_t sensor;
+    int32_t aviso_s;                   /* 0 = aviso de puerta abierta apagado */
 } config_puerta_t;
 
 bool almacen_iniciar(void);
@@ -25,6 +23,7 @@ bool almacen_cargar_armada(void);
 bool almacen_guardar_armada(bool armada);
 
 /* La config se guarda de una sola vez (un blob, un commit): o queda la nueva entera o la vieja
-   entera. Si lo guardado no es valido, la carga devuelve los valores por defecto de los tres. */
+   entera. Si lo guardado no es valido, la carga devuelve los valores por defecto. El tipo de
+   sensor no se guarda: se fija al compilar (CONFIG_PUERTA_SENSOR_BOTON). */
 void almacen_cargar_config(config_puerta_t *c);
 bool almacen_guardar_config(const config_puerta_t *c);

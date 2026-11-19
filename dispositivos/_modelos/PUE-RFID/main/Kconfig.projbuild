@@ -8,6 +8,16 @@ menu "Puerta con llavero (PUE-RFID)"
             placa enchufada y sin hacer nada: el LED del rele tiene que estar APAGADO. Si esta
             prendido, esta opcion esta mal elegida y la cerradura queda energizada en reposo.
 
+    config PUERTA_SENSOR_BOTON
+        bool "El sensor de la puerta es un boton de banco (SOLO PARA BANCO)"
+        default n
+        help
+            Apagada por defecto: sensor magnetico (reed), con "abierta" = pin en ALTO (iman lejos o
+            cable cortado). Encendida: boton de banco que simula la puerta, con "abierta" = pin en
+            BAJO. El tipo de sensor se fija al compilar y NO se puede cambiar a distancia
+            (ADR-009, decision 10): si set_config lo cambiara, un comando falso haria que una
+            puerta armada y abierta figure cerrada. Las puertas instaladas son siempre reed.
+
     config PUERTA_ABRIR_REMOTO
         bool "Aceptar la orden remota 'abrir' desde AURA"
         default n

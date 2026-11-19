@@ -35,14 +35,15 @@
 #define RECHAZOS_PARA_BLOQUEO 5
 #define VENTANA_RECHAZOS_MS 60000
 #define BLOQUEO_MS 30000
-#define SENSOR_SOSPECHOSO_MS (4LL * 3600 * 1000)   /* "abierta" por horas: falla del sensor */
+#define SENSOR_SOSPECHOSO_MS (24LL * 3600 * 1000)  /* "abierta" 24 h seguidas: falla del sensor (con 4 h, una oficina abierta todo el dia daba una alerta falsa por dia) */
 #define LATIDO_ARMADA_S 30
 #define LATIDO_DESARMADA_S 120
 
 /* Rangos de set_config */
-#define PULSO_DEFECTO_MS 5000
+#define PULSO_DEFECTO_MS 3000          /* con 5 s, el quinto acceso en un minuto choca con el limite de 20 s */
 #define AVISO_DEFECTO_S 15
-#define AVISO_MIN_S 5
+#define AVISO_APAGADO_S 0              /* aviso_s = 0 apaga el aviso de puerta abierta (oficina que se deja abierta) */
+#define AVISO_MIN_S 5                  /* si no es 0, de AVISO_MIN_S a AVISO_MAX_S */
 #define AVISO_MAX_S 600
 
 typedef enum {
@@ -228,7 +229,7 @@ static inline void puerta_iniciar(puerta_t *p, int64_t ahora_ms, bool armada, bo
     if (armada && abierta) {
         /* U11: la placa no sabe que paso mientras estuvo apagada. Alerta propia y sin sonido. */
         p_alerta(p, "arranque_puerta_abierta", SEV_HIGH, "Arranco armada y con la puerta abierta");
-    } else if (abierta) {
+    } else if (abierta && aviso_s != AVISO_APAGADO_S) {
         p->aviso_pendiente = true;
         p->aviso_desde_ms = ahora_ms + (int64_t)aviso_s * 1000;
     }
@@ -270,6 +271,7 @@ static inline bool p_dar_pulso(puerta_t *p, int64_t ahora_ms)
 
 static inline void p_programar_aviso_abierta(puerta_t *p, int64_t ahora_ms)
 {
+    if (p->aviso_s == AVISO_APAGADO_S) return;       /* aviso apagado: no hay nada que programar */
     p->aviso_pendiente = true;
     p->aviso_desde_ms = ahora_ms + (int64_t)p->aviso_s * 1000;
 }
@@ -458,6 +460,8 @@ static inline void puerta_tick(puerta_t *p, int64_t ahora_ms)
     if (cerradura_vencio(&p->cerradura, ahora_ms)) {
         p_cortar_pulso(p, ahora_ms);
     }
+    /* aviso_s puede pasar a 0 por set_config con un aviso ya programado: tambien se apaga */
+    if (p->aviso_pendiente && p->aviso_s == AVISO_APAGADO_S) p->aviso_pendiente = false;
     if (p->aviso_pendiente && p->abierta && !p->armada && (ahora_ms - p->aviso_desde_ms) >= 0) {
         p->aviso_pendiente = false;
         p->aviso_sonando = true;

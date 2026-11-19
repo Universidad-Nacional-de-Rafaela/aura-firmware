@@ -57,5 +57,37 @@ int main() {
     VERIFICAR(latido_toca(&l, &p, 31010 + 120000));    // y de ahi cada 120 s
   }
 
+  // El reporte lleva armada y abierta: la copia sigue a la puerta en cada vuelta del lazo
+  {
+    puerta_t p;
+    puerta_iniciar(&p, 0, false, false, PULSO_DEFECTO_MS, AVISO_DEFECTO_S);
+    latido_t l;
+    latido_iniciar(&l, puerta_latido_s(&p));
+    latido_toca(&l, &p, 0);
+    VERIFICAR(!l.armada && !l.abierta);
+    puerta_sensor(&p, 1000, true);                     // se abre
+    latido_toca(&l, &p, 1010);
+    VERIFICAR(!l.armada && l.abierta);
+    puerta_sensor(&p, 2000, false);                    // se cierra
+    puerta_tarjeta(&p, 3000, A, 4, true);
+    puerta_tarjeta(&p, 4500, A, 4, true);              // doble pasada: arma
+    VERIFICAR(p.armada);
+    latido_toca(&l, &p, 4510);
+    VERIFICAR(l.armada && !l.abierta);
+    puerta_sensor(&p, 9000, true);                     // intrusion: armada y abierta
+    latido_toca(&l, &p, 9010);
+    VERIFICAR(l.armada && l.abierta);
+  }
+
+  // Arranca armada y abierta: el primer reporte ya lo dice (sin esperar a un cambio)
+  {
+    puerta_t p;
+    puerta_iniciar(&p, 0, true, true, PULSO_DEFECTO_MS, AVISO_DEFECTO_S);
+    latido_t l;
+    latido_iniciar(&l, puerta_latido_s(&p));
+    VERIFICAR(latido_toca(&l, &p, 0));
+    VERIFICAR(l.armada && l.abierta);
+  }
+
   RESUMEN();
 }

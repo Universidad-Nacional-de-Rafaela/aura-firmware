@@ -16,3 +16,14 @@ static inline bool entero_en_rango(double v, int32_t min, int32_t max, int32_t *
     *out = e;
     return true;
 }
+
+/* Igual que entero_en_rango, pero ademas acepta 0 (un parametro que se apaga con 0, como aviso_s).
+   Cualquier otro valor tiene que estar dentro de [min, max]. */
+static inline bool entero_en_rango_o_cero(double v, int32_t min, int32_t max, int32_t *out)
+{
+    if (v == 0.0) {                                                /* 0 y -0; NaN no es igual a nada */
+        *out = 0;
+        return true;
+    }
+    return entero_en_rango(v, min, max, out);
+}
