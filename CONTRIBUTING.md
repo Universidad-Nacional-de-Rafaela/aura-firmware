@@ -137,7 +137,9 @@ a archivos, y AURA puede recrearlo en cualquier momento: lo que tenga que record
 ## 4. Lo que no se negocia
 
 - **Ninguna credencial en el repo.** WiFi, clave de la mesh, AppKey, tokens, MAC de producción: todo en
-  `config_local.h`, que está en el `.gitignore`. Este repo es **público**.
+  `config_local.h`, que está en el `.gitignore`. Este repo es **público**. Instalá en tu PC la
+  revisión de [`herramientas/hook_secretos/`](herramientas/hook_secretos/README.md): frena una
+  clave antes del commit y del push, también en tus otros repos.
 - **Ningún dato falso.** Si un sensor no responde, ese campo no se envía. No se reemplaza por
   otra lectura (por ejemplo, la temperatura interna del ESP32) ni por un valor fijo.
 - **Configuración remota validada.** Cada parámetro de `set_config` se valida contra un rango

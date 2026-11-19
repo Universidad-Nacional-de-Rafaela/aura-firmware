@@ -35,7 +35,7 @@ Según [ADR-003](docs/adr/ADR-003-dos-transportes-mesh-interior-lorawan-exterior
 | [`conectores/`](conectores/) | **Un conector por dispositivo**: el código que procesa sus datos dentro de AURA (valida, guarda, alerta, predice), en Python | cada grupo |
 | [`dispositivos/`](dispositivos/) | **Una carpeta por dispositivo, con todo adentro** (firmware, ficha, bibliotecas, tests), nombrada con su código de ubicación (`E1-PB-LECA-HFR01`); y el mapa de códigos | cada grupo |
 | [`ejemplos/`](ejemplos/) | Firmware: `plantilla_dispositivo/`, `sensor_ejemplo/` (una medición) y `actuador_ejemplo/` (un comando). Conectores: `plantilla_conector/` y `conector_ejemplo/` | cátedra |
-| [`herramientas/`](herramientas/) | `broker.sh`, `ack_falso.py`, `correr_conector.py`, `leer_mac/`, validadores | cátedra |
+| [`herramientas/`](herramientas/) | `broker.sh`, `ack_falso.py`, `correr_conector.py`, `leer_mac/`, `hook_secretos/`, validadores | cátedra |
 | [`docs/`](docs/) | Copia publicada del contrato, ADRs, el diseño de la mesh ([`mesh-wifi/`](docs/mesh-wifi/)) y el [histórico](docs/historico/) de la mesh ESP-NOW | cátedra |
 
 ## Estado
@@ -118,6 +118,10 @@ make -C herramientas/tests
 (AppKey), tokens y MAC de producción van en `config_local.h`, que está en el `.gitignore`. El CI
 rechaza cualquier PR que los versione. Si algo se filtra igual, avisá a la cátedra: borrarlo en
 un commit nuevo **no alcanza**, porque queda en la historia; hay que cambiar la clave.
+
+El CI revisa los PR de este repo, pero no tus otros repos. Para que git frene una clave **antes de
+que salga de tu PC**, en todos tus repos, instalá una vez
+[`herramientas/hook_secretos/`](herramientas/hook_secretos/README.md).
 
 `main` está protegida: los cambios entran solo por pull request, con la aprobación de quien
 figura en `.github/CODEOWNERS` para esa carpeta y el CI en verde. Para reportar una vulnerabilidad

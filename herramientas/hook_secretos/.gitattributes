@@ -1,0 +1,5 @@
+# Los hooks los ejecuta sh (también el de Git para Windows): con CRLF dejan de andar.
+pre-commit text eol=lf
+pre-push text eol=lf
+*.sh text eol=lf
+*.py text eol=lf
