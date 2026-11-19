@@ -4,8 +4,9 @@
 
 #pragma once
 
-// Mesh ESP-WIFI-MESH (interior): los datos los da la cátedra. El dispositivo es
-// una HOJA: no lleva la clave del WiFi del edificio, solo la de la mesh.
+// Mesh ESP-WIFI-MESH en Arduino: OBSOLETA. Una hoja nueva de la mesh parte de
+// Mesh_Red_Completa/Mesh3_Hoja (ESP-IDF), con los datos de mesh que genera el grupo
+// para su banco (Mesh_Red_Completa/GUIA_BANCO_DE_PRUEBAS.md).
 #define MESH_ID     {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
 #define MESH_CLAVE  "CAMBIAR"
 #define MESH_CANAL  0   // canal del WiFi del edificio; 0 = buscar en todos

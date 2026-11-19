@@ -1,8 +1,8 @@
 # AURA – Guía para desarrollar nodos hoja
 
 Esta guía es para quienes programen **nodos hoja** (sensores y actuadores de un aula) que se conectan a la malla
-ESP-WIFI-MESH de AURA. Todo es **ESP-IDF nativo** (sin Arduino) y cumple el **contrato MQTT v4.0**
-(`docs/CONTRATO_MQTT.md` del repositorio `aura-firmware`).
+ESP-WIFI-MESH de AURA. Todo es **ESP-IDF nativo** (sin Arduino) y cumple la versión vigente del **contrato MQTT**
+([`docs/CONTRATO_MQTT.md`](../docs/CONTRATO_MQTT.md)).
 
 Una hoja se programa sobre la biblioteca **`nodo_mesh`** (`componentes/nodo_mesh`): el grupo escribe **qué mide,
 qué parámetros tiene y qué comandos acepta**. La conexión, el aula, la cola, la confirmación de AURA, los eventos,
@@ -297,14 +297,14 @@ verifica la firma antes de instalarla (`CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT
   raíz excluye `claves/`, `*.pem` y `*.key` por si acaso).
   ```
   idf.py build
-  python -m espsecure sign-data --version 2 --keyfile <ruta>/firma_aura.pem --output build/firmado.bin build/<tipo>.bin
-  move /y build\firmado.bin build\<tipo>.bin        (en Linux o macOS: mv -f build/firmado.bin build/<tipo>.bin)
+  python <ruta a Mesh_Red_Completa>/Broker_MQTT/firmar.py --clave <ruta>/firma_prueba.pem build/<tipo>.bin
   idf.py -p COMx flash
   ```
-  `sign-data` no deja escribir sobre el mismo archivo: se firma a otro y se lo pone en lugar del original, que es el que
-  graba `idf.py flash` (si no se cambió el código, no recompila). Para comprobarlo:
-  `python -m espsecure verify-signature --version 2 --keyfile <ruta>/firma_aura.pem build/<tipo>.bin`. Para OTA, ese
-  mismo `.bin` firmado es el que se le pasa a `ota.py` o a AURA.
+  `firmar.py` firma la imagen en el lugar, verifica la firma y se niega a firmar dos veces la misma imagen: con
+  `espsecure sign-data` directo, una segunda firma la deforma sin aviso. `idf.py flash` graba esa imagen firmada (si no
+  se cambió el código, no recompila; si se cambió algo después de firmar, hay que compilar y firmar de nuevo). El aviso
+  `App built but not signed` aparece siempre al compilar, aunque la imagen ya esté firmada. Para OTA, ese mismo `.bin`
+  firmado es el que se le pasa a `ota.py` o a AURA.
 - **Si ya tenías un `sdkconfig` de antes de las imágenes firmadas, borralo y volvé a compilar.** `sdkconfig.defaults` solo
   se aplica a las opciones que el `sdkconfig` todavía no tiene. Sin la verificación de firma la compilación se frena con
   un `#error`, en vez de generar una imagen que acepta cualquier OTA.
@@ -330,16 +330,14 @@ verifica la firma antes de instalarla (`CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT
 - [ ] Copié `Mesh3_Hoja` como `dispositivos/<CÓDIGO>/` y en su `CMakeLists.txt` apunté `EXTRA_COMPONENT_DIRS` a `../../Mesh_Red_Completa/componentes` (ver `CONTRIBUTING.md`). Ruta sin espacios ni tildes, fuera de Google Drive/OneDrive.
 - [ ] En el `CMakeLists.txt` de la carpeta del proyecto: `project(aura-<uso>)` con el tipo de mi dispositivo y
       `set(PROJECT_VER "1.0.0")` (sección 2.7). Subo la versión en cada entrega.
-- [ ] Copié `main/config_local.ejemplo.h` como `main/config_local.h` y completé el ID y la clave de la mesh (los da la cátedra; **no se sube**).
+- [ ] Copié `main/config_local.ejemplo.h` como `main/config_local.h` y completé el ID y la clave de la mesh de mi banco (los genera el grupo, ver [`GUIA_BANCO_DE_PRUEBAS.md`](GUIA_BANCO_DE_PRUEBAS.md); **no se sube**).
 - [ ] Ajusté `sdkconfig.defaults` a la placa (target, flash) sin sacar `BOOTLOADER_APP_ROLLBACK_ENABLE`, mantuve
       `partitions.csv` con `ota_0`, `ota_1`, `otadata` y `cola`, y borré `sdkconfig` y `build`.
 - [ ] Escribí la medición, `aplicar_config`, `describir_config` (con `intervalo_s`) y `ejecutar_comando`.
 - [ ] Ajusté pines y `potencia_tx` a la placa.
-- [ ] Probé con el broker de banco (`Broker_MQTT/broker.py`): la placa aparece **pendiente** en el tablero, le asigné el aula, se pasó a `modo: aula` y llegan los `data` con `ts`.
-- [ ] Probé un `set_config` inválido: `rechazado` con motivo, y la configuración no cambió.
-- [ ] Probé el plan B apagando el concentrador: pasa a `directo`, no pierde datos y vuelve sola a `aula`.
-- [ ] Probé una actualización por la malla con `ota.py` (subiendo la versión): `aplicado`, y en el tablero se ve la
-      versión nueva.
+- [ ] Firmé cada imagen una sola vez con `firmar.py` y la clave de prueba del grupo antes de grabarla (sección 2.9).
+- [ ] Pasé en mi banco las 9 pruebas obligatorias de `GUIA_HOJAS_NUEVAS.md` (paso 5): alta y aula, `set_config`
+      inválido, plan B, las cinco de OTA y ningún dato perdido. El informe está en `dispositivos/<CÓDIGO>/pruebas/`.
 
 ---
 
@@ -358,7 +356,7 @@ Después de cambiar un parámetro hay que **recompilar y grabar todos los firmwa
 | Parámetro | Valor actual | Dónde | Efecto / cuidado |
 |---|---|---|---|
 | `MESH_ID_BYTES` | (en `config_local.h`) | G, C, H — `main/config_local.h` | Identifica la red. Nodos con otro ID no se ven. |
-| `MESH_AP_PASS` | (en `config_local.h`) | G, C, H — `main/config_local.h` | Clave WPA2 entre nodos (mínimo 8 caracteres). La da la cátedra. |
+| `MESH_AP_PASS` | (en `config_local.h`) | G, C, H — `main/config_local.h` | Clave WPA2 entre nodos (mínimo 8 caracteres). En el banco, el ID y la clave los genera cada grupo al azar ([`GUIA_BANCO_DE_PRUEBAS.md`](GUIA_BANCO_DE_PRUEBAS.md)); los de la instalación los tiene solo la cátedra y no se entregan. |
 | `MESH_MAX_CAPAS` | `6` | G, C, NM | Profundidad máxima del árbol. |
 | `ROUTER_FICTICIO` | `aura-sin-router` | C, NM | La API exige un SSID de router, pero estos nodos **nunca** se conectan al router. Fijo: **no se cambia al mudar la red**. |
 | Vendor IE (`AURA_OUI_0..2`, `AURA_IE_CONCENTRADOR`) | `02:A5:52`, tipo `1` | AM (`aura_util.h`) | Es como la hoja reconoce a los concentradores. |
@@ -372,7 +370,7 @@ Después de cambiar un parámetro hay que **recompilar y grabar todos los firmwa
 
 | Parámetro | Valor actual | Dónde | Efecto / cuidado |
 |---|---|---|---|
-| `REDES_WIFI` | las redes del edificio (las da la cátedra; claves en el archivo) | Gc | Lista `{"SSID", "clave"}` en orden de preferencia (2,4 GHz, sin portal de login ni aislamiento de clientes). Usa la primera al alcance; si queda 5 min sin router (`REINICIO_SIN_ROUTER_MS`), se reinicia y empieza por la siguiente. |
+| `REDES_WIFI` | en el banco, la red del banco (el nombre y la clave los pasa la cátedra en persona); en la instalación, las redes del edificio (solo la cátedra) | Gc | Lista `{"SSID", "clave"}` en orden de preferencia (2,4 GHz, sin portal de login ni aislamiento de clientes). Usa la primera al alcance; si queda 5 min sin router (`REINICIO_SIN_ROUTER_MS`), se reinicia y empieza por la siguiente. |
 | `BROKER_URI` | `""` | Gc | Vacío = prueba el **último broker que le anduvo en esa red** (NVS) y, si falla 3 veces, lo busca por broadcast UDP. `"mqtt://IP:puerto"` = fijo (Mosquitto, servidor de AURA). |
 | `MQTT_USUARIO`, `MQTT_CLAVE` | vacíos (anónimo) | Gc | El broker de aura-app no acepta anónimos: usuario `raiz` y la clave de su `.env`. |
 | `PUERTO_DESCUBRIMIENTO` | `18830` (UDP) | G **y** PC | Tiene que coincidir con `broker.py`. |
@@ -470,7 +468,7 @@ una vez (por si otra versión de IDF lo acepta) y, si no, se une como `MESH_NODE
 | `ota`: `rechazado` `nodo_no_responde` | La placa tiene un firmware anterior a la actualización por la malla | Grabarla una vez por USB con este firmware |
 | `ota`: `rechazado` `tipo_distinto` | La imagen es de otro uso (`details.firmware.tipo` dice cuál tiene) | Elegir la imagen correcta; un cambio de uso se hace por USB |
 | `ota`: `rechazado` `imagen_invalida` | La imagen no tiene la firma de la cátedra (o está dañada) | Que la compile y firme quien tiene la clave (sección 2.9) |
-| `ota`: `rechazado` `imagen_invalida` con una imagen recién compilada | Se olvidó firmarla (la compilación no firma) | `espsecure sign-data`, sección 2.9 |
+| `ota`: `rechazado` `imagen_invalida` con una imagen recién compilada | Se olvidó firmarla (la compilación no firma) | `firmar.py`, sección 2.9 |
 | `ota`: `aplicado` con `sin_cambios` | La placa ya tenía esa versión | Subir `PROJECT_VER` en cada entrega |
 | `ota`: `rechazado` `volvio_a_la_version_anterior` | La versión nueva se colgó o no logró hablar con el gateway, y la placa volvió sola a la anterior | El serie de la placa con la versión nueva (probarla por USB antes) |
 | `ota`: `rechazado` `descarga_fallida` | El gateway no pudo bajar la imagen | Que la URL se abra desde la red del gateway (firewall de la PC: Python en redes privadas) |

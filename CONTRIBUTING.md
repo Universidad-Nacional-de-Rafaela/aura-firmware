@@ -30,13 +30,20 @@ apunta al modelo. Ver [*Varios dispositivos con el mismo firmware*](dispositivos
 2. **Definí el transporte** con la cátedra: mesh ESP-WIFI-MESH si está en interior, LoRaWAN si
    está en exterior o lejos ([ADR-003](docs/adr/ADR-003-dos-transportes-mesh-interior-lorawan-exterior.md),
    [ADR-006](docs/adr/ADR-006-esp-wifi-mesh-reemplaza-a-esp-now-en-interior.md)).
-3. **Armá el código del dispositivo** con el mapa. Si te falta una abreviatura (un recinto
-   nuevo, un tipo nuevo), la agregás a su tabla en el mismo PR.
-4. **Pedí el alta del dispositivo** en AURA. Le pasás a la cátedra el `hw_id` de tu placa: si
-   es mesh, el que imprime `herramientas/leer_mac` (`mac-…`); si es LoRaWAN, el DevEUI. La
-   cátedra asigna esa placa a tu dispositivo en AURA, y te da los datos de la mesh del edificio
-   (ID y clave) o las credenciales OTAA. Nada de eso se commitea. Mientras la placa no esté
-   asignada, lo que mande queda en **cuarentena** en AURA y se recupera al asignarla.
+3. **Registrá el dispositivo:** abrí un issue con el formulario *Dispositivo nuevo*, con el
+   código que proponés según el mapa. La cátedra confirma ahí el código y el transporte, y el
+   avance se sigue en ese issue. Si te falta una abreviatura (un recinto nuevo, un tipo nuevo),
+   la agregás a su tabla en el PR.
+4. **Mesh:** armá tu banco de pruebas
+   ([`Mesh_Red_Completa/GUIA_BANCO_DE_PRUEBAS.md`](Mesh_Red_Completa/GUIA_BANCO_DE_PRUEBAS.md)):
+   gateway, concentrador y tablero propios, en la red del banco, con datos de mesh que genera tu
+   grupo. Los datos de la mesh de la instalación no se le dan a ningún grupo: después del merge,
+   la cátedra compila, firma, graba y da de alta la placa
+   ([`GUIA_HOJAS_NUEVAS.md`](Mesh_Red_Completa/GUIA_HOJAS_NUEVAS.md), paso 7).
+   **LoRaWAN:** pedí el alta del dispositivo en AURA. Le pasás a la cátedra el DevEUI de tu placa;
+   la cátedra la asigna a tu dispositivo y te da las credenciales OTAA, que no se commitean.
+   Mientras la placa no esté asignada, lo que mande queda en **cuarentena** en AURA y se recupera
+   al asignarla.
 
 ## 2. Tu carpeta
 
@@ -51,8 +58,8 @@ apunta al modelo. Ver [*Varios dispositivos con el mismo firmware*](dispositivos
    dos casos te llevás también la ficha (`README.md`) de la plantilla.
 3. Completá el `README.md`, que es la ficha: ubicación, responsable, hardware, campos de
    `values`, alertas, parámetros de `set_config` y su valor en esta placa.
-4. Listá en `bibliotecas.txt` cada biblioteca con su versión (`OneWire@2.3.8`). El CI instala
-   exactamente esas.
+4. **LoRaWAN:** listá en `bibliotecas.txt` cada biblioteca con su versión (`OneWire@2.3.8`). El
+   CI instala exactamente esas. En la mesh, los componentes se declaran en el proyecto ESP-IDF.
 5. Sumá el dispositivo a la tabla *Dispositivos* de `dispositivos/README.md`, y tu carpeta a
    `.github/CODEOWNERS` con los usuarios de GitHub del grupo. Si trabajás sobre un modelo, va
    también `dispositivos/_modelos/<MODELO>/`.
@@ -62,25 +69,41 @@ apunta al modelo. Ver [*Varios dispositivos con el mismo firmware*](dispositivos
 Se instala con el instalador de Espressif, [EIM](https://dl.espressif.com/dl/eim/). La placa es
 la **ESP32-C3 SuperMini** y la pone el proyecto.
 
+El paso a paso, del banco a la red final, está en
+[`Mesh_Red_Completa/GUIA_HOJAS_NUEVAS.md`](Mesh_Red_Completa/GUIA_HOJAS_NUEVAS.md). En resumen:
+
 1. Copiá `Mesh_Red_Completa/Mesh3_Hoja/` como `dispositivos/<CÓDIGO>/`. En su `CMakeLists.txt`,
    cambiá la ruta de los componentes a
-   `set(EXTRA_COMPONENT_DIRS "${CMAKE_CURRENT_LIST_DIR}/../../Mesh_Red_Completa/componentes")`
-   y el nombre del proyecto (`project(...)`) por tu código en minúsculas.
+   `set(EXTRA_COMPONENT_DIRS "${CMAKE_CURRENT_LIST_DIR}/../../Mesh_Red_Completa/componentes")`,
+   el nombre del proyecto por el **tipo de firmware**, que va por uso y no por instalación
+   (`project(aura-<uso>)`, por ejemplo `aura-energia-pm2130`; ver
+   [`GUIA_NODOS_HOJA.md`](Mesh_Red_Completa/GUIA_NODOS_HOJA.md), 2.7), y la versión
+   (`set(PROJECT_VER "1.0.0")`), que se sube en cada entrega.
 2. Copiá `main/config_local.ejemplo.h` como `main/config_local.h` y completá el ID y la clave de
-   la mesh, que te da la cátedra. **No hace falta el WiFi del edificio**: solo el raíz se
-   conecta al router.
+   la mesh **de tu banco**, los mismos que en su gateway y su concentrador. **No hace falta el
+   WiFi**: solo el gateway se conecta al router.
 3. En `main/main.c` escribís lo propio del dispositivo: la medición, `aplicar_config()` (valida
    **todo** y recién después aplica y guarda), `describir_config()` (incluye `intervalo_s`) y,
    si acciona algo, `ejecutar_comando()`. Lo demás lo hace la biblioteca
    [`nodo_mesh`](Mesh_Red_Completa/componentes/nodo_mesh/): la unión a la mesh, el aula, la cola,
    el `ingest_id`, los reintentos hasta que AURA confirma y la hora.
-4. `idf.py set-target esp32c3` y `idf.py -p <puerto> build flash monitor`.
+4. `idf.py set-target esp32c3` e `idf.py build`. La compilación no firma: se firma aparte con
+   la clave de prueba de tu grupo, y recién después se graba. Una placa grabada con una imagen
+   sin firma no acepta ninguna actualización por la malla.
+   ```
+   python ..\..\Mesh_Red_Completa\Broker_MQTT\firmar.py --clave <ruta>\firma_prueba.pem build\<tipo>.bin
+   idf.py -p <puerto> erase-flash
+   idf.py -p <puerto> flash monitor
+   ```
+   `<tipo>` es el nombre del proyecto (`aura-<uso>`). `erase-flash` va solo en la primera
+   grabación: borra el aula y la configuración guardadas.
+5. Pasá las pruebas obligatorias en tu banco y dejá el informe en
+   `dispositivos/<CÓDIGO>/pruebas/` (`GUIA_HOJAS_NUEVAS.md`, paso 5).
 
-La guía completa (API, reglas, checklist, problemas frecuentes) es
+La guía de la biblioteca (API, reglas, OTA, firma, problemas frecuentes) es
 [`Mesh_Red_Completa/GUIA_NODOS_HOJA.md`](Mesh_Red_Completa/GUIA_NODOS_HOJA.md). El aula no va en
-el firmware: la asigna AURA con `set_config {"aula": …}`; hasta entonces la hoja manda directo al
-raíz y sus datos llegan igual. Para probar sin AURA, la cátedra levanta el banco
-([`Mesh_Red_Completa/Broker_MQTT/`](Mesh_Red_Completa/Broker_MQTT/)).
+el firmware: la asigna AURA con `set_config {"aula": …}` (en el banco, el tablero); hasta
+entonces la hoja manda directo al gateway y sus datos llegan igual.
 
 > La versión Arduino de la mesh (`comun/nodo_mesh.h`, `ejemplos/sensor_ejemplo/`,
 > `ejemplos/actuador_ejemplo/`) queda **obsoleta**: no se usa para dispositivos nuevos, y los que
@@ -115,10 +138,15 @@ código que tu dispositivo (ver [`conectores/README.md`](conectores/README.md)).
    ```bash
    python3 -m unittest discover -s conectores/<CÓDIGO>/tests
    ```
-5. En el banco, contra lo que manda tu placa:
-   ```bash
-   herramientas/correr_conector.py conectores/<CÓDIGO> --hw-id mac-<MAC de tu placa> --docker aura-mosquitto
+5. En el banco, contra lo que mandó tu placa. `broker.py` guarda todo en `mensajes.log`; sacá los
+   `data` de tu placa a un archivo, una línea JSON por mensaje, y pasalos por el conector (desde la
+   raíz del repo, en PowerShell):
    ```
+   python -c "open('mensajes.jsonl','w',encoding='utf-8').writelines(l.split('  ',3)[3] for l in open('<ruta>/mensajes.log',encoding='utf-8') if '/mac-<MAC de tu placa>/data  ' in l)"
+   python herramientas\correr_conector.py conectores\<CÓDIGO> --archivo mensajes.jsonl
+   ```
+   Con `--hw-id mac-… --docker aura-mosquitto` escucha en vivo el broker del stack de aura-app; en
+   el banco con `broker.py` no hace falta.
 6. **Probalo como corre en AURA.** AURA no importa tu conector en su proceso: lo corre en un
    proceso aparte, sin credenciales, con 256 MB de memoria, 5 s de CPU, 64 archivos abiertos y
    10 s por muestra. Con `--subproceso`, `correr_conector.py` hace lo mismo:
@@ -145,8 +173,11 @@ a archivos, y AURA puede recrearlo en cualquier momento: lo que tenga que record
 - **Configuración remota validada.** Cada parámetro de `set_config` se valida contra un rango
   antes de aplicarse, y se guarda en memoria no volátil. Un comando mal armado no puede dejar
   el nodo inutilizable.
-- **No tocar `comun/` ni `infraestructura/` en el mismo PR que tu dispositivo.** Si necesitás
-  un cambio ahí, abrí un issue o un PR aparte: afecta a todos los dispositivos.
+- **No tocar `comun/`, `infraestructura/` ni el código de la cátedra en `Mesh_Red_Completa/`
+  (gateway, concentrador, hoja de ejemplo y `componentes/`) en el mismo PR que tu dispositivo.**
+  Si necesitás un cambio ahí, abrí un issue o un PR aparte: afecta a todos los dispositivos.
+- **Nunca un `.bin` ni una clave de firma en el repo.** El grupo entrega código; la imagen de la
+  instalación la compila y la firma la cátedra.
 
 ## 5. Si el equipo se muda
 
@@ -165,4 +196,7 @@ Abrilo contra `main` de este repo. La plantilla del PR trae un checklist. El CI:
 | Conectores | Tests de `aura_sdk`, manifiesto y clase de cada conector, y sus `tests/` |
 | Compilar sketches | Compila cada sketch para ESP32-C3 SuperMini (o para el FQBN de su `fqbn.txt`) |
 
-Con todo en verde, la cátedra revisa y mergea.
+Con todo en verde, la cátedra revisa el PR, incluido el informe de pruebas, y deja comentarios:
+cada punto se corrige en la misma rama y se contesta en el PR. Después del merge, en la mesh, el
+grupo pide la habilitación y la cátedra compila desde `main`, firma, graba y da de alta
+(`GUIA_HOJAS_NUEVAS.md`, paso 7).

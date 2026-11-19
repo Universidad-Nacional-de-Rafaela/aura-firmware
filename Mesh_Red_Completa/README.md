@@ -1,9 +1,8 @@
-# Mesh_Red_Completa – la mesh de AURA en ESP-IDF (contrato MQTT v4.3)
+# Mesh_Red_Completa – la mesh de AURA en ESP-IDF
 
 Red de un aula **completa y probada en placas**, de punta a punta: hoja → concentrador del aula → gateway (raíz) →
 MQTT (`hw/<hw_id>/...`) y los comandos en sentido inverso, y **actualización del firmware por la malla** (OTA).
-Hecha en **ESP-IDF 6.1** (C, sin Arduino) y cumple [`docs/CONTRATO_MQTT.md`](../docs/CONTRATO_MQTT.md) v4.3
-(propuesta).
+Hecha en **ESP-IDF 6.1** (C, sin Arduino) y cumple la versión vigente de [`docs/CONTRATO_MQTT.md`](../docs/CONTRATO_MQTT.md).
 
 > **⚠️ Desde el 2026-10-20, esta es la base de la mesh de AURA.** Todos los nodos de la mesh (raíz, concentradores y
 > las hojas de los grupos) pasan a **ESP-IDF nativo** con esta estructura. La versión Arduino de `main`
@@ -42,8 +41,10 @@ Hecha en **ESP-IDF 6.1** (C, sin Arduino) y cumple [`docs/CONTRATO_MQTT.md`](../
 | [`Mesh3_Gateway/`](Mesh3_Gateway/) | **Gateway (raíz).** Único nodo con WiFi y adaptador del contrato: publica en `hw/<hw_id>/...` con el `hw_id` de la placa que midió (también lo que llega en un LOTE del concentrador), baja comandos y `ack`, infiere offline, publica su status con LWT. Lista de redes WiFi, broker guardado por red y descubrimiento por broadcast. Reparte las actualizaciones por la malla (`ota_gateway.c`). Placa: Waveshare ESP32-S3-DEV-KIT, módulo WROOM-2 (flash octal 32 MB). |
 | [`Mesh3_Intermedio/`](Mesh3_Intermedio/) | **Concentrador del aula.** Aula en NVS (la asigna AURA), anunciada en el beacon. Ve los datos de sus hojas, los muestra ("pantalla": LED RGB + serie), puede filtrarlos y los reenvía **una sola vez** en un LOTE. Contesta la hora a sus hojas y tiene **mando local** (botón BOOT). Placa: Waveshare ESP32-S3-DEV-KIT, módulo WROOM-1 (flash quad 16 MB). |
 | [`Mesh3_Hoja/`](Mesh3_Hoja/) | **Hoja de ejemplo** sobre `nodo_mesh` (datos simulados + LED como actuador, parámetro `intervalo_s`). Es la **base para hacer hojas nuevas**. Placa: ESP32-C3 SuperMini (dos lugares de firmware de 1,75 MB y partición `cola` de 256 KB para el respaldo). |
-| [`Broker_MQTT/`](Broker_MQTT/) | Banco en la PC, en Python sin dependencias: `broker.py` (broker con retenidos y LWT, **AURA falsa** que contesta los `ack`, descubrimiento y tablero en http://localhost:8080), `dashboard.html`, `led_blink.py`, **`ota.py`** (actualiza una placa o todas las de un tipo, como lo hará AURA) y [`LEEME.md`](Broker_MQTT/LEEME.md) (cómo probar y resultados). |
+| [`Broker_MQTT/`](Broker_MQTT/) | Banco en la PC, en Python sin dependencias: `broker.py` (broker con retenidos y LWT, **AURA falsa** que contesta los `ack`, descubrimiento y tablero en http://localhost:8080), `dashboard.html`, `led_blink.py`, **`ota.py`** (actualiza una placa o todas las de un tipo, como lo hará AURA), `mandar_comando.py`, `buscar_brokers.py`, **`firmar.py`** (firma una imagen con la clave de prueba), `pem_a_define.py` y [`LEEME.md`](Broker_MQTT/LEEME.md) (cómo probar y resultados). |
 | [`PRUEBAS_OTA_Y_CORTES.md`](PRUEBAS_OTA_Y_CORTES.md) | **Pruebas en placa del 2026-10-22:** actualización por la malla y cortes de gateway, concentrador, hoja y broker con los datos en curso; qué falló, por qué y cómo se corrigió. |
+| [`GUIA_BANCO_DE_PRUEBAS.md`](GUIA_BANCO_DE_PRUEBAS.md) | **Cómo arma cada grupo su banco de pruebas:** gateway, concentrador y tablero propios, en la red del banco. Es el paso 0 de la guía de hojas nuevas. |
+| [`GUIA_HOJAS_NUEVAS.md`](GUIA_HOJAS_NUEVAS.md) | **El recorrido de una hoja nueva, del banco a la red final:** copiar la plantilla, compilar, firmar, las pruebas obligatorias, el conector, el PR y la habilitación. |
 | [`GUIA_NODOS_HOJA.md`](GUIA_NODOS_HOJA.md) | **Guía para quienes hagan hojas:** la API de `nodo_mesh`, reglas, qué va en `values`, comandos, checklist, **parámetros de red y dónde replicar cada cambio**, problemas frecuentes y alcance. |
 | [`CONTEXTO_PROYECTO.md`](CONTEXTO_PROYECTO.md) | Contexto técnico: entorno, decisiones, errores resueltos y próximos pasos (copia del `CLAUDE.md` local). |
 
@@ -66,23 +67,32 @@ tienen que quedar **al lado de `componentes/`**.
 
 1. **Configuración local (no se sube al repo):**
    - En los tres proyectos, copiar `main/config_local.ejemplo.h` como `main/config_local.h` y completar `MESH_ID_BYTES` y
-     `MESH_AP_PASS` (los da la cátedra; **iguales en los tres**).
+     `MESH_AP_PASS` (**iguales en los tres**). En el banco los genera cada grupo al azar
+     ([`GUIA_BANCO_DE_PRUEBAS.md`](GUIA_BANCO_DE_PRUEBAS.md)); los de la instalación los tiene solo la cátedra.
    - En el gateway, copiar `main/credenciales.ejemplo.h` como `main/credenciales.h` y completar `REDES_WIFI` (una o más
-     redes `{"SSID", "clave"}` en orden de preferencia, 2,4 GHz, sin portal de login ni aislamiento de clientes). Contra el
-     broker de aura-app, completar `MQTT_USUARIO`/`MQTT_CLAVE` y `BROKER_URI`.
-2. **Compilar y grabar** cada proyecto, desde su carpeta:
+     redes `{"SSID", "clave"}` en orden de preferencia, 2,4 GHz, con internet, sin portal de login ni aislamiento de
+     clientes: el gateway toma la hora de `pool.ntp.org`, y sin hora las mediciones salen sin `ts`). En el
+     banco, solo la red del banco, que no es la de producción. Contra el broker de aura-app (solo la cátedra), completar
+     `MQTT_USUARIO`/`MQTT_CLAVE` y `BROKER_URI`.
+2. **Compilar, firmar y grabar** cada proyecto, desde su carpeta. La compilación no firma, y una placa grabada con una
+   imagen sin firma no acepta ninguna OTA ([`GUIA_NODOS_HOJA.md`](GUIA_NODOS_HOJA.md), 2.9):
    ```bash
    idf.py set-target esp32s3        # esp32c3 para Mesh3_Hoja
-   idf.py -p COMx build flash monitor
+   idf.py build
+   python ../Broker_MQTT/firmar.py --clave <ruta>/firma_prueba.pem build/<tipo>.bin
+   idf.py -p COMx erase-flash
+   idf.py -p COMx flash monitor
    ```
 3. **Banco** en la PC (misma red que el gateway; en Windows, red *Privada*):
    ```bash
    python Broker_MQTT/broker.py
    ```
    Abrir http://localhost:8080. Las placas aparecen **pendientes** (sin aula): asignarles el aula con el botón del tablero
-   (hoja y concentrador con la misma). Con el backend real de AURA, arrancar el broker de banco con `--sin-aura` o no usarlo.
+   (hoja y concentrador con la misma) y **autorizar el concentrador** («Autorizar concentrador»): hasta entonces el
+   gateway descarta en silencio los datos de sus hojas, que los reintentan. El orden completo, con las pruebas del
+   banco, está en [`GUIA_BANCO_DE_PRUEBAS.md`](GUIA_BANCO_DE_PRUEBAS.md). Con el backend real de AURA, arrancar el broker de banco con `--sin-aura` o no usarlo.
 4. **Actualizar por la malla** (después de la primera vez por USB, que graba la tabla de particiones): subir
-   `PROJECT_VER`, compilar y
+   `PROJECT_VER`, compilar, firmar con `firmar.py` y
    ```bash
    python Broker_MQTT/ota.py Mesh3_Hoja/build/aura-hoja-ejemplo.bin --hw mac-907069add964
    python Broker_MQTT/ota.py Mesh3_Hoja/build/aura-hoja-ejemplo.bin --todas --aula aula11
