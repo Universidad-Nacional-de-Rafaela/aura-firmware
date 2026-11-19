@@ -1,0 +1,9 @@
+#!/bin/sh
+# Hook global de AURA: frena un commit que lleve claves o archivos de configuración local.
+# Lo instala instalar.ps1 / instalar.sh como core.hooksPath global, así que corre en todos los
+# repos de la PC. Después de revisar, corre el pre-commit propio del repo, si tiene uno.
+DIR=$(cd "$(dirname "$0")" && pwd)
+. "$DIR/comun.sh"
+
+$PY "$DIR/revisar_secretos.py" pre-commit || exit 1
+correr_hook_del_repo pre-commit "$@"
