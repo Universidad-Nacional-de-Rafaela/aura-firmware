@@ -158,11 +158,13 @@ llaveros y su hash, el tope y el límite por minuto del pulso, la máquina de es
 | `main/sonido_logica.h` | qué suena y cuándo |
 | `main/latido_logica.h` | intervalo del latido (30 s armada, 120 s desarmada) y cuándo toca: se actualiza antes de cada reporte |
 | `main/sensor_logica.h` | antirrebote del sensor y qué pasa si `set_config` cambia el tipo (se resincroniza, sin evento) |
-| `main/lector_logica.h` | cuándo el lector está sano, hay que reintentar `rc522_start()` o reiniciarlo |
+| `main/lector_logica.h` | cuándo el lector está sano, hay que arrancarlo de nuevo o reiniciarlo |
+| `main/autenticacion_logica.h` | decide si un llavero abre: en la lista **y** autenticado con su clave (NTAG 424 DNA) |
 | `main/config_validacion.h` | entero dentro de rango, comparando antes de convertir |
 | `main/rele.c` | **lo único que toca la cerradura**; su `esp_timer` la traba aunque la lógica se cuelgue |
 | `main/sonido.c` | tarea propia: ningún sonido frena la lectura |
-| `main/lector.c` | RC522 sobre `abobija/rc522` 4.0.1; revisa que lea y, si no, reintenta el arranque o lo reinicia |
+| `main/lector.c` | tarea del lector: detecta, autentica con el verificador, y espera a que se retire el llavero antes de leerlo otra vez; revisa que el RC522 siga vivo |
+| `main/pcd_rc522.c` | driver propio del RC522 por SPI (reemplaza a `abobija/rc522`): registros, reinicio, antena y tramas crudas; el protocolo está en `comun/` |
 | `main/almacen.c` | NVS, escribiendo solo si el valor cambia; la config va en un solo blob (todo o nada) |
 | `main/main.c` | cablea todo y ejecuta las acciones en orden |
 
@@ -208,6 +210,25 @@ llaveros y su hash, el tope y el límite por minuto del pulso, la máquina de es
   sin avisar; solo avisa si no vuelve.
 - La doble pasada arma al instante (sin cuenta para salir): se arma desde afuera, con la puerta cerrada.
   Armar con alguien adentro da falsa alarma.
+
+## Autenticación del llavero (NTAG 424 DNA)
+
+Con `CONFIG_PUERTA_AUTENTICACION=y` un llavero abre solo si está en la lista **y** prueba que conoce su
+clave AES (`clave = HMAC-SHA256(maestra, UID)[0..16]`, la misma que le puso la estación de enrolamiento,
+`herramientas/enrolador_ntag424/`). Un llavero común con el UID en la lista, o una NTAG 424 de fábrica, no abre.
+Apagada (por defecto) la puerta se comporta como antes, solo por UID.
+
+- **Resultados** que se loguean junto al llavero: `ok`, `no_autorizada` (ni se le habla a la tarjeta),
+  `clave_rechazada` (de fábrica o de otra maestra), `uid_no_coincide` (se autentica pero su UID real no es el
+  leído por el aire), `error_comunicacion`, `error_seleccion`, `error_protocolo`, `uid_no_soportado`, `error_servicio`.
+  Todo lo que no es `ok` es rechazo y cuenta para el bloqueo por rechazos.
+- **Maestra de banco:** `CONFIG_PUERTA_CARGA_POR_CONSOLA` agrega `maestra <64 hexa>` (queda en flash, **sin
+  protección**: solo para probar).
+- **Maestra en eFuse** (`CONFIG_PUERTA_MAESTRA_EFUSE=y`): el HMAC lo calcula el chip y la clave nunca sale.
+  Hay que quemarla antes, con la misma clave que la estación (procedimiento y advertencias en su README:
+  irreversible, y si la placa tuvo una maestra de banco hay que borrar la NVS entera).
+- **Pendiente de acordar con la cátedra:** el motivo del evento ante `clave_rechazada` (contrato v4.5), si la
+  clave es el HMAC truncado a 16 bytes o lleva etiqueta de dominio, y el respaldo de la maestra de producción.
 
 ## Qué cambió respecto del prototipo en banco (PR #40)
 
