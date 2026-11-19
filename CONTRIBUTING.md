@@ -9,7 +9,7 @@ su firmware, su ficha, sus bibliotecas y sus tests. La carpeta se llama con el *
 dispositivo**, que dice dónde está y qué es:
 
 ```
-E1-PB-LECA-HFR01        Edificio 1, planta baja, LabECA, heladera-freezer 01
+E1-P1-LFQ-HFR01        Edificio 1, primer piso, Laboratorio de Fisicoquímica, heladera 01
 ```
 
 Cada parte sale del mapa de [`dispositivos/README.md`](dispositivos/README.md). Ejemplo: en el

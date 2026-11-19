@@ -5,9 +5,8 @@
 
 typedef struct {
     uint32_t intervalo_s;
-    uint32_t freezer_s;
-    int16_t minimo[2];
-    int16_t maximo[2];
+    int16_t minimo;
+    int16_t maximo;
 } hfr_config_t;
 
 typedef enum { HFR_SONDA_OK, HFR_SIN_RESPUESTA, HFR_FUERA_RANGO } hfr_sonda_estado_t;

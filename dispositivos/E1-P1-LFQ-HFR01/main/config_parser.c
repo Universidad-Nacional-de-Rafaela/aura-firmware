@@ -28,9 +28,15 @@ bool hfr_config_parsear(const cJSON *params, const hfr_config_t *actual,
         if (!strcmp(k, "aula")) {
             continue;
         }
-        static const char *claves[] = {"intervalo_s", "f_s", "hlo", "hhi", "flo", "fhi"};
+        static const char *claves[] = {"intervalo_s", "temperatura_min_c", "temperatura_max_c"};
+        /* Aceptar los nombres de umbral usados por las placas anteriores. */
+        if (!strcmp(k, "hlo")) {
+            k = claves[1];
+        } else if (!strcmp(k, "hhi")) {
+            k = claves[2];
+        }
         int indice = -1;
-        for (int i = 0; i < 6; ++i) {
+        for (int i = 0; i < 3; ++i) {
             if (!strcmp(k, claves[i])) {
                 indice = i;
                 break;
@@ -47,15 +53,11 @@ bool hfr_config_parsear(const cJSON *params, const hfr_config_t *actual,
             return fallo(motivo, tam, "valor_no_numerico");
         }
         double valor = p->valuedouble;
-        if (indice < 2) {
+        if (indice == 0) {
             if (valor < 5 || valor > 86400 || floor(valor) != valor) {
                 return fallo(motivo, tam, "intervalo_fuera_de_rango");
             }
-            if (indice == 0) {
-                candidata.intervalo_s = (uint32_t)valor;
-            } else {
-                candidata.freezer_s = (uint32_t)valor;
-            }
+            candidata.intervalo_s = (uint32_t)valor;
         } else {
             if (valor < -55 || valor > 125) {
                 return fallo(motivo, tam, "umbral_fuera_de_rango");
@@ -63,11 +65,10 @@ bool hfr_config_parsear(const cJSON *params, const hfr_config_t *actual,
             if (fabs(valor * 100 - round(valor * 100)) > 0.000001) {
                 return fallo(motivo, tam, "umbral_mas_de_dos_decimales");
             }
-            int s = indice >= 4;
-            if (indice % 2 == 0) {
-                candidata.minimo[s] = (int16_t)lround(valor * 100);
+            if (indice == 1) {
+                candidata.minimo = (int16_t)lround(valor * 100);
             } else {
-                candidata.maximo[s] = (int16_t)lround(valor * 100);
+                candidata.maximo = (int16_t)lround(valor * 100);
             }
         }
     }
@@ -84,9 +85,6 @@ bool hfr_config_parsear(const cJSON *params, const hfr_config_t *actual,
 void hfr_config_a_json(const hfr_config_t *cfg, cJSON *objeto)
 {
     cJSON_AddNumberToObject(objeto, "intervalo_s", cfg->intervalo_s);
-    cJSON_AddNumberToObject(objeto, "f_s", cfg->freezer_s);
-    cJSON_AddNumberToObject(objeto, "hlo", cfg->minimo[0] / 100.0);
-    cJSON_AddNumberToObject(objeto, "hhi", cfg->maximo[0] / 100.0);
-    cJSON_AddNumberToObject(objeto, "flo", cfg->minimo[1] / 100.0);
-    cJSON_AddNumberToObject(objeto, "fhi", cfg->maximo[1] / 100.0);
+    cJSON_AddNumberToObject(objeto, "temperatura_min_c", cfg->minimo / 100.0);
+    cJSON_AddNumberToObject(objeto, "temperatura_max_c", cfg->maximo / 100.0);
 }

@@ -82,14 +82,16 @@ static void configuracion(void)
 {
     assert(hfr_config_iniciar(true) == ESP_OK);
     hfr_config_t cfg = hfr_config_actual();
-    assert(cfg.intervalo_s == 60 && cfg.freezer_s == 300);
+    assert(cfg.intervalo_s == 60 && cfg.minimo == 200 && cfg.maximo == 600);
     const char *invalidos[] = {
-        "{}", "[]", "null", "{\"intervalo_s\":4}", "{\"f_s\":86401}",
-        "{\"intervalo_s\":5.5}", "{\"f_s\":true}", "{\"hlo\":\"2\"}",
-        "{\"hlo\":-55.01}", "{\"hhi\":125.01}", "{\"flo\":-20.001}",
-        "{\"hlo\":6}", "{\"flo\":-10,\"fhi\":-15}",
-        "{\"f_s\":5,\"desconocido\":0}", "{\"r_s\":300}",
-        "{\"f_s\":5,\"f_s\":6}", "{\"intervalo_s\":1e300}",
+        "{}", "[]", "null", "{\"intervalo_s\":4}", "{\"intervalo_s\":86401}",
+        "{\"intervalo_s\":5.5}", "{\"intervalo_s\":true}", "{\"temperatura_min_c\":\"2\"}",
+        "{\"temperatura_min_c\":-55.01}", "{\"temperatura_max_c\":125.01}",
+        "{\"temperatura_min_c\":-20.001}", "{\"temperatura_min_c\":6}",
+        "{\"temperatura_min_c\":10,\"temperatura_max_c\":5}",
+        "{\"intervalo_s\":5,\"desconocido\":0}", "{\"r_s\":300}",
+        "{\"intervalo_s\":5,\"intervalo_s\":6}", "{\"intervalo_s\":1e300}",
+        "{\"hlo\":2,\"temperatura_min_c\":3}", "{\"f_s\":300}", "{\"flo\":-25}", "{\"fhi\":-15}",
     };
     char motivo[80];
     for (size_t i = 0; i < sizeof(invalidos) / sizeof(*invalidos); ++i) {
@@ -101,19 +103,20 @@ static void configuracion(void)
         assert(escrituras == 0);
         cJSON_Delete(params);
     }
-    cJSON *precision = cJSON_Parse("{\"flo\":-20.001}");
+    cJSON *precision = cJSON_Parse("{\"temperatura_min_c\":-20.001}");
     assert(!hfr_config_aplicar(precision, motivo, sizeof(motivo)));
     assert(strcmp(motivo, "umbral_mas_de_dos_decimales") == 0);
     cJSON_Delete(precision);
-    cJSON *params = cJSON_Parse("{\"intervalo_s\":5,\"hlo\":-55,\"hhi\":125,\"aula\":\"aula1\"}");
+    cJSON *params = cJSON_Parse("{\"intervalo_s\":5,\"temperatura_min_c\":-55,\"temperatura_max_c\":125,\"aula\":\"aula1\"}");
     assert(hfr_config_aplicar(params, motivo, sizeof(motivo)));
     assert(escrituras == 1);
     cfg = hfr_config_actual();
-    assert(cfg.intervalo_s == 5 && cfg.freezer_s == 300 && cfg.minimo[0] == -5500);
+    assert(cfg.intervalo_s == 5 && cfg.minimo == -5500 && cfg.maximo == 12500);
     assert(hfr_config_aplicar(params, motivo, sizeof(motivo)));
-    assert(escrituras == 1); /* No desgastar flash si no cambió. */
+    assert(escrituras == 1);
     cJSON_Delete(params);
-    params = cJSON_Parse("{\"f_s\":86400,\"flo\":-25.25,\"fhi\":-14.75}");
+
+    params = cJSON_Parse("{\"intervalo_s\":86400,\"hlo\":2.25,\"hhi\":6.75}");
     fallar_escritura = true;
     assert(!hfr_config_aplicar(params, motivo, sizeof(motivo)));
     fallar_escritura = false;
@@ -128,17 +131,60 @@ static void configuracion(void)
     assert(hfr_config_aplicar(params, motivo, sizeof(motivo)));
     cJSON_Delete(params);
     cfg = hfr_config_actual();
-    assert(cfg.freezer_s == 86400 && cfg.minimo[1] == -2525 && cfg.maximo[1] == -1475);
+    assert(cfg.intervalo_s == 86400 && cfg.minimo == 225 && cfg.maximo == 675);
     assert(hfr_cargar_config(&durable) == ESP_OK);
     assert(memcmp(&cfg, &durable, sizeof(cfg)) == 0);
+
     cJSON *reporte = cJSON_CreateObject();
     hfr_config_describir(reporte);
-    assert(cJSON_GetArraySize(reporte) == 6);
-    assert(cJSON_GetObjectItemCaseSensitive(reporte, "f_s")->valuedouble == 86400);
+    assert(cJSON_GetArraySize(reporte) == 3);
+    assert(cJSON_GetObjectItemCaseSensitive(reporte, "intervalo_s")->valuedouble == 86400);
+    assert(cJSON_GetObjectItemCaseSensitive(reporte, "temperatura_min_c")->valuedouble == 2.25);
+    assert(cJSON_GetObjectItemCaseSensitive(reporte, "temperatura_max_c")->valuedouble == 6.75);
+    assert(cJSON_GetObjectItemCaseSensitive(reporte, "hlo") == NULL);
     cJSON_Delete(reporte);
     registros[0].datos[7] ^= 1;
     assert(hfr_cargar_config(&durable) == ESP_ERR_INVALID_CRC);
-    puts("OK configuracion: 17 parches invalidos, atomicidad, limites, NVS y CRC");
+    puts("OK configuracion: nombres legibles, alias, atomicidad, limites, NVS y CRC");
+}
+
+static void configuracion_anterior(void)
+{
+    typedef struct {
+        uint32_t magic;
+        uint32_t intervalo_s;
+        uint32_t intervalo_anterior;
+        int16_t minimo[2];
+        int16_t maximo[2];
+        uint32_t crc;
+    } anterior_t;
+    anterior_t anterior = {0};
+    anterior.magic = 0x48464931;
+    anterior.intervalo_s = 120;
+    anterior.intervalo_anterior = 300;
+    anterior.minimo[0] = 250;
+    anterior.minimo[1] = -2500;
+    anterior.maximo[0] = 650;
+    anterior.maximo[1] = -1500;
+    anterior.crc = hfr_crc32(&anterior, offsetof(anterior_t, crc));
+    memcpy(registros[0].datos, &anterior, sizeof(anterior));
+    registros[0].tam = sizeof(anterior);
+    unsigned antes = escrituras;
+    hfr_config_t cfg;
+    assert(hfr_cargar_config(&cfg) == ESP_OK);
+    assert(cfg.intervalo_s == 120 && cfg.minimo == 250 && cfg.maximo == 650);
+    assert(escrituras == antes);
+    assert(hfr_guardar_config(&cfg) == ESP_OK);
+    hfr_config_t copia;
+    assert(hfr_cargar_config(&copia) == ESP_OK);
+    assert(memcmp(&cfg, &copia, sizeof(cfg)) == 0);
+
+    anterior.minimo[0] = anterior.maximo[0];
+    anterior.crc = hfr_crc32(&anterior, offsetof(anterior_t, crc));
+    memcpy(registros[0].datos, &anterior, sizeof(anterior));
+    registros[0].tam = sizeof(anterior);
+    assert(hfr_cargar_config(&copia) == ESP_ERR_INVALID_CRC);
+    puts("OK NVS: conserva ajustes de heladera del prototipo anterior sin escribir al cargar");
 }
 
 static void sondas(void)
@@ -156,28 +202,27 @@ static void sondas(void)
 static void alarma(void)
 {
     hfr_alarma_t heladera = {0};
-    hfr_alarma_t freezer = {0};
     for (unsigned i = 0; i < 5; ++i) {
         hfr_alarma_actualizar(&heladera, 6, 200, 600);
         hfr_alarma_actualizar(&heladera, 6.5f, 200, 600);
         assert(heladera.activa == 0);
     }
     hfr_alarma_actualizar(&heladera, 6.5f, 200, 600);
-    assert(heladera.activa == 1 && freezer.activa == 0);
+    assert(heladera.activa == 1);
     hfr_alarma_actualizar(&heladera, 6, 200, 600);
     assert(heladera.activa == 1);
     hfr_alarma_actualizar(&heladera, 5.5f, 200, 600);
     assert(heladera.activa == 0);
 
-    hfr_alarma_actualizar(&freezer, -26, -2500, -1500);
-    assert(freezer.activa == 0);
-    hfr_alarma_actualizar(&freezer, -26, -2500, -1500);
-    assert(freezer.activa == -1);
-    hfr_alarma_actualizar(&freezer, -25, -2500, -1500);
-    assert(freezer.activa == -1);
-    hfr_alarma_actualizar(&freezer, -24.5f, -2500, -1500);
-    assert(freezer.activa == 0);
-    puts("OK alarma: demora, oscilacion, recuperacion y sondas independientes");
+    hfr_alarma_actualizar(&heladera, 1, 200, 600);
+    assert(heladera.activa == 0);
+    hfr_alarma_actualizar(&heladera, 1.5f, 200, 600);
+    assert(heladera.activa == -1);
+    hfr_alarma_actualizar(&heladera, 2, 200, 600);
+    assert(heladera.activa == -1);
+    hfr_alarma_actualizar(&heladera, 2.5f, 200, 600);
+    assert(heladera.activa == 0);
+    puts("OK alarma: demora, oscilacion, recuperacion por umbral superior e inferior");
 }
 
 static void reloj(void)
@@ -251,6 +296,7 @@ int main(void)
 {
     assert(hfr_crc32("123456789", 9) == 0xcbf43926);
     configuracion();
+    configuracion_anterior();
     sondas();
     alarma();
     reloj();

@@ -4,7 +4,7 @@
 
 hfr_config_t hfr_config_defecto(void)
 {
-    return (hfr_config_t){60, 300, {200, -2500}, {600, -1500}};
+    return (hfr_config_t){.intervalo_s = 60, .minimo = 200, .maximo = 600};
 }
 
 bool hfr_config_valida(const hfr_config_t *cfg)
@@ -12,17 +12,9 @@ bool hfr_config_valida(const hfr_config_t *cfg)
     if (!cfg) {
         return false;
     }
-    if (cfg->intervalo_s < 5 || cfg->intervalo_s > 86400 ||
-        cfg->freezer_s < 5 || cfg->freezer_s > 86400) {
-        return false;
-    }
-    for (int s = 0; s < 2; ++s) {
-        if (cfg->minimo[s] < -5500 || cfg->maximo[s] > 12500 ||
-            cfg->minimo[s] >= cfg->maximo[s]) {
-            return false;
-        }
-    }
-    return true;
+    return cfg->intervalo_s >= 5 && cfg->intervalo_s <= 86400 &&
+           cfg->minimo >= -5500 && cfg->maximo <= 12500 &&
+           cfg->minimo < cfg->maximo;
 }
 
 hfr_sonda_estado_t hfr_clasificar(float temperatura, bool leida)

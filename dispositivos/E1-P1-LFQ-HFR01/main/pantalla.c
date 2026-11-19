@@ -90,7 +90,7 @@ void hfr_indicadores(bool alarma, bool conectada)
     gpio_set_level(HFR_PIN_LED_RED, conectada ? !HFR_LED_ACTIVO : HFR_LED_ACTIVO);
 }
 
-void hfr_pantalla_actualizar(const float temperaturas[2], uint8_t validas,
+void hfr_pantalla_actualizar(float temperatura, bool valida,
                             bool conectada, uint32_t pendientes, bool bateria,
                             uint32_t utc, bool oscura)
 {
@@ -107,15 +107,13 @@ void hfr_pantalla_actualizar(const float temperaturas[2], uint8_t validas,
         return;
     }
     memset(imagen, 0, sizeof(imagen));
-    texto(0, "HELADERA / FREEZER");
+    texto(0, "HELADERA");
     char linea[32];
-    for (unsigned i = 0; i < 2; ++i) {
-        if ((validas & (1U << i)) != 0) {
-            snprintf(linea, sizeof(linea), "%s: %.2f C", i == 0 ? "H" : "F", (double)temperaturas[i]);
-        } else {
-            snprintf(linea, sizeof(linea), "%s: SIN LECTURA", i == 0 ? "H" : "F");
-        }
-        texto(2 + i, linea);
+    if (valida) {
+        snprintf(linea, sizeof(linea), "TEMP: %.2f C", (double)temperatura);
+        texto(2, linea);
+    } else {
+        texto(2, "TEMP: SIN LECTURA");
     }
     texto(5, conectada ? "MESH CONECTADA" : "SIN MESH");
     snprintf(linea, sizeof(linea), "COLA: %lu", (unsigned long)pendientes);

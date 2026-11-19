@@ -21,72 +21,64 @@
 #error "Copiar main/config_local.ejemplo.h como main/config_local.h y completar los datos de la mesh"
 #endif
 
-static const char *CAMPOS[2] = {"temp_heladera_c", "temp_freezer_c"};
+static const char *CAMPO = "temp_heladera_c";
 static bool mesh_iniciada;
 
 static void tarea_dispositivo(void *arg)
 {
     (void)arg;
-    float temperaturas[2] = {NAN, NAN};
-    uint8_t validas = 0;
-    int64_t ultima[2] = {0, 0};
+    float temperatura = NAN;
+    bool valida = false;
+    int64_t ultima_lectura = 0;
     int64_t ultimo_display = 0;
-    hfr_alarma_t alarmas[2] = {0};
+    hfr_alarma_t alarma = {0};
     hfr_config_t anterior = hfr_config_actual();
     int64_t desconexion_en = esp_timer_get_time();
     while (true) {
         int64_t ahora = esp_timer_get_time();
         hfr_config_t cfg = hfr_config_actual();
         hfr_energia_actualizar(mesh_iniciada);
-        uint32_t intervalos[2] = {cfg.intervalo_s, cfg.freezer_s};
-        cJSON *medicion = cJSON_CreateObject();
-        bool hubo_lectura = false;
-        for (unsigned i = 0; i < 2; ++i) {
-            if (cfg.minimo[i] != anterior.minimo[i] || cfg.maximo[i] != anterior.maximo[i]) {
-                alarmas[i] = (hfr_alarma_t){0};
-            }
-            if (ultima[i] != 0 && ahora - ultima[i] < (int64_t)intervalos[i] * 1000000) {
-                continue;
-            }
-            hubo_lectura = true;
-            ultima[i] = ahora;
-            float temperatura = NAN;
-            bool leida = hfr_sonda_leer(i, &temperatura);
+        if (cfg.minimo != anterior.minimo || cfg.maximo != anterior.maximo) {
+            alarma = (hfr_alarma_t){0};
+        }
+        anterior = cfg;
+        if (ultima_lectura == 0 || ahora - ultima_lectura >= (int64_t)cfg.intervalo_s * 1000000) {
+            ultima_lectura = ahora;
+            temperatura = NAN;
+            bool leida = hfr_sonda_leer(&temperatura);
             hfr_sonda_estado_t estado = hfr_clasificar(temperatura, leida);
-            temperaturas[i] = temperatura;
-            validas &= ~(1U << i);
-            if (estado == HFR_SONDA_OK) {
-                validas |= 1U << i;
-                hfr_alarma_actualizar(&alarmas[i], temperatura, cfg.minimo[i], cfg.maximo[i]);
-                if (medicion != NULL) {
-                    cJSON_AddNumberToObject(medicion, CAMPOS[i], round((double)temperatura * 100) / 100);
+            valida = estado == HFR_SONDA_OK;
+            if (valida) {
+                hfr_alarma_actualizar(&alarma, temperatura, cfg.minimo, cfg.maximo);
+                ESP_LOGI("SONDA", "%s = %.2f C", CAMPO, (double)temperatura);
+                cJSON *medicion = cJSON_CreateObject();
+                if (medicion != NULL &&
+                    cJSON_AddNumberToObject(medicion, CAMPO, round((double)temperatura * 100) / 100) != NULL) {
+                    if (!mesh_iniciada || !nodo_mesh_medicion(medicion)) {
+                        ESP_LOGE("MEDICION", "Lectura no encolada; revisar inicializacion o memoria");
+                    }
+                } else {
+                    ESP_LOGE("MEDICION", "Sin memoria para preparar la lectura");
                 }
-                ESP_LOGI("SONDA", "%s = %.2f C", CAMPOS[i], (double)temperatura);
+                cJSON_Delete(medicion);
             }
             if (mesh_iniciada) {
-                nodo_mesh_sonda(CAMPOS[i], estado == HFR_SONDA_OK,
+                nodo_mesh_sonda(CAMPO, valida,
                                 estado == HFR_SIN_RESPUESTA ? "sin_respuesta" : "fuera_de_rango");
             }
         }
-        anterior = cfg;
-        if (hubo_lectura && medicion != NULL && cJSON_GetArraySize(medicion) > 0) {
-            if (!mesh_iniciada || !nodo_mesh_medicion(medicion)) {
-                ESP_LOGE("MEDICION", "Lectura no encolada; revisar inicializacion o memoria");
-            }
-        }
-        cJSON_Delete(medicion);
 
         bool conectada = mesh_iniciada && nodo_mesh_conectada();
         if (conectada) {
             desconexion_en = ahora;
         }
-        hfr_indicadores(alarmas[0].activa != 0 || alarmas[1].activa != 0, conectada);
+        hfr_indicadores(alarma.activa != 0, conectada);
         if (ahora - ultimo_display >= 1000000) {
             ultimo_display = ahora;
             bool oscura = hfr_energia_bateria() ||
                           ahora - desconexion_en >= (int64_t)HFR_OSCURO_TRAS_MS * 1000;
             uint32_t pendientes = mesh_iniciada ? nodo_mesh_pendientes() : 0;
-            hfr_pantalla_actualizar(temperaturas, validas, conectada, pendientes,
+            hfr_pantalla_actualizar(temperatura, valida, conectada, pendientes,
                                    hfr_energia_bateria(), hfr_reloj_utc(), oscura);
             hfr_reloj_mantener(conectada);
         }
