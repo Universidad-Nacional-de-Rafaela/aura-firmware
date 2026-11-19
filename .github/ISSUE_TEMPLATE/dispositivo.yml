@@ -1,0 +1,119 @@
+name: Dispositivo nuevo
+description: Proponer un dispositivo (o registrar uno asignado por la materia) y seguir su avance hasta la instalación.
+title: "Dispositivo: <CÓDIGO o descripción corta>"
+labels: ["dispositivo"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Un issue por dispositivo. Si van a ser más de dos placas iguales (por ejemplo, las puertas
+        de un edificio), un solo issue para el modelo. El avance se sigue en el tablero
+        **Dispositivos AURA** de la organización.
+
+        No pongas acá MACs de producción, datos de la mesh, credenciales ni claves.
+  - type: input
+    id: codigo
+    attributes:
+      label: Código propuesto
+      description: Según el mapa de `dispositivos/README.md` (EDIFICIO-PISO-RECINTO-TIPOnn). Si no estás seguro, dejalo vacío y lo define la cátedra.
+      placeholder: E1-PB-LECA-TEM01
+  - type: textarea
+    id: que
+    attributes:
+      label: Qué hace
+      description: Qué mide o qué acciona, y para qué sirve en el campus.
+    validations:
+      required: true
+  - type: input
+    id: donde
+    attributes:
+      label: Dónde va
+      description: Edificio, piso y recinto. Si hay un responsable del recinto, nombralo.
+    validations:
+      required: true
+  - type: dropdown
+    id: materia
+    attributes:
+      label: Materia
+      options:
+        - IC III
+        - IC IV
+    validations:
+      required: true
+  - type: dropdown
+    id: origen
+    attributes:
+      label: Origen
+      options:
+        - Asignado por la materia
+        - Propuesto por el grupo
+    validations:
+      required: true
+  - type: input
+    id: grupo
+    attributes:
+      label: Grupo
+      description: Nombre del grupo y usuarios de GitHub de sus integrantes.
+      placeholder: "@usuario1 @usuario2"
+    validations:
+      required: true
+  - type: dropdown
+    id: transporte
+    attributes:
+      label: Transporte
+      description: Mesh en interior, LoRaWAN en exterior o lejos (ADR-003). Lo confirma la cátedra.
+      options:
+        - Mesh (ESP-WIFI-MESH, interior)
+        - LoRaWAN (exterior o lejos)
+        - A definir con la cátedra
+    validations:
+      required: true
+  - type: textarea
+    id: hardware
+    attributes:
+      label: Hardware
+      description: Placa, sensores o actuadores, alimentación. Indicá qué ya tienen y qué falta conseguir.
+    validations:
+      required: true
+  - type: textarea
+    id: avance
+    attributes:
+      label: Avance
+      description: No hace falta tocarlo al abrir el issue. Se tilda a medida que se avanza; la etapa actual se ve en el tablero.
+      value: |
+        ### 0. Propuesta
+        - [ ] Alumnos: issue abierto con este formulario
+        - [ ] Cátedra: propuesta aceptada o asignada
+
+        ### 1. Definido
+        - [ ] Cátedra: código confirmado en el mapa de `dispositivos/README.md`
+        - [ ] Cátedra: transporte confirmado (mesh o LoRaWAN)
+        - [ ] Cátedra: placa y materiales disponibles (o compra pedida)
+        - [ ] Alumnos: PR de contribuidor mergeado (`docs/contribuidores/<usuario>.md`), uno por integrante
+
+        ### 2. En desarrollo
+        - [ ] Alumnos: carpeta `dispositivos/<CÓDIGO>/` con firmware, ficha y tests
+        - [ ] Alumnos: conector en `conectores/<CÓDIGO>/`
+        - [ ] Mesh: alumnos arman su banco (`Mesh_Red_Completa/GUIA_BANCO_DE_PRUEBAS.md`), con las placas que presta la cátedra
+        - [ ] LoRaWAN: alumnos pasan el DevEUI; cátedra da el alta OTAA y carga el codec en ChirpStack
+
+        ### 3. PR en revisión
+        - [ ] Alumnos: PR abierto con el informe de pruebas y el CI en verde
+        - [ ] Alumnos: comentarios de la revisión resueltos
+        - [ ] Cátedra: PR aprobado y mergeado
+
+        ### 4. Alta en AURA
+        - [ ] Alumnos: habilitación pedida (`GUIA_HOJAS_NUEVAS.md`, paso 7)
+        - [ ] Cátedra: firmware compilado desde `main`, firmado y grabado (mesh)
+        - [ ] Cátedra: dispositivo dado de alta en AURA y placa asignada
+        - [ ] Cátedra: aula asignada y concentrador autorizado (mesh)
+        - [ ] Cátedra: conector cargado y asignado en AURA
+
+        ### 5. Instalación
+        - [ ] Cátedra: montaje coordinado con el responsable del recinto
+        - [ ] Cátedra: alimentación y cobertura (concentrador del aula o gateway) resueltas
+        - [ ] Alumnos y cátedra: equipo montado
+        - [ ] Cátedra: llegan datos a AURA desde el lugar final
+
+        ### 6. Instalado
+        - [ ] Cátedra: estado «instalado» en la tabla de `dispositivos/README.md` e issue cerrado
