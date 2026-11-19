@@ -32,5 +32,20 @@ int main() {
   VERIFICAR(entero_en_rango(2147483647.0, 0, 2147483647, &v) && v == 2147483647);
   VERIFICAR(entero_en_rango(-2147483648.0, -2147483647 - 1, 0, &v) && v == (-2147483647 - 1));
 
+  // aviso_s: 0 apaga el aviso; si no es 0, tiene que estar en el rango (5 a 600)
+  v = -7;
+  VERIFICAR(entero_en_rango_o_cero(0, 5, 600, &v) && v == 0);
+  VERIFICAR(entero_en_rango_o_cero(-0.0, 5, 600, &v) && v == 0);
+  VERIFICAR(entero_en_rango_o_cero(5, 5, 600, &v) && v == 5);
+  VERIFICAR(entero_en_rango_o_cero(600, 5, 600, &v) && v == 600);
+  v = -7;
+  VERIFICAR(!entero_en_rango_o_cero(1, 5, 600, &v) && v == -7);      // entre 0 y el minimo: no
+  VERIFICAR(!entero_en_rango_o_cero(4, 5, 600, &v) && v == -7);
+  VERIFICAR(!entero_en_rango_o_cero(601, 5, 600, &v) && v == -7);
+  VERIFICAR(!entero_en_rango_o_cero(-5, 5, 600, &v) && v == -7);
+  VERIFICAR(!entero_en_rango_o_cero(0.5, 5, 600, &v) && v == -7);
+  VERIFICAR(!entero_en_rango_o_cero(std::nan(""), 5, 600, &v) && v == -7);
+  VERIFICAR(!entero_en_rango_o_cero(1e300, 5, 600, &v) && v == -7);
+
   RESUMEN();
 }

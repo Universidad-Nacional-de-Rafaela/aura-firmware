@@ -109,5 +109,25 @@ int main() {
   lista_hash(&l, h2);
   VERIFICAR(strcmp(h, h2) != 0);
 
+  // tarjetas_vaciar: deja la lista vacia (hash 00000000) y se puede volver a cargar; vaciar una vacia no falla
+  {
+    lista_t v;
+    lista_vaciar(&v);
+    for (int i = 0; i < LISTA_MAX; i++) {
+      uint8_t u[4] = {0x10, 0x20, 0x30, (uint8_t)i};
+      VERIFICAR(lista_agregar(&v, u, 4) == LISTA_OK);
+    }
+    VERIFICAR(lista_agregar(&v, A, 4) == LISTA_LLENA);
+    lista_vaciar(&v);
+    VERIFICAR(v.n == 0);
+    VERIFICAR(!lista_autorizada(&v, A, 4));
+    lista_hash(&v, h);
+    VERIFICAR(strcmp(h, "00000000") == 0);
+    lista_vaciar(&v);                                  // idempotente: los reintentos de AURA no fallan
+    VERIFICAR(v.n == 0);
+    VERIFICAR(lista_agregar(&v, A, 4) == LISTA_OK);    // despues de vaciar, la recarga es un tarjeta_agregar por UID
+    VERIFICAR(lista_autorizada(&v, A, 4));
+  }
+
   RESUMEN();
 }

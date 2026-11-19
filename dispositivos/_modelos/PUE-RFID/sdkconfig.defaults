@@ -24,3 +24,7 @@ CONFIG_ESP_TASK_WDT_TIMEOUT_S=5
 CONFIG_ESP_INT_WDT=y
 # Consola por el USB nativo de la placa: GPIO20 y GPIO21 son del RC522, no de una UART
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# Modulo de rele de nivel ALTO (el de la cerradura Luber 500 en banco): la cerradura queda trabada en
+# reposo. Si el modulo de una puerta es de nivel bajo, se apaga esta opcion (ver el README).
+CONFIG_PUERTA_RELE_ACTIVO_ALTO=y

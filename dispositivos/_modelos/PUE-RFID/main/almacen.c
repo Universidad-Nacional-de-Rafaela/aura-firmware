@@ -66,30 +66,26 @@ bool almacen_guardar_armada(bool armada)
 }
 
 /* Lo que se guarda de la config. Todos los campos de 4 bytes: sin relleno. */
-#define CONFIG_BLOB_VERSION 1
+#define CONFIG_BLOB_VERSION 2            /* la 1 tenia ademas el tipo de sensor: se descarta y vuelven los valores por defecto */
 typedef struct {
     uint32_t version;
     int32_t pulso_ms;
     int32_t aviso_s;
-    uint32_t sensor;
 } config_blob_t;
 
 void almacen_cargar_config(config_puerta_t *c)
 {
     c->pulso_ms = PULSO_DEFECTO_MS;
     c->aviso_s = AVISO_DEFECTO_S;
-    c->sensor = SENSOR_REED;
     if (!abierto) return;
     config_blob_t b;
     size_t n = sizeof(b);
     if (nvs_get_blob(h, "config", &b, &n) != ESP_OK || n != sizeof(b) || b.version != CONFIG_BLOB_VERSION) return;
     /* Se vuelve a validar contra el rango: si algo esta fuera, no se usa nada de lo guardado */
     if (b.pulso_ms < PULSO_MINIMO_MS || b.pulso_ms > PULSO_TOPE_MS) return;
-    if (b.aviso_s < AVISO_MIN_S || b.aviso_s > AVISO_MAX_S) return;
-    if (b.sensor > (uint32_t)SENSOR_BOTON) return;
+    if (b.aviso_s != AVISO_APAGADO_S && (b.aviso_s < AVISO_MIN_S || b.aviso_s > AVISO_MAX_S)) return;
     c->pulso_ms = b.pulso_ms;
     c->aviso_s = b.aviso_s;
-    c->sensor = (sensor_tipo_t)b.sensor;
 }
 
 bool almacen_guardar_config(const config_puerta_t *c)
@@ -99,6 +95,5 @@ bool almacen_guardar_config(const config_puerta_t *c)
     b.version = CONFIG_BLOB_VERSION;
     b.pulso_ms = c->pulso_ms;
     b.aviso_s = c->aviso_s;
-    b.sensor = (uint32_t)c->sensor;
     return blob_si_cambia("config", &b, sizeof(b));
 }
