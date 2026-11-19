@@ -30,8 +30,10 @@ apunta al modelo. Ver [*Varios dispositivos con el mismo firmware*](dispositivos
 2. **Definí el transporte** con la cátedra: mesh ESP-WIFI-MESH si está en interior, LoRaWAN si
    está en exterior o lejos ([ADR-003](docs/adr/ADR-003-dos-transportes-mesh-interior-lorawan-exterior.md),
    [ADR-006](docs/adr/ADR-006-esp-wifi-mesh-reemplaza-a-esp-now-en-interior.md)).
-3. **Armá el código del dispositivo** con el mapa. Si te falta una abreviatura (un recinto
-   nuevo, un tipo nuevo), la agregás a su tabla en el mismo PR.
+3. **Registrá el dispositivo:** abrí un issue con el formulario *Dispositivo nuevo*, con el
+   código que proponés según el mapa. La cátedra confirma ahí el código y el transporte, y el
+   avance se sigue en ese issue. Si te falta una abreviatura (un recinto nuevo, un tipo nuevo),
+   la agregás a su tabla en el PR.
 4. **Mesh:** armá tu banco de pruebas
    ([`Mesh_Red_Completa/GUIA_BANCO_DE_PRUEBAS.md`](Mesh_Red_Completa/GUIA_BANCO_DE_PRUEBAS.md)):
    gateway, concentrador y tablero propios, en la red del banco, con datos de mesh que genera tu
@@ -56,8 +58,8 @@ apunta al modelo. Ver [*Varios dispositivos con el mismo firmware*](dispositivos
    dos casos te llevás también la ficha (`README.md`) de la plantilla.
 3. Completá el `README.md`, que es la ficha: ubicación, responsable, hardware, campos de
    `values`, alertas, parámetros de `set_config` y su valor en esta placa.
-4. Listá en `bibliotecas.txt` cada biblioteca con su versión (`OneWire@2.3.8`). El CI instala
-   exactamente esas.
+4. **LoRaWAN:** listá en `bibliotecas.txt` cada biblioteca con su versión (`OneWire@2.3.8`). El
+   CI instala exactamente esas. En la mesh, los componentes se declaran en el proyecto ESP-IDF.
 5. Sumá el dispositivo a la tabla *Dispositivos* de `dispositivos/README.md`, y tu carpeta a
    `.github/CODEOWNERS` con los usuarios de GitHub del grupo. Si trabajás sobre un modelo, va
    también `dispositivos/_modelos/<MODELO>/`.
@@ -93,6 +95,8 @@ El paso a paso, del banco a la red final, está en
    idf.py -p <puerto> erase-flash
    idf.py -p <puerto> flash monitor
    ```
+   `<tipo>` es el nombre del proyecto (`aura-<uso>`). `erase-flash` va solo en la primera
+   grabación: borra el aula y la configuración guardadas.
 5. Pasá las pruebas obligatorias en tu banco y dejá el informe en
    `dispositivos/<CÓDIGO>/pruebas/` (`GUIA_HOJAS_NUEVAS.md`, paso 5).
 
@@ -134,10 +138,15 @@ código que tu dispositivo (ver [`conectores/README.md`](conectores/README.md)).
    ```bash
    python3 -m unittest discover -s conectores/<CÓDIGO>/tests
    ```
-5. En el banco, contra lo que manda tu placa:
-   ```bash
-   herramientas/correr_conector.py conectores/<CÓDIGO> --hw-id mac-<MAC de tu placa> --docker aura-mosquitto
+5. En el banco, contra lo que mandó tu placa. `broker.py` guarda todo en `mensajes.log`; sacá los
+   `data` de tu placa a un archivo, una línea JSON por mensaje, y pasalos por el conector (desde la
+   raíz del repo, en PowerShell):
    ```
+   python -c "open('mensajes.jsonl','w',encoding='utf-8').writelines(l.split('  ',3)[3] for l in open('<ruta>/mensajes.log',encoding='utf-8') if '/mac-<MAC de tu placa>/data  ' in l)"
+   python herramientas\correr_conector.py conectores\<CÓDIGO> --archivo mensajes.jsonl
+   ```
+   Con `--hw-id mac-… --docker aura-mosquitto` escucha en vivo el broker del stack de aura-app; en
+   el banco con `broker.py` no hace falta.
 6. **Probalo como corre en AURA.** AURA no importa tu conector en su proceso: lo corre en un
    proceso aparte, sin credenciales, con 256 MB de memoria, 5 s de CPU, 64 archivos abiertos y
    10 s por muestra. Con `--subproceso`, `correr_conector.py` hace lo mismo:

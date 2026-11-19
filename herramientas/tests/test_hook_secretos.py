@@ -55,7 +55,7 @@ class Reglas(unittest.TestCase):
         self.assertPasa(f'#define MESH_AP_{PASS}    "CAMBIAR"   /* mínimo 8 caracteres */')
         self.assertPasa(f'#define MESH_AP_{PASS}    "CAMBIAR12"   /* mínimo 8 caracteres */')
         self.assertPasa(f'#define MQTT_{CLV}      ""')
-        self.assertPasa('{ "AURA-BANCO", "<clave del WiFi>" }')
+        self.assertPasa('{ "<red del banco>", "<clave del WiFi>" }')
         self.assertPasa("#define MESH_" + "ID_BYTES   " + ", ".join(["0x00"] * 6) + "     /* 6 bytes */")
         self.assertPasa("static const uint8_t app" + "_key[16] = {" + ", ".join(["0x00"] * 16) + "};")
         self.assertPasa(f"{PWD} = ${{MQTT_PASSWORD}}")

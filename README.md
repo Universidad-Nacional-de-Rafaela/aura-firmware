@@ -2,7 +2,8 @@
 
 Firmware de los dispositivos del proyecto **AURA** (Administración Unificada de Recursos y
 Accesos), Universidad Nacional de Rafaela. Acá vive el código que corre **en las placas**: la
-infraestructura de la mesh que mantiene la cátedra (raíz y relevos), y una carpeta por cada
+infraestructura de la mesh que mantiene la cátedra (gateway, concentrador del aula y la
+biblioteca de las hojas), y una carpeta por cada
 dispositivo que desarrollan los grupos de Ingeniería en Computación III y IV, con su firmware y
 su ficha.
 
@@ -12,14 +13,15 @@ respeta, AURA no falla: descarta el mensaje en silencio.
 
 ## Dos transportes
 
-Según [ADR-003](docs/adr/ADR-003-dos-transportes-mesh-interior-lorawan-exterior.md) y
-[ADR-006](docs/adr/ADR-006-esp-wifi-mesh-reemplaza-a-esp-now-en-interior.md):
+Según [ADR-003](docs/adr/ADR-003-dos-transportes-mesh-interior-lorawan-exterior.md),
+[ADR-006](docs/adr/ADR-006-esp-wifi-mesh-reemplaza-a-esp-now-en-interior.md) y
+[ADR-007](docs/adr/ADR-007-mesh-en-esp-idf-con-concentrador-por-aula.md):
 
-- **Interior → mesh ESP-WIFI-MESH.** El dispositivo es una **hoja** de la mesh del edificio. La
-  mesh arma sola el camino hasta el **raíz**, que es el único con WiFi y el que habla con AURA.
-  Donde las hojas no llegan al raíz, la cátedra pone **relevos**.
+- **Interior → mesh ESP-WIFI-MESH, en ESP-IDF.** El dispositivo es una **hoja** de la mesh. Cada
+  aula tiene un **concentrador**, el padre de sus hojas, y todos llegan al **gateway** (el raíz de
+  la mesh), que es el único con WiFi y el que habla con AURA.
   ```
-  dispositivo (hoja) --mesh--> nodo_relevo --mesh--> nodo_raiz --WiFi/MQTT--> AURA
+  dispositivo (hoja) --mesh--> concentrador del aula --mesh--> gateway --WiFi/MQTT--> AURA
   ```
 - **Exterior o lejos → LoRaWAN**, por el gateway LoRa y ChirpStack. El banco del aula y un
   nodo de ejemplo están en
@@ -29,7 +31,7 @@ Según [ADR-003](docs/adr/ADR-003-dos-transportes-mesh-interior-lorawan-exterior
 
 | Carpeta | Qué hay | Quién la mantiene |
 |---|---|---|
-| [`Mesh_Red_Completa/`](Mesh_Red_Completa/) | **La mesh de interior, en ESP-IDF**: raíz (`Mesh3_Gateway`), concentrador del aula (`Mesh3_Intermedio`), la biblioteca de las hojas (`componentes/nodo_mesh`), la hoja de ejemplo (`Mesh3_Hoja`), el banco en Python y la [guía para hacer hojas](Mesh_Red_Completa/GUIA_NODOS_HOJA.md) | cátedra |
+| [`Mesh_Red_Completa/`](Mesh_Red_Completa/) | **La mesh de interior, en ESP-IDF**: raíz (`Mesh3_Gateway`), concentrador del aula (`Mesh3_Intermedio`), la biblioteca de las hojas (`componentes/nodo_mesh`), la hoja de ejemplo (`Mesh3_Hoja`) y el banco en Python (`Broker_MQTT/`). Guías: [armar el banco de pruebas](Mesh_Red_Completa/GUIA_BANCO_DE_PRUEBAS.md), [hacer una hoja nueva, del banco a la red final](Mesh_Red_Completa/GUIA_HOJAS_NUEVAS.md) y la [referencia de la biblioteca](Mesh_Red_Completa/GUIA_NODOS_HOJA.md) | cátedra |
 | [`comun/`](comun/) | `python/aura_sdk/`, la biblioteca de los conectores; la trama de la mesh y sus tests de host. La mesh en Arduino (`nodo_mesh.h`, radio ESP-WIFI-MESH) queda **obsoleta** | cátedra |
 | [`infraestructura/`](infraestructura/) | `nodo_raiz` y `nodo_relevo` de la mesh en Arduino: **obsoletos**, reemplazados por `Mesh_Red_Completa/` | cátedra |
 | [`conectores/`](conectores/) | **Un conector por dispositivo**: el código que procesa sus datos dentro de AURA (valida, guarda, alerta, predice), en Python | cada grupo |
@@ -40,7 +42,7 @@ Según [ADR-003](docs/adr/ADR-003-dos-transportes-mesh-interior-lorawan-exterior
 
 ## Estado
 
-La mesh implementa la **versión 4.1 del contrato** sobre **ESP-WIFI-MESH** (trama v3), en
+La mesh implementa el contrato vigente ([`docs/CONTRATO_MQTT.md`](docs/CONTRATO_MQTT.md)) sobre **ESP-WIFI-MESH** (trama v3), en
 **ESP-IDF nativo** desde el 2026-10-20
 ([ADR-007](docs/adr/ADR-007-mesh-en-esp-idf-con-concentrador-por-aula.md)): ver
 [`Mesh_Red_Completa/`](Mesh_Red_Completa/). Probada en placa de punta a punta; falta una prueba
@@ -63,14 +65,13 @@ La mesh sobre ESP-NOW está en el tag `mesh-espnow-v2`.
   vez por cambio y offline inferido.
 
 Un dispositivo de la mesh se arma copiando [`Mesh_Red_Completa/Mesh3_Hoja/`](Mesh_Red_Completa/Mesh3_Hoja/),
-sobre la biblioteca `nodo_mesh`: ver la [guía](Mesh_Red_Completa/GUIA_NODOS_HOJA.md) y
-[`CONTRIBUTING.md`](CONTRIBUTING.md).
+sobre la biblioteca `nodo_mesh`: empezá por [`CONTRIBUTING.md`](CONTRIBUTING.md), que lleva a las
+guías.
 
-El backend de aura-app ya escucha el árbol `hw/` de la v4.0 y publica el `ack`. Su broker no
-acepta anónimos: el raíz entra con el usuario `raiz` (ver
-[`infraestructura/nodo_raiz/`](infraestructura/nodo_raiz/)). Para el banco sin backend,
-[`herramientas/ack_falso.py`](herramientas/ack_falso.py) hace de AURA, con modos para simular la
-base caída, `rechazado` y `cuarentena`.
+El backend de aura-app escucha el árbol `hw/` y publica el `ack`. Cada grupo prueba con su propio
+banco: gateway, concentrador y hojas propios, en la red del banco, y
+[`Broker_MQTT/broker.py`](Mesh_Red_Completa/Broker_MQTT/), que levanta el broker con una AURA falsa
+y un tablero ([guía del banco](Mesh_Red_Completa/GUIA_BANCO_DE_PRUEBAS.md)).
 
 ## Sumar un dispositivo
 
@@ -82,8 +83,11 @@ compila, corre los tests, valida los códigos y busca secretos.
 ## Compilar
 
 **Mesh (ESP-IDF 6.1, instalador [EIM](https://dl.espressif.com/dl/eim/)):** desde la carpeta del
-proyecto, `idf.py set-target esp32c3` (o `esp32s3` para el raíz y el concentrador) y
-`idf.py -p <puerto> build flash monitor`. Detalle en [`Mesh_Red_Completa/README.md`](Mesh_Red_Completa/README.md).
+proyecto, `idf.py set-target esp32c3` (o `esp32s3` para el gateway y el concentrador) e
+`idf.py build`. La compilación no firma: la imagen se firma con `Broker_MQTT/firmar.py` y recién
+después se graba, porque una placa grabada sin firma no acepta actualizaciones por la malla. Los
+comandos están en [`GUIA_HOJAS_NUEVAS.md`](Mesh_Red_Completa/GUIA_HOJAS_NUEVAS.md) (paso 4) y en
+[`Mesh_Red_Completa/README.md`](Mesh_Red_Completa/README.md).
 
 **LoRaWAN y la mesh en Arduino (obsoleta):** la mesh en Arduino corría en **ESP32-C3 SuperMini** (placa "Nologo ESP32C3 Super Mini" en el IDE) con
 **USB CDC On Boot: Enabled** (sin eso el monitor serie queda mudo), core `esp32:esp32` 3.3.11. La

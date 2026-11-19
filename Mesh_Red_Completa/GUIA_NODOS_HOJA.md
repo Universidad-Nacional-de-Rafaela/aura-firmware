@@ -1,8 +1,8 @@
 # AURA – Guía para desarrollar nodos hoja
 
 Esta guía es para quienes programen **nodos hoja** (sensores y actuadores de un aula) que se conectan a la malla
-ESP-WIFI-MESH de AURA. Todo es **ESP-IDF nativo** (sin Arduino) y cumple el **contrato MQTT v4.0**
-(`docs/CONTRATO_MQTT.md` del repositorio `aura-firmware`).
+ESP-WIFI-MESH de AURA. Todo es **ESP-IDF nativo** (sin Arduino) y cumple la versión vigente del **contrato MQTT**
+([`docs/CONTRATO_MQTT.md`](../docs/CONTRATO_MQTT.md)).
 
 Una hoja se programa sobre la biblioteca **`nodo_mesh`** (`componentes/nodo_mesh`): el grupo escribe **qué mide,
 qué parámetros tiene y qué comandos acepta**. La conexión, el aula, la cola, la confirmación de AURA, los eventos,
@@ -330,7 +330,7 @@ verifica la firma antes de instalarla (`CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT
 - [ ] Copié `Mesh3_Hoja` como `dispositivos/<CÓDIGO>/` y en su `CMakeLists.txt` apunté `EXTRA_COMPONENT_DIRS` a `../../Mesh_Red_Completa/componentes` (ver `CONTRIBUTING.md`). Ruta sin espacios ni tildes, fuera de Google Drive/OneDrive.
 - [ ] En el `CMakeLists.txt` de la carpeta del proyecto: `project(aura-<uso>)` con el tipo de mi dispositivo y
       `set(PROJECT_VER "1.0.0")` (sección 2.7). Subo la versión en cada entrega.
-- [ ] Copié `main/config_local.ejemplo.h` como `main/config_local.h` y completé el ID y la clave de la mesh de mi banco (los genera el grupo, ver `GUIA_BANCO_DE_PRUEBAS.md`; **no se sube**).
+- [ ] Copié `main/config_local.ejemplo.h` como `main/config_local.h` y completé el ID y la clave de la mesh de mi banco (los genera el grupo, ver [`GUIA_BANCO_DE_PRUEBAS.md`](GUIA_BANCO_DE_PRUEBAS.md); **no se sube**).
 - [ ] Ajusté `sdkconfig.defaults` a la placa (target, flash) sin sacar `BOOTLOADER_APP_ROLLBACK_ENABLE`, mantuve
       `partitions.csv` con `ota_0`, `ota_1`, `otadata` y `cola`, y borré `sdkconfig` y `build`.
 - [ ] Escribí la medición, `aplicar_config`, `describir_config` (con `intervalo_s`) y `ejecutar_comando`.
@@ -356,7 +356,7 @@ Después de cambiar un parámetro hay que **recompilar y grabar todos los firmwa
 | Parámetro | Valor actual | Dónde | Efecto / cuidado |
 |---|---|---|---|
 | `MESH_ID_BYTES` | (en `config_local.h`) | G, C, H — `main/config_local.h` | Identifica la red. Nodos con otro ID no se ven. |
-| `MESH_AP_PASS` | (en `config_local.h`) | G, C, H — `main/config_local.h` | Clave WPA2 entre nodos (mínimo 8 caracteres). En el banco, el ID y la clave los genera cada grupo al azar (`GUIA_BANCO_DE_PRUEBAS.md`); los de la instalación los tiene solo la cátedra y no se entregan. |
+| `MESH_AP_PASS` | (en `config_local.h`) | G, C, H — `main/config_local.h` | Clave WPA2 entre nodos (mínimo 8 caracteres). En el banco, el ID y la clave los genera cada grupo al azar ([`GUIA_BANCO_DE_PRUEBAS.md`](GUIA_BANCO_DE_PRUEBAS.md)); los de la instalación los tiene solo la cátedra y no se entregan. |
 | `MESH_MAX_CAPAS` | `6` | G, C, NM | Profundidad máxima del árbol. |
 | `ROUTER_FICTICIO` | `aura-sin-router` | C, NM | La API exige un SSID de router, pero estos nodos **nunca** se conectan al router. Fijo: **no se cambia al mudar la red**. |
 | Vendor IE (`AURA_OUI_0..2`, `AURA_IE_CONCENTRADOR`) | `02:A5:52`, tipo `1` | AM (`aura_util.h`) | Es como la hoja reconoce a los concentradores. |
@@ -370,7 +370,7 @@ Después de cambiar un parámetro hay que **recompilar y grabar todos los firmwa
 
 | Parámetro | Valor actual | Dónde | Efecto / cuidado |
 |---|---|---|---|
-| `REDES_WIFI` | en el banco, la red del banco (la clave la pasa la cátedra en persona); en la instalación, las redes del edificio (solo la cátedra) | Gc | Lista `{"SSID", "clave"}` en orden de preferencia (2,4 GHz, sin portal de login ni aislamiento de clientes). Usa la primera al alcance; si queda 5 min sin router (`REINICIO_SIN_ROUTER_MS`), se reinicia y empieza por la siguiente. |
+| `REDES_WIFI` | en el banco, la red del banco (el nombre y la clave los pasa la cátedra en persona); en la instalación, las redes del edificio (solo la cátedra) | Gc | Lista `{"SSID", "clave"}` en orden de preferencia (2,4 GHz, sin portal de login ni aislamiento de clientes). Usa la primera al alcance; si queda 5 min sin router (`REINICIO_SIN_ROUTER_MS`), se reinicia y empieza por la siguiente. |
 | `BROKER_URI` | `""` | Gc | Vacío = prueba el **último broker que le anduvo en esa red** (NVS) y, si falla 3 veces, lo busca por broadcast UDP. `"mqtt://IP:puerto"` = fijo (Mosquitto, servidor de AURA). |
 | `MQTT_USUARIO`, `MQTT_CLAVE` | vacíos (anónimo) | Gc | El broker de aura-app no acepta anónimos: usuario `raiz` y la clave de su `.env`. |
 | `PUERTO_DESCUBRIMIENTO` | `18830` (UDP) | G **y** PC | Tiene que coincidir con `broker.py`. |

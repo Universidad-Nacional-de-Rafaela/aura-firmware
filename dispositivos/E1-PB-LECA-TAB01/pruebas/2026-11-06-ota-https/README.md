@@ -29,7 +29,7 @@ sin cable a la PC, y compartía la malla con hojas de otros tres grupos.
 
 | | Ronda 1 (2026-10-30) | Ronda 2 (2026-11-06) |
 |---|---|---|
-| Router | Uno propio, aislado y sin internet | El del aula (`AURA-BANCO`), con internet |
+| Router | Uno propio, aislado y sin internet | El del aula, con internet |
 | Hora | Sin hora (`hora_valida: false`) | Con hora de internet: todas las mediciones llevan `ts` |
 | La hoja | Por USB a la notebook, en la mesa | Instalada en el tablero, con la fuente de su caja y sin cable |
 | La malla | 4 nodos: gateway, 2 concentradores y nuestra hoja | Hasta 6 nodos: se sumaron tres hojas de otros grupos (una cerradura con tarjeta, una puerta con solenoide y una de ambiente) |
