@@ -7,7 +7,7 @@
 > (`docs/superpowers/…`) son de `aura-app`.
 
 **Estado**: normativo en `aura-app`. Ante una discrepancia con cualquier otro documento, manda el contrato; ante una discrepancia entre esta copia y la de `aura-app`, manda la de `aura-app`.
-**Versión del contrato**: 4.5 (propuesta) · **Última actualización**: 2026-11-13
+**Versión del contrato**: 4.5 (propuesta) · **Última actualización**: 2026-11-19
 **Alcance**: mensajería entre los dispositivos IoT y la plataforma (backend FastAPI). Hay **dos
 transportes**, cada uno con su adaptador
 ([ADR-003](adr/ADR-003-dos-transportes-mesh-interior-lorawan-exterior.md)):
@@ -544,7 +544,7 @@ CRC-32 IEEE de ese texto (`zlib.crc32` en Python) en 8 dígitos hexadecimales en
 lista vacía da `"00000000"`. Detecta un desfasaje, no es una firma. AURA lo compara solo cuando no
 tiene comandos de llaveros pendientes para esa puerta; si no coincide, manda una alerta y recarga.
 
-`set_config` de la puerta acepta `pulso_ms` (de 500 al tope de la cerradura) y `aviso_s` (`0` = sin
+`set_config` de la puerta acepta `pulso_ms` (de 500 al tope de la cerradura; 3000 por defecto) y `aviso_s` (`0` = sin
 aviso de puerta abierta; si no, de 5 a 600). El tipo de sensor **no** se cambia por `set_config`: se
 fija al compilar. Para `abrir`, cuando se habilite, `vence` es obligatorio y como mucho 300 s en el
 futuro, y la puerta lo rechaza si no tiene hora válida.
@@ -691,7 +691,8 @@ Tipos especificados. El tipo va en el tópico (`[a-z_]{1,24}`; el raíz no publi
 | `energia` | el nodo pasó a batería o volvió a la red | `alimentacion`: `"bateria"` o `"red"` |
 
 **Alertas de la puerta con llavero (v4.5).** Además de `sensor` (el lector RC522 que no responde,
-`campo: "lector"`), la puerta publica:
+`campo: "lector"`; o el sensor de la puerta, que marca "abierta" sin interrupción por 24 h,
+`campo: "puerta"`, `motivo: "abierta_demasiado_tiempo"`), la puerta publica:
 
 | Tipo | `severity` | Cuándo |
 |---|---|---|
@@ -954,7 +955,7 @@ MAC del medidor. Mientras no se decida, sus mensajes se descartan:
 
 | Versión | Fecha | Cambio |
 |---|---|---|
-| 4.5 | 2026-11-13 | **Propuesta. Puertas con llavero** ([ADR-009](adr/ADR-009-puertas-con-llavero-la-puerta-decide-y-aura-supervisa.md), `aura-firmware` #40 y #42). Compatible: solo agrega. Nuevos: **registros de evento** en `values` (§3.1), estado de solo lectura en `config` (§3.2), comandos **`tarjeta_agregar`**, **`tarjeta_quitar`**, **`tarjetas_vaciar`**, **`estado`** y **`abrir`** con sus motivos, formato del `hash` de la lista (§3.3) y las alertas de la puerta (§3.5). Regla: no se manda `ota` a una puerta armada. Pendiente 24. |
+| 4.5 | 2026-11-13 (ajustada el 2026-11-19) | **Propuesta. Puertas con llavero** ([ADR-009](adr/ADR-009-puertas-con-llavero-la-puerta-decide-y-aura-supervisa.md), `aura-firmware` #40 y #42). Compatible: solo agrega. Nuevos: **registros de evento** en `values` (§3.1), estado de solo lectura en `config` (§3.2), comandos **`tarjeta_agregar`**, **`tarjeta_quitar`**, **`tarjetas_vaciar`**, **`estado`** y **`abrir`** con sus motivos, formato del `hash` de la lista (§3.3) y las alertas de la puerta (§3.5). Regla: no se manda `ota` a una puerta armada. Pendiente 24. |
 | 4.4 | 2026-10-30 | **Propuesta. Seguridad de la actualización por la malla** (revisión de seguridad de la red, etapa 1). **Incompatible solo para quien use `forzar_tipo`**, que se elimina (`forzar_tipo_deshabilitado`). Nuevo comando **`autorizar_concentrador`** y `details.concentrador_autorizado` (§3.2, §3.3): el `rol` que declara una placa es solo un dato y AURA nunca autoriza por él; hasta que AURA autoriza un concentrador, el raíz no acepta los datos de sus hojas. `params.url` pasa a ser `https://`. Las imágenes van **firmadas por la cátedra** y la placa rechaza una sin firma (`imagen_invalida`). Pendiente 23 resuelto en parte (firma sin Secure Boot). |
 | 4.3 | 2026-10-22 | **Propuesta. Actualización por la malla** ([ADR-008](adr/ADR-008-actualizacion-por-la-malla-y-tipo-de-firmware.md), `aura-firmware` #24). Compatible: nada cambia de forma. Nuevos: el comando **`ota`** para cualquier placa de la mesh, incluido el raíz, que solo acepta ese comando para sí mismo (§3.3), con sus motivos de `rechazado` y el significado de cada estado (§3.4); **`details.firmware`** (`tipo` y `versión`) en el `status` de hojas, concentradores y raíz, y `details.ota` en el del raíz mientras actualiza (§3.2). Regla del tipo de firmware: `aura-<uso>`, uno por uso. Pendientes 22 y 23. |
 | 4.2 | 2026-10-21 | **Propuesta.** Nuevo motivo de `offline` en la mesh: `fuera_de_la_malla` (§3.2), además de `sin_tramas`. Compatible si el backend no valida el motivo. Sin otros cambios de formato: el modo isla del concentrador, la trama interna `ESTADO` y las hojas ausentes en la pantalla del aula son internos de la mesh (`aura-firmware/Mesh_Red_Completa/`). |

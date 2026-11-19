@@ -1,6 +1,6 @@
 # ADR-009 — Puertas con llavero de proximidad: la puerta decide sola y AURA supervisa
 
-**Estado:** aceptado · **Fecha:** 2026-11-05, decisiones abiertas cerradas el 2026-11-13 · **Decide:** Matías Wanzenried, a partir del prototipo del PR #40
+**Estado:** aceptado · **Fecha:** 2026-11-05, decisiones abiertas cerradas el 2026-11-13 y ajustadas el 2026-11-19 · **Decide:** Matías Wanzenried, a partir del prototipo del PR #40
 **Sigue a:** [ADR-003](ADR-003-dos-transportes-mesh-interior-lorawan-exterior.md) (la mesh para interior), [ADR-004](ADR-004-mqtt-punto-comun-de-ingesta-con-ack-de-persistencia.md) (`ack` después de guardar), [ADR-005](ADR-005-identidad-por-placa-y-mapeo-en-aura.md) (identidad por placa), [ADR-007](ADR-007-mesh-en-esp-idf-con-concentrador-por-aula.md) (mesh en ESP-IDF) y [ADR-008](ADR-008-actualizacion-por-la-malla-y-tipo-de-firmware.md) (actualización por la malla, imágenes firmadas).
 **Afecta a:** [`docs/CONTRATO_MQTT.md`](../CONTRATO_MQTT.md) (v4.5: comandos de llaveros,
 `estado` y `abrir`, eventos en `values`, alertas de la puerta), el modelo `dispositivos/_modelos/PUE-RFID/` y sus nueve
@@ -39,8 +39,9 @@ Para nueve puertas de oficinas de autoridades hay que decidir:
 
 **1. Un solo estado de reposo: trabada.** La cerradura se energiza solo en un **pulso**, con tope
 de duración (N s, que sale de la hoja de datos de la cerradura; 10 s si no lo dice) y con un límite
-de tiempo energizada por minuto: 10 s de tope, 5 s por defecto, como mucho 20 s energizada en
-60 s. El tope lo corta un temporizador de software (`esp_timer`) que no depende del bucle
+de tiempo energizada por minuto: 10 s de tope, 3 s por defecto, como mucho 20 s energizada en
+60 s (con 3 s entran seis accesos por minuto). El tope y el límite por minuto son **provisorios**
+hasta medir cuánto aguanta energizada la cerradura. El tope lo corta un temporizador de software (`esp_timer`) que no depende del bucle
 principal, respaldado por el watchdog, que reinicia la placa a los 5 s de un cuelgue; no hay un
 corte por hardware. El tope definitivo sale de la hoja de datos de la cerradura (si es de alterna
 o de continua, y cuánto aguanta energizada).
@@ -63,7 +64,8 @@ no entra en 180 B. Entran **32 llaveros** por puerta (`lista_llena` si no hay lu
 La placa informa en su reporte cuántas tarjetas tiene y un hash de la lista (`config.tarjetas` y
 `config.hash`, de solo lectura; el formato del hash está en el contrato). Si no coinciden con lo que
 tiene AURA, y no hay comandos de llaveros pendientes para esa puerta, AURA manda una alerta y la
-**recarga**: `tarjetas_vaciar` y después un `tarjeta_agregar` por llavero. Mientras recarga, la puerta
+**recarga**: `tarjetas_vaciar` y después un `tarjeta_agregar` por cada UID que AURA tiene guardado
+(no hace falta juntar los llaveros: AURA guardó cada UID al enrolarlo). Mientras recarga, la puerta
 no abre con ningún llavero (unos segundos por llavero): se acepta, porque un desfasaje es raro y
 la llave mecánica sigue abriendo.
 **No hay tarjeta maestra:** una lista que se puede cambiar en la puerta deja de coincidir con la de
@@ -139,8 +141,8 @@ El comando `estado` pide un reporte en el momento.
 - **Memoria borrada** (`nvs_flash_erase` al arrancar): la placa arranca con la lista vacía,
   desarmada y sin aula, y lo avisa con una alerta propia; AURA recarga la lista (caso F12).
 - **Corte de luz general:** el raíz y las nueve puertas pasan a `offline` a la vez. AURA lo muestra
-  como **un solo incidente** de raíz caído, no como nueve alertas. Una UPS para el raíz, el
-  concentrador y las placas se evalúa aparte.
+  como **un solo incidente** de raíz caído, no como nueve alertas. Una UPS para el raíz, los
+  concentradores y las placas se evalúa aparte.
 
 **8. Apertura remota deshabilitada al compilar.** `abrir` existe en el contrato, pero el firmware
 lo rechaza hasta que se habilita con una opción de compilación (Kconfig), no con `set_config`.
@@ -160,9 +162,9 @@ latido, alcanza para días de accesos), un reinicio pierde lo que tenía menos d
 y las alertas van por otra cola, de 8. Que la cola priorice eventos sobre otras cosas queda como
 tema de IC4.
 **El registro es un dato personal** (Ley 25.326): un UID asociado a una persona, con fecha y hora.
-Se le consulta a la universidad como tema de datos personales: cuánto tiempo se guarda y qué rol de
-AURA lo ve. Hasta tener la respuesta, la propuesta de 1 año (lo ven el titular de la oficina y
-administración) **no está decidida**. Las debilidades conocidas no se publican en el repositorio
+Se consulta con Sistemas de la UNRaf como tema de datos personales: qué se registra, para qué,
+cuánto tiempo se guarda y quién lo ve. Hasta tener la respuesta, la propuesta de 1 año **no está
+decidida**, y en AURA el registro lo ve **solo el administrador**. Las debilidades conocidas no se publican en el repositorio
 público: van al documento interno.
 
 **10. Un modelo, nueve instalaciones.** El firmware es una hoja de la mesh en ESP-IDF, en
@@ -177,8 +179,9 @@ Por lo mismo, **la puerta no acepta `set_config` con `origen: local`** (el botó
 hace falta una opción en `nodo_mesh`, que es de la cátedra.
 **Otros valores del prototipo que quedan:** ventana de la doble pasada 3 s; la misma tarjeta apoyada
 cuenta una vez cada 700 ms; 5 rechazos en 60 s frenan el lector 30 s; el lector caído reinicia la
-placa a los 5 min. **La alerta de sensor sospechoso** (marca "abierta" por 4 h) se apaga hasta que haya
-horarios: en una oficina abierta todo el día da una alerta falsa por día.
+placa a los 5 min. **El sensor sospechoso** (marca "abierta" sin interrupción) avisa a las **24 h**,
+no a las 4 h del prototipo: con 4 h, una oficina abierta todo el día daba una alerta falsa por día.
+Medirlo fuera del horario requiere horarios (decisión 5).
 
 ## Qué se gana y qué se pierde
 
@@ -201,10 +204,14 @@ horarios: en una oficina abierta todo el día da una alerta falsa por día.
 - **Las debilidades conocidas del hardware y de la mesh.** Su detalle está en un documento interno,
   fuera de este repositorio.
 - **Quién recibe las alertas de intrusión.** Por ahora, solo el dashboard.
-- **La topología de E2-P2**: dónde van el raíz y el concentrador.
+- **La topología de E2-P2.** Lleva un raíz propio (el del LabECA está en otro edificio) y **como
+  mínimo dos concentradores**: el raíz admite 6 hijos, son nueve puertas, y una hoja no retransmite,
+  así que cada puerta tiene que llegar por radio al raíz o a un concentrador. Cuántos y dónde se
+  decide con una medición de señal en el piso. También falta la red de E2 que lleve al raíz hasta
+  el broker.
 - **Dónde va la placa en cada puerta**: cuanto más difícil de alcanzar, más tiempo tiene para avisar.
-- **La retención del registro y quién lo ve**: consulta a la universidad (decisión 9).
-- **Una UPS** para el raíz, el concentrador y las placas.
+- **La retención del registro y quién lo ve**: consulta con Sistemas (decisión 9).
+- **Una UPS** para el raíz, los concentradores y las placas.
 
 ## Disparador de revisión
 
@@ -212,7 +219,8 @@ horarios: en una oficina abierta todo el día da una alerta falsa por día.
 - Cuando IC4 tome los horarios: revisar la decisión 5.
 - Si la mesh da falsas alarmas de puertas armadas sin contacto: revisar la decisión 7.
 - Si cambia la cerradura (otro modelo, que admita trabajo continuo): revisar las decisiones 1 y 2.
-- Cuando responda la universidad sobre el registro: revisar la decisión 9.
+- Cuando responda Sistemas sobre el registro: revisar la decisión 9.
+- Cuando se mida la cerradura: fijar el tope y el límite por minuto (decisión 1).
 
 ---
 
@@ -266,7 +274,7 @@ técnica de esa fuente.
 | F6 | Sin red o sin raíz | Sigue decidiendo con la lista guardada y encola los eventos | Contrato, Rev |
 | F7 | Sin hora | La conserva en reinicios por software; si la pierde, eventos sin `ts` y con contador hasta que el raíz se la vuelve a dar (la pide cada 10 s) | decisión 5 |
 | F8 | Lector RC522 caído | Lo reinicia y manda una alerta `sensor` | PR, Contrato |
-| F9 | Sensor de puerta trabado o cortado | Cableado para que un corte se lea como "abierta" (sensor `reed`). La alerta por "abierta" durante horas queda apagada hasta que haya horarios | derivado de U6 y U10, decisión 10 |
+| F9 | Sensor de puerta trabado o cortado | Cableado para que un corte se lea como "abierta" (sensor `reed`). "Abierta" sin interrupción por 24 h da la alerta `sensor` (`campo: "puerta"`) | derivado de U6 y U10, decisión 10 |
 | F10 | Actualización por la malla | Trabada mientras se reinicia; si la versión nueva falla, vuelve sola a la anterior | Contrato |
 | F11 | Placa nueva | Llega a la cuarentena con la lista vacía: no abre con ningún llavero | Contrato |
 | F12 | Memoria borrada | Arranca vacía, desarmada y sin aula; manda una alerta propia y AURA recarga la lista | decisión 7 |
