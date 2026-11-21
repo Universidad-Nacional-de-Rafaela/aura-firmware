@@ -1,6 +1,8 @@
-# Centralizador Proyecto Aura
+# Mesh_Intermedio_Pantalla — concentrador de aula con pantalla táctil
 
-Firmware para el nodo centralizador con pantalla táctil del Proyecto AURA. Desarrollado en **ESP-IDF v6.1** nativo para microcontroladores **ESP32-S3** (referencia de hardware: Waveshare ESP32-S3-Touch-LCD-7).
+Cumple el mismo rol que [`Mesh3_Intermedio`](../Mesh3_Intermedio/) (concentrador de la capa 2 de la mesh, sin WiFi ni MQTT), con una pantalla táctil de 7" que muestra el estado de las hojas y maneja relés locales. Hardware: Waveshare ESP32-S3-Touch-LCD-7 (flash 8 MB, PSRAM 8 MB). Desarrollado en **ESP-IDF v6.2**.
+
+Grupo: @maxirios, @agustin-arg.
 
 ---
 
@@ -34,7 +36,7 @@ El centralizador se conecta a la malla mediante credenciales compartidas con el 
 - **Contraseña del AP Mesh (MESH_AP_PASS):** Clave WPA2 utilizada para la comunicación inter-nodo.
 - **Aula asignada:** Identificador de aula para filtrar hojas (ej. `aula1`).
 
-Estos parámetros se configuran de forma segura mediante `main/config_local.h` o interactivamente:
+Copiar `main/config_local.ejemplo.h` como `main/config_local.h` (no se versiona) y completarlo con los mismos valores que el gateway y las hojas. Estos parámetros se configuran de forma segura mediante `main/config_local.h` o interactivamente:
 
 ```bash
 idf.py menuconfig
@@ -58,6 +60,8 @@ idf.py build
 
 Conecta el microcontrolador a tu computadora:
 
+> La primera vez, o si cambió la tabla de particiones, borrar la flash antes: `idf.py -p /dev/ttyACM0 erase-flash`.
+
 #### Flashear el firmware:
 
 ```bash
@@ -77,3 +81,7 @@ idf.py -p /dev/ttyACM0 flash monitor
 ```
 
 > **Tip**: Para salir del monitor serie, presiona `Ctrl + ]`.
+
+---
+
+**OTA por la mesh:** las particiones (`ota_0`/`ota_1`), el rollback y la verificación de firma están igual que en `Mesh3_Intermedio`. El receptor `aura_ota` viene en un PR siguiente; hasta entonces se actualiza por USB.
