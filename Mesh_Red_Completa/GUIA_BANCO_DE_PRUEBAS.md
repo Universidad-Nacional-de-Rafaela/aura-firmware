@@ -1,31 +1,30 @@
 # Guía del banco de pruebas: gateway, concentrador y tablero propios
 
-> **Borrador para revisión de la cátedra.** No es una versión final. Las decisiones de planteo están al final, en «Decisiones para revisar», para que se puedan comentar una por una.
-
-Última actualización: 17/11/2026.
-
 ## Para la IA que acompaña a un grupo
 
-Esta guía es el paso 0 de `GUIA_HOJAS_NUEVAS.md` (en el PR #67): el grupo arma su banco antes de desarrollar y probar su hoja. Valen las mismas reglas de esa guía (orden, evidencia, credenciales y claves, repo como fuente de verdad), y dos más:
+Esta guía es el paso 0 de [`GUIA_HOJAS_NUEVAS.md`](GUIA_HOJAS_NUEVAS.md): el grupo arma y valida su banco antes de desarrollar y probar su hoja. Valen las mismas reglas de esa guía (orden, evidencia, credenciales y claves, repo como fuente de verdad), y dos más:
 
 1. **Las placas del banco nunca van a producción.** Están firmadas con la clave de prueba del grupo y llevan sus datos de mesh. Una placa para la instalación la compila, la firma y la graba siempre la cátedra.
 2. **En el banco no se usan datos ni redes de producción:** ni las credenciales de la red final, ni el broker de AURA. Y el banco nunca se conecta a la red de producción, aunque esté al alcance.
 
 ## Para qué sirve
 
-Cada grupo arma su propio banco: un gateway y un concentrador con placas del laboratorio, su hoja, y `broker.py` con el tablero en su notebook, todo sobre la red del banco, que no es la de producción. Con eso prueba su hoja de punta a punta antes del PR. No es producción: para eso está el paso 7 de `GUIA_HOJAS_NUEVAS.md`.
+Cada grupo arma su propio banco: un gateway y un concentrador con placas que presta la cátedra, y `broker.py` con el tablero en su notebook, todo sobre la red del banco, que no es la de producción. El banco se valida una vez con la hoja de ejemplo de la cátedra (`Mesh3_Hoja`), así no depende de la hoja del grupo, que se arma recién en los pasos 1 a 4 de `GUIA_HOJAS_NUEVAS.md`. No es producción: para eso está el paso 7 de esa guía.
 
 ## Qué se necesita
 
-| Rol | Placa del laboratorio | Cómo reconocerla |
+| Rol | Placa | Cómo reconocerla |
 | --- | --- | --- |
 | Gateway | ESP32-S3 con módulo **WROOM-2** y flash **octal de 32 MB** (Waveshare ESP32-S3-DEV-KIT, WROOM-2) | El módulo lleva impreso un modelo `N32R…`. `python -m esptool -p COMx flash-id` informa 32 MB, y el monitor muestra `Octal Flash Mode Enabled` |
 | Concentrador | ESP32-S3 con módulo **WROOM-1** y flash de 16 MB (Waveshare ESP32-S3-DEV-KIT, WROOM-1) | El módulo lleva impreso un modelo `N16R…`, y `flash-id` informa 16 MB |
-| Hoja | La del dispositivo del grupo | — |
+| Hoja de ejemplo | ESP32-C3 SuperMini, con `Mesh3_Hoja` tal cual: manda datos simulados, así que no necesita sensores | — |
 
-Además: una notebook con ESP-IDF 6.1 y Python 3, el nombre y la clave de la red del banco (los pasa la cátedra en persona) y el fork del repo actualizado con `main`.
+Además: una notebook con ESP-IDF 6.1 y Python 3, el fork del repo actualizado con `main`, y **la red del banco (2,4 GHz, con internet y sin aislamiento de clientes)**. El nombre y la clave los pasa la cátedra en persona.
 
-El gateway no arranca en una placa de 16 MB: su `sdkconfig.defaults` fija la flash octal de 32 MB. Adaptarlo sería modificar código de la cátedra; si no hay placas WROOM-2 disponibles, hay que consultarlo.
+- **Con internet,** porque el gateway saca la hora por SNTP (`pool.ntp.org`), y sin hora las mediciones no llevan `ts`, que las pruebas de la hoja exigen.
+- **De 2,4 GHz y sin aislamiento de clientes,** porque el gateway encuentra a `broker.py` por broadcast en esa red, y después se conecta a la notebook.
+
+El gateway no arranca en una placa sin flash octal: su `sdkconfig.defaults` fija la flash octal de 32 MB, y el arranque se frena con `Octal Flash option selected, but EFUSE not configured!`. Adaptarlo sería modificar código de la cátedra; si no hay placas WROOM-2 disponibles, hay que consultarlo.
 
 ## Paso 1: la identidad del banco
 
@@ -35,7 +34,14 @@ El gateway no arranca en una placa de 16 MB: su `sdkconfig.defaults` fija la fla
     python -c "import secrets; print(', '.join(f'0x{b:02X}' for b in secrets.token_bytes(6))); print(secrets.token_urlsafe(18))"
     ```
 
-    La primera línea es el `MESH_ID_BYTES`, y la segunda, la `MESH_AP_PASS`. Van en un `config_local.h` que se arma una vez y **se copia igual** a las tres placas: tipearlo tres veces es la forma más fácil de equivocarse.
+    Van en un `config_local.h` que se arma una vez, copiando la plantilla `main\config_local.ejemplo.h` de cualquiera de los proyectos. La primera línea del comando es el `MESH_ID_BYTES`, y la segunda, la `MESH_AP_PASS`, que va entre comillas:
+
+    ```
+    #define MESH_ID_BYTES   <primera línea>
+    #define MESH_AP_PASS    "<segunda línea>"
+    ```
+
+    Ese mismo archivo **se copia igual** a todas las placas del banco: tipearlo en cada una es la forma más fácil de equivocarse.
 2. **La clave de firma de prueba del grupo:** la misma de `GUIA_HOJAS_NUEVAS.md`, paso 3.
 3. **Una etiqueta en cada placa del banco**, por ejemplo «BANCO – grupo X – no instalar».
 
@@ -72,7 +78,7 @@ idf.py -p COMx erase-flash
 idf.py -p COMx flash monitor
 ```
 
-En el monitor tienen que aparecer la conexión a la red del banco y la hora de internet. El broker lo encuentra cuando esté corriendo `broker.py` (paso 4).
+En el monitor tienen que aparecer la conexión a la red del banco y la hora de internet. Hasta que corra `broker.py` (paso 4), es normal ver `No encuentro el broker`.
 
 ## Paso 3: el concentrador
 
@@ -93,61 +99,52 @@ En el monitor del gateway tienen que aparecer `Hijo conectado` y `total en la ma
 
 En `Mesh_Red_Completa\Broker_MQTT`:
 
-1. **Una sola vez, como administrador:** permitir `python.exe` en las redes privadas del firewall.
+1. **Una sola vez, como administrador:** permitir `python.exe` en las redes privadas del firewall. Además, Windows tiene que tener **la red del banco marcada como Privada**: si está como Pública, esa regla no se aplica (ver `Broker_MQTT/LEEME.md`).
 2. **Que no haya un Mosquitto instalado como servicio:** `Get-NetTCPConnection -LocalPort 1883 -State Listen` no tiene que mostrar nada.
 3. **Con `broker.py` apagado,** `python buscar_brokers.py`: no tiene que contestar ninguna otra computadora. Si contesta otra, el gateway se podría conectar a ese broker.
 4. **`python broker.py`, sin `--usuario` ni `--clave`** (a un broker descubierto, el gateway nunca le manda credenciales), y abrir **http://localhost:8080**.
 
-El gateway lo encuentra solo. En su monitor, la dirección del broker tiene que ser la IP de la notebook (`ipconfig`).
+## Paso 5: validar el banco con la hoja de ejemplo
 
-## Paso 5: autorizar el concentrador y asignar las aulas
+El banco se valida una vez, con la hoja de ejemplo de la cátedra tal cual, en el orden en que pasan las cosas. Estas cuatro pruebas validan el banco: no van en el informe de cada hoja, que lleva las 9 pruebas de `GUIA_HOJAS_NUEVAS.md`.
 
-1. En el tablero, **«Autorizar concentrador»**. El texto «autorizado» puede tardar hasta un minuto en actualizarse.
-2. **Asignarle un aula al concentrador**, en minúsculas (solo `a-z`, `0-9`, `-` y `_`), por ejemplo `aula1`.
-3. **Grabar la hoja** con la clave de prueba y el mismo `config_local.h` (`GUIA_HOJAS_NUEVAS.md`, paso 4), y asignarle la misma aula.
+1. **B1, el gateway con el broker.** Con `broker.py` corriendo, el gateway lo encuentra solo. En su monitor aparecen `Broker: mqtt://<IP>:1883`, con la IP de la notebook (`ipconfig`), y después `MQTT conectado como mac-…`. En el tablero, el gateway queda en línea.
+2. **B2, la hoja sin aula.** En `Mesh_Red_Completa\Mesh3_Hoja`, sin tocar el código, grabar la hoja de ejemplo con el `config_local.h` del paso 1 y la clave de prueba:
 
-## Paso 6: las pruebas del banco
+    ```
+    copy <el config_local.h del paso 1> main\config_local.h
+    idf.py set-target esp32c3
+    idf.py build
+    python ..\Broker_MQTT\firmar.py --clave C:\aura-claves\firma_prueba.pem build\aura-hoja-ejemplo.bin
+    idf.py -p COMx erase-flash
+    idf.py -p COMx flash monitor
+    ```
 
-Primero, estas cuatro, que validan el banco antes de probar la hoja:
+    Arranca sin aula y se cuelga directo del gateway (`envío directo`), y sus mediciones se confirman (`persistido`).
+3. **B3, el concentrador sin autorizar.** En el tablero, asignarles la misma aula al concentrador y a la hoja, sin autorizar el concentrador. El aula va en minúsculas, solo con `a-z`, `0-9`, `-` y `_`, y hasta 15 caracteres; por ejemplo, `aula1`. La hoja pasa al concentrador, el gateway descarta sus lotes (`LOTE de … que no es un concentrador autorizado: se descarta`), y la hoja acumula mediciones pendientes.
+4. **B4, autorizar.** En el tablero, «Autorizar concentrador»: `aplicado`, el gateway acepta los lotes y llegan las mediciones pendientes. La hoja puede tardar hasta unos 7,5 min en reintentar, y reiniciarla acorta la espera. El texto «autorizado» del tablero puede tardar hasta un minuto en actualizarse.
 
-| N.º | Prueba | Cómo | Resultado esperado |
-| --- | --- | --- | --- |
-| B1 | Gateway | Encenderlo con `broker.py` corriendo | En su monitor: la conexión a la red del banco, la hora de internet y `MQTT conectado`, con la IP de la notebook. En el tablero, el gateway en línea |
-| B2 | Concentrador sin autorizar | Antes de autorizarlo, encender la hoja con el aula del concentrador | El gateway descarta los lotes (`LOTE de … que no es un concentrador autorizado: se descarta`), y la hoja acumula mediciones pendientes |
-| B3 | Autorizar | «Autorizar concentrador» en el tablero | `aplicado`, el gateway acepta los lotes y llegan las mediciones pendientes. La hoja puede tardar hasta unos 7,5 min en reintentar; reiniciarla acorta la espera |
-| B4 | Hoja sin aula | Encender la hoja sin aula asignada | Se cuelga directo del gateway (`envío directo`), y sus mediciones se confirman |
+## Paso 6: la hoja del grupo
 
-Después, las 9 pruebas de `GUIA_HOJAS_NUEVAS.md`, paso 5. El informe de pruebas de la hoja incluye también estas cuatro.
+Con el banco validado, volvé a [`GUIA_HOJAS_NUEVAS.md`](GUIA_HOJAS_NUEVAS.md), paso 1. La hoja de ejemplo ya no hace falta: las 9 pruebas se hacen con la hoja del grupo, en este mismo banco.
 
-## Paso 7: al terminar
+## Cuando ya no se use el banco
 
 - **No dejar el banco encendido** cuando no se usa.
-- **Al devolver las placas al laboratorio,** `idf.py -p COMx erase-flash` del gateway y del concentrador, y sacarles la etiqueta. Así el siguiente grupo arranca limpio, y no quedan en las placas ni los datos de mesh ni una imagen firmada con una clave de prueba.
-- **Siguiente:** `GUIA_HOJAS_NUEVAS.md`, pasos 6 y 7 (el conector, el PR y la habilitación).
+- **Al devolver las placas,** `idf.py -p COMx erase-flash` del gateway, del concentrador y de la hoja de ejemplo, y sacarles la etiqueta. Así el siguiente grupo arranca limpio, y no quedan en las placas ni los datos de mesh ni una imagen firmada con una clave de prueba.
 
 ## Errores comunes
 
 | Síntoma | Causa | Solución |
 | --- | --- | --- |
-| El gateway no arranca, con errores de flash al iniciar | La placa no tiene flash octal de 32 MB | Usar una placa WROOM-2 de 32 MB |
+| El gateway no arranca: `Octal Flash option selected, but EFUSE not configured!` | La placa no tiene flash octal | Usar una placa WROOM-2 de 32 MB |
+| El gateway muestra `No encuentro el broker` | `broker.py` no está corriendo, la red está marcada como Pública, o el firewall bloquea a `python.exe` | Arrancar `broker.py`, marcar la red como Privada y revisar el firewall (paso 4) |
+| Las mediciones llegan sin `ts` | La red del banco no tiene internet, y el gateway no consigue la hora | Usar una red con internet |
 | El gateway descarta los lotes del concentrador | El concentrador no está autorizado | «Autorizar concentrador» en el tablero |
-| Una placa no entra a la malla | `config_local.h` con los valores de la plantilla, o distinto del de las otras placas | Copiar el mismo archivo en las tres, y recompilar |
+| El aula queda `rechazado` (`aula_invalida`) | Tiene mayúsculas, otros caracteres, o más de 15 | Solo `a-z`, `0-9`, `-` y `_`, hasta 15 caracteres |
+| Una placa no entra a la malla | `config_local.h` con los valores de la plantilla, o distinto del de las otras placas | Copiar el mismo archivo en todas, y recompilar |
 | Aparecen en el tablero placas que no son del grupo | Placas de otro banco con los mismos datos de mesh | Generar datos de mesh propios (paso 1) |
 | El gateway se conectó al broker de otra computadora | Otro `broker.py` contestó el broadcast | `buscar_brokers.py` con `broker.py` apagado; apagar el otro broker, o fijar `BROKER_URI` con la IP de la notebook |
-| Al cambiar de red, el gateway tarda unos 30 s en encontrar el broker | Guarda el último broker según la posición de la red en `REDES_WIFI`, y no según su nombre (error conocido) | Se recupera solo; con `erase-flash` arranca sin el broker viejo |
 | El tablero muestra placas viejas como offline, o el concentrador arranca con un aula vieja | Se grabó sin `erase-flash`, o `broker.py` conserva estados anteriores | `erase-flash` antes de grabar, y reiniciar `broker.py` |
 | `ota.py` o `mandar_comando.py` se quedan esperando sin error | Un Mosquitto instalado como servicio ocupa el puerto 1883 | `--broker <IP de la notebook>`, o detener el servicio |
 | La hoja está viva pero aparece `offline`, con los pendientes subiendo | Espera hasta unos 7,5 min para reintentar después de un corte | Esperar, o reiniciarla |
-
-## Decisiones para revisar
-
-1. **Cada grupo arma su propio gateway y concentrador, con placas del laboratorio.** Por qué: unas placas compartidas no se pueden identificar ni guardar por separado, y así cada grupo es dueño de su banco de punta a punta. Alternativa descartada: un banco compartido de la cátedra, en el que cada grupo solo graba su hoja.
-2. **El gateway y el concentrador se compilan desde `main` sin tocar el código;** solo se completan `credenciales.h` y `config_local.h`. Por qué: ese código es el mismo para todos los grupos, que solo desarrollan su hoja. Un cambio ahí va en un issue o en un PR a la cátedra.
-3. **Cada grupo genera sus propios datos de mesh, al azar.** Por qué: unas placas que quedan encendidas con los mismos datos se meten en mallas ajenas. Nos pasó: la cerradura y el sensor de CO₂ de otros grupos entraron a nuestra malla. Alternativa descartada: una red de pruebas común de la cátedra, más simple, pero que mezcla las placas de todos.
-4. **Cada grupo usa su propia clave de prueba, y las placas del banco se etiquetan.** Por qué: la separación entre banco y producción también tiene que ser física.
-5. **El banco usa la red del banco, aparte de la de producción,** para que una placa o un `broker.py` de prueba no puedan cruzarse con la instalación. Alternativa considerada y descartada: el punto de acceso del celular, con un nombre y una clave comunes para todos los grupos. Funciona, pero suma configuración y casos especiales (la banda de 2,4 GHz y los celulares que aíslan a sus clientes).
-6. **El gateway encuentra el broker por descubrimiento (`DESCUBRIR_BROKER 1`), verificando antes con `buscar_brokers.py`.** Por qué: las pruebas de los grupos no son simultáneas, y la IP de la notebook puede cambiar. Es una propuesta: la alternativa es fijar `BROKER_URI` con la IP de la notebook, que evita conectarse a otro broker, pero obliga a recompilar el gateway si la IP cambia.
-7. **En el banco, `OTA_PERMITIR_HTTP` va en 1, y HTTPS es opcional.** Por qué: las pruebas obligatorias de la hoja no dependen de HTTPS, que es responsabilidad del gateway y del servidor. Quien quiera probarlo tiene el procedimiento en el informe de HTTPS de E1-PB-LECA-TAB01.
-8. **`erase-flash` al armar el banco y al devolver las placas.** Por qué: la memoria de la placa conserva el aula, las autorizaciones, los nodos conocidos y el último broker. Al devolverlas borradas, el siguiente grupo arranca limpio, y no quedan datos de mesh ni una imagen firmada con una clave de prueba.
-9. **Las pruebas son las 9 de la guía de hojas, más 4 del banco (B1 a B4).** Por qué: las del banco validan la infraestructura antes de culpar a la hoja de un problema que no es suyo.
-10. **Va en un PR aparte del #67, con las dos guías enlazadas como un par:** esta es el paso 0 de la guía de hojas. Por qué: cada guía y cada revisión quedan más cortas.
