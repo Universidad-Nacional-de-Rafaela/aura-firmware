@@ -40,4 +40,8 @@ CONFIG_LV_FONT_MONTSERRAT_28=y
 CONFIG_LV_USE_CLIB_MALLOC=y
 # CONFIG_LV_USE_BUILTIN_MALLOC is not set
 
-
+# OTA por la mesh (igual que Mesh3_Intermedio)
+# Vuelta atrás: una versión nueva que no se confirma vuelve sola a la anterior
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+# La verificación de firma (CONFIG_SECURE_SIGNED_*) se agrega junto con el receptor aura_ota:
+# con ella activa, la placa no arranca con una imagen sin firmar.
