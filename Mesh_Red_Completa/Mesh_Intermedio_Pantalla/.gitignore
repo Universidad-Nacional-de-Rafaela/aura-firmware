@@ -10,7 +10,6 @@ sdkconfig.*
 sdkconfig.defaults.*
 
 # Component manager
-dependencies.lock
 managed_components/
 
 # Editor and language server configuration
