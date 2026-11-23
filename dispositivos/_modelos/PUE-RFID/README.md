@@ -13,7 +13,7 @@ va por `set_config` y por la lista de llaveros que carga AURA. Las instalaciones
 | | |
 |---|---|
 | **Tipo de firmware** | `aura-puerta-rfid` ([ADR-008](../../docs/adr/ADR-008-actualizacion-por-la-malla-y-tipo-de-firmware.md)) |
-| **Versión** | 0.1.0 (`PROJECT_VER` en [`CMakeLists.txt`](CMakeLists.txt)) |
+| **Versión** | 0.2.0 (`PROJECT_VER` en [`CMakeLists.txt`](CMakeLists.txt)) |
 | **Responsable** | losHijosDelStackOverFlow (IC IV 2026) |
 | **Estado** | compila y tiene tests de host; **sin probar en placa ni en la mesh** |
 | **Contrato** | [`CONTRATO_MQTT.md`](../../docs/CONTRATO_MQTT.md) v4.5 (copia; la normativa está en `aura-app`): comandos `tarjeta_agregar`, `tarjeta_quitar`, `tarjetas_vaciar`, `estado` y `abrir`, eventos, hash de la lista y alertas de la puerta |
@@ -59,8 +59,8 @@ La cerradura queda **trabada en reposo**. Se destraba solo con un **pulso** de c
 | U9 Desarmar | **Una pasada** desarma y abre. Si se armó sin querer, la tercera pasada lo corrige. Con la sirena sonando, el llavero **corta la sirena y desarma** (la puerta ya está abierta, así que no da pulso) |
 | U10 Intrusión | Armada, la puerta se abre sin desarmar: **la alerta `critical` es lo primero que sale**, luego el aviso local (tope 2 min) y el registro; al cerrarse, alerta `info`. Sigue armada |
 | U11 Arranca armada y abierta | Alerta `arranque_puerta_abierta`, sin sonido |
-| U12 Corte de luz | Al volver la energía (arranque en frío o caída de tensión), alerta `energia` `info` con `volvio_la_energia`: queda constancia del corte aunque se haya entrado con la llave |
-| U13 Memoria borrada | Si la placa arranca con la NVS borrada (lista vacía, desarmada y sin aula), alerta `memoria_borrada` `high`; AURA recarga la lista |
+| U12 Corte de luz | Al volver la energía (solo arranque en frío, `ESP_RST_POWERON`), alerta `energia` `info` con `details.motivo: "volvio_la_energia"` y `alimentacion: "red"`: queda constancia del corte aunque se haya entrado con la llave. Una caída de tensión (`ESP_RST_BROWNOUT`) **no** cuenta: puede ser una fuente floja o el relé tirando de la misma alimentación, y una falla de hardware no debe figurar como "volvió la energía" |
+| U13 Memoria borrada | Si `nvs_flash_init` tuvo que borrar la NVS (lista vacía, desarmada y sin aula), alerta `memoria_borrada` `high`, sin `details`; AURA recarga la lista. Con la flash recién borrada a mano `nvs_flash_init` devuelve OK y la alerta no sale |
 
 Tiempos fijos: doble pasada 3 s, tope del aviso 2 min, tope del pulso **10 s**, límite de **20 s
 energizada por cada minuto** (los dos quedan así hasta medir cuánto aguanta la cerradura). Armada, el
@@ -97,7 +97,7 @@ no coinciden, alerta y recarga con `tarjetas_vaciar` (A3).
 
 **Alertas** (`hw/<hw_id>/alerts/<tipo>`): `intrusion` (critical), `puerta_abierta` (warning),
 `puerta_cerrada` (info), `intentos_rechazados` (high), `limite_pulsos` (warning),
-`arranque_puerta_abierta` (high), `memoria_borrada` (high), `energia` (info, con `volvio_la_energia`) y, de la
+`arranque_puerta_abierta` (high), `memoria_borrada` (high), `energia` (info, con `motivo: "volvio_la_energia"`) y, de la
 biblioteca, `sensor` con `campo` `lector` o `puerta` (`puerta`: abierta 24 h sin interrupción).
 
 ### Hash de la lista

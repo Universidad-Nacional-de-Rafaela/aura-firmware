@@ -323,22 +323,6 @@ static inline void puerta_sensor(puerta_t *p, int64_t ahora_ms, bool abierta)
     p_callar_aviso_abierta(p);
 }
 
-/* Cambio el TIPO de sensor (set_config): la lectura nueva es como se ve la puerta ahora, no un
-   movimiento de la puerta. Se toma como estado sin eventos ni alertas (una armada que "pasa a
-   abierta" por reinterpretar el pin no es una intrusion). */
-static inline void puerta_sensor_resincronizar(puerta_t *p, int64_t ahora_ms, bool abierta)
-{
-    if (abierta == p->abierta) return;
-    p->abierta = abierta;
-    p->abierta_desde_ms = ahora_ms;
-    if (abierta && !p->armada) {
-        p_programar_aviso_abierta(p, ahora_ms);
-    } else if (!abierta) {
-        p_callar_aviso_abierta(p);
-        p->aviso_alertado = false;
-    }
-}
-
 /* ---------- tarjeta ---------- */
 static inline void p_registrar_rechazo(puerta_t *p, int64_t ahora_ms)
 {

@@ -361,7 +361,7 @@ static void ejecutar_acciones(void)
             break;
         case ACC_REPORTAR:
             /* el intervalo_s del reporte tiene que ser el de ahora (armada o no), no el anterior */
-            latido_al_reportar(&latido, &puerta);
+            latido_al_reportar(&latido, &puerta, ahora_ms());
             nodo_mesh_reportar();
             break;
         }
@@ -404,17 +404,9 @@ static void tarea_puerta(void *arg)
         puerta.pulso_ms = k.pulso_ms;
         puerta.aviso_s = k.aviso_s;
         bool abierta;
-        switch (sensor_filtro_paso(&sensor, ahora, SENSOR_TIPO, gpio_get_level(PIN_SENSOR), &abierta)) {
-        case SENSOR_CAMBIO:
+        if (sensor_filtro_paso(&sensor, ahora, gpio_get_level(PIN_SENSOR), &abierta) == SENSOR_CAMBIO) {
             ESP_LOGI(TAG, "Puerta %s", abierta ? "ABIERTA" : "cerrada");
             puerta_sensor(&puerta, ahora, abierta);
-            break;
-        case SENSOR_RESINCRONIZADO:
-            /* No pasa: el tipo de sensor es fijo y el filtro solo resincroniza si cambia */
-            puerta_sensor_resincronizar(&puerta, ahora, abierta);
-            break;
-        case SENSOR_IGUAL:
-            break;
         }
         ejecutar_acciones();
 
@@ -602,15 +594,16 @@ void app_main(void)
         nodo_mesh_alerta("memoria_borrada", "high",
                          "Arranco con la memoria borrada: lista de llaveros vacia, desarmada y sin aula", NULL);
     }
-    /* Un corte de luz deja la puerta trabada y, sin esto, sin constancia (ADR-009, F1). Un reinicio
-       por software, por cuelgue o por OTA no cuenta: solo el arranque en frio o la caida de tension. */
-    esp_reset_reason_t causa = esp_reset_reason();
-    if (causa == ESP_RST_POWERON || causa == ESP_RST_BROWNOUT) {
+    /* Un corte de luz deja la puerta trabada y, sin esto, sin constancia (ADR-009, F1). Solo cuenta
+       el arranque en frio (ESP_RST_POWERON): un reinicio por software, por cuelgue o por OTA no, y
+       tampoco una caida de tension (ESP_RST_BROWNOUT), que puede ser una fuente floja o el rele
+       tirando de la misma alimentacion: una falla de hardware no debe figurar como "volvio la energia". */
+    if (esp_reset_reason() == ESP_RST_POWERON) {
         cJSON *det = cJSON_CreateObject();
         if (det != NULL) {
+            cJSON_AddStringToObject(det, "motivo", "volvio_la_energia");
             cJSON_AddStringToObject(det, "alimentacion", "red");
-            cJSON_AddBoolToObject(det, "volvio_la_energia", true);
-            ESP_LOGW(TAG, "ALERTA energia: volvio la energia (%s)", causa == ESP_RST_BROWNOUT ? "caida de tension" : "arranque en frio");
+            ESP_LOGW(TAG, "ALERTA energia: volvio la energia (arranque en frio)");
             nodo_mesh_alerta("energia", "info", "La placa arranco: volvio la energia", det);
             cJSON_Delete(det);
         }

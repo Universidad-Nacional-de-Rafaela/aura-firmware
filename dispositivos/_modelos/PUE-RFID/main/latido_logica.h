@@ -45,11 +45,13 @@ static inline void latido_sincronizar(latido_t *l, const puerta_t *p)
     }
 }
 
-/* Ejecutando ACC_REPORTAR: devuelve el intervalo_s que va a salir en el reporte. */
-static inline int latido_al_reportar(latido_t *l, const puerta_t *p)
+/* Ejecutando ACC_REPORTAR: devuelve el intervalo_s que va a salir en el reporte. Ese reporte ya es
+   el latido de ahora: se reprograma el proximo y no se pide otro en la misma vuelta del lazo. */
+static inline int latido_al_reportar(latido_t *l, const puerta_t *p, int64_t ahora_ms)
 {
     latido_sincronizar(l, p);
-    l->latir_ya = true;
+    l->latir_ya = false;
+    l->proximo_ms = ahora_ms + (int64_t)l->intervalo_s * 1000;
     return l->intervalo_s;
 }
 

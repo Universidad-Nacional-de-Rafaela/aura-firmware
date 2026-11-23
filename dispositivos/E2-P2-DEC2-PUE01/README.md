@@ -24,7 +24,7 @@ El firmware, el hardware, lo que envía, el `set_config` y los comandos están e
 |---|---|
 | **`hw_id` de la placa** | a completar al instalarla (`mac-…`) |
 | **Aula en la mesh** | a definir con la cátedra (topología de E2-P2 sin decidir) |
-| **Sensor de la puerta** | `reed` (por defecto); a confirmar al instalar |
+| **Sensor de la puerta** | `reed` |
 | **`pulso_ms` / `aviso_s`** | por defecto (3000 ms / 15 s); se ajusta con `set_config` y se anota acá |
 | **Llaveros habilitados** | los administra AURA (`tarjeta_agregar` / `tarjeta_quitar`) |
 | **Dónde va la placa** | a decidir: cuanto más difícil de alcanzar, más tiempo tiene para avisar |
