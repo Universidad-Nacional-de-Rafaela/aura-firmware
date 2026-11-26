@@ -1,11 +1,40 @@
 # ADR-009 — Puertas con llavero de proximidad: la puerta decide sola y AURA supervisa
 
-**Estado:** aceptado · **Fecha:** 2026-11-05, decisiones abiertas cerradas el 2026-11-13 y ajustadas el 2026-11-19 · **Decide:** Matías Wanzenried, a partir del prototipo del PR #40
+**Estado:** aceptado · **Fecha:** 2026-11-05, decisiones abiertas cerradas el 2026-11-13 y ajustadas el 2026-11-19; **etapa transitoria sin conexión desde el 2026-11-26** (ver abajo) · **Decide:** Matías Wanzenried, a partir del prototipo del PR #40
 **Sigue a:** [ADR-003](ADR-003-dos-transportes-mesh-interior-lorawan-exterior.md) (la mesh para interior), [ADR-004](ADR-004-mqtt-punto-comun-de-ingesta-con-ack-de-persistencia.md) (`ack` después de guardar), [ADR-005](ADR-005-identidad-por-placa-y-mapeo-en-aura.md) (identidad por placa), [ADR-007](ADR-007-mesh-en-esp-idf-con-concentrador-por-aula.md) (mesh en ESP-IDF) y [ADR-008](ADR-008-actualizacion-por-la-malla-y-tipo-de-firmware.md) (actualización por la malla, imágenes firmadas).
 **Afecta a:** [`docs/CONTRATO_MQTT.md`](../CONTRATO_MQTT.md) (v4.5: comandos de llaveros,
 `estado` y `abrir`, eventos en `values`, alertas de la puerta), el modelo `dispositivos/_modelos/PUE-RFID/` y sus nueve
 instalaciones `E2-P2-*-PUE01`, y la plataforma (registro de ingresos, administración de llaveros y
 supervisión de las puertas armadas).
+
+## Etapa transitoria: puertas sin conexión (desde el 2026-11-26)
+
+Hasta acordar con el área de Sistemas de la UNRaf cómo se van a mantener las puertas, quién accede a
+sus datos y cómo entran a la red de la universidad, las puertas de E2-P2 se instalan **sin conexión
+a AURA**. Es temporal: cuando se acuerde, se regraban con la versión conectada, que es la que
+describe el resto de este ADR.
+
+- **Sin radio.** Con una opción al compilar del modelo PUE-RFID, `CONFIG_PUERTA_INDEPENDIENTE` (en
+  desarrollo), la puerta no se une a la malla y no sale ningún dato de la placa. Con la opción
+  apagada, que es el valor por defecto, la puerta es la de este ADR.
+- **Los llaveros se cargan al grabar el firmware.** Cada puerta se compila con su lista, en un
+  archivo por puerta que no se sube a ningún repositorio: `aura-firmware` es público, y un UID
+  asociado a una persona es un dato personal (decisión 9). Los UIDs se leen con el lector de banco (decisión 4) y la lista
+  de cada puerta la guarda la cátedra. Cambiar un llavero es recompilar y regrabar esa puerta por
+  USB.
+- **Sin registro de ingresos, sin armado y sin intrusión.** Un llavero de la lista abre con el pulso
+  de siempre y la cerradura se vuelve a trabar sola. Si la puerta queda abierta, suena un pitido en
+  la placa.
+- **Queda igual** lo que protege la cerradura (decisiones 1 y 2): el tope y el límite por minuto
+  del pulso, el corte por temporizador, el watchdog y ningún modo de puerta abierta.
+- **Al regrabar**, AURA carga la lista con `tarjetas_vaciar` y un `tarjeta_agregar` por UID, desde
+  las mismas listas. Antes se hace en la malla la prueba que quedó pendiente al mergear el
+  `aura-firmware` #85.
+
+Mientras dure, quedan sin efecto las decisiones 3 (AURA como fuente de verdad de los llaveros), 6
+(armado), 7 (supervisión), 9 (registro de ingresos) y 10 en lo que toca a la mesh. **Se pierde:** el
+registro de ingresos; la supervisión, porque nadie se entera de una puerta forzada o de una placa
+caída; y la administración de los llaveros a distancia.
 
 ## El problema
 
@@ -215,6 +244,8 @@ Medirlo fuera del horario requiere horarios (decisión 5).
 
 ## Disparador de revisión
 
+- Cuando se acuerde con Sistemas cómo se trabaja: terminar la etapa transitoria y regrabar las
+  puertas con la versión conectada.
 - Cuando esté la etapa 2 de seguridad de la mesh: revisar la decisión 8.
 - Cuando IC4 tome los horarios: revisar la decisión 5.
 - Si la mesh da falsas alarmas de puertas armadas sin contacto: revisar la decisión 7.
