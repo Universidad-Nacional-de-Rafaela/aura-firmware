@@ -17,6 +17,11 @@ Mide la distancia del sensor a la superficie del agua en cada uno de los dos tan
 terraza, con una sola placa (contrato §2.4). El nodo manda solo esa distancia; el porcentaje y los
 litros los calcula el conector en AURA con las medidas de cada tanque.
 
+Cada distancia es la **mediana de 5 lecturas seguidas**, con 60 ms entre una y otra: un eco falso
+suelto (se vieron picos de unos 47 cm en el tanque 1) queda en un extremo y no llega a ser el valor
+que se manda. Las lecturas sin eco o fuera de rango se descartan; si de un tanque quedan menos de 3
+buenas, ese campo no se manda (`0xFFFF`), igual que con un sensor que no responde.
+
 ## Hardware
 
 | Componente | Modelo | Conexión |
