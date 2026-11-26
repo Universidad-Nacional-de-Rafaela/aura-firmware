@@ -6,3 +6,4 @@ test_latido
 test_sensor
 test_lector
 test_config
+test_autenticacion

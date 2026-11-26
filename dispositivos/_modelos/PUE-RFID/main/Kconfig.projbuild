@@ -24,4 +24,26 @@ menu "Puerta con llavero (PUE-RFID)"
             Agrega comandos por el puerto serie (agregar/quitar/listar) para probar sin gateway.
             No hay autenticacion: quien tenga el cable puede cargar cualquier llavero. No se
             habilita en una puerta instalada.
+
+    config PUERTA_AUTENTICACION
+        bool "Exigir que el llavero sea una NTAG 424 DNA autenticada"
+        default n
+        help
+            Ademas de estar en la lista, el llavero tiene que probar que conoce su clave AES (clave
+            de tarjeta = HMAC-SHA256(maestra, UID)). Un llavero comun (UID en la lista pero sin
+            clave) deja de abrir. Con esto apagado la puerta se comporta como antes (solo UID).
+            La maestra de banco se carga por consola y queda en flash SIN proteger: es solo para
+            probar; en una puerta instalada tiene que ir en eFuse.
+
+    config PUERTA_MAESTRA_EFUSE
+        bool "La maestra vive en un eFuse (HMAC por hardware)"
+        depends on PUERTA_AUTENTICACION
+        default n
+        help
+            Produccion: la clave de cada tarjeta se calcula con el periferico HMAC del chip y la
+            maestra nunca sale de el. Exige haber quemado ANTES la clave en un bloque con proposito
+            HMAC_UP (irreversible, misma clave que la estacion de enrolamiento). Sin esto la maestra
+            de banco se carga por consola y queda en flash SIN proteger. Si la placa tuvo antes una
+            maestra de banco, borrar la NVS entera (esptool erase-region 0x9000 0x6000): marcarla como
+            borrada no la saca de la flash.
 endmenu
