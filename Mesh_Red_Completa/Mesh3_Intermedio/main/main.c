@@ -812,7 +812,8 @@ static void salir_de_isla(void)
 static void vendor_ie_cb(void *ctx, wifi_vendor_ie_type_t tipo, const uint8_t sa[6],
                          const vendor_ie_data_t *ie, int rssi)
 {
-    if (!isla || ie->vendor_oui[0] != AURA_OUI_0 || ie->vendor_oui[1] != AURA_OUI_1 ||
+    if (!isla || tipo != WIFI_VND_IE_TYPE_BEACON || ie == NULL || ie->length < 4 ||
+        ie->vendor_oui[0] != AURA_OUI_0 || ie->vendor_oui[1] != AURA_OUI_1 ||
         ie->vendor_oui[2] != AURA_OUI_2 || ie->vendor_oui_type != AURA_IE_GATEWAY) {
         return;
     }
@@ -863,19 +864,26 @@ static void isla_revisar_escaneo(int num)
     for (int i = 0; i < num; i++) {
         esp_mesh_scan_get_ap_ie_len(&ie_len);
         esp_mesh_scan_get_ap_record(&rec, &assoc);
-        if (ie_len != sizeof(assoc) || assoc.layer != 1 || memcmp(assoc.mesh_id, MESH_ID, 6) != 0) {
-            continue;
-        }
-        /* Una raíz de esta malla: el gateway solo si anuncia que lo es. Si no, es otro concentrador
-           en isla (o se perdió el beacon con la marca: se ve en la próxima revisión) */
         if (es_gateway(rec.bssid)) {
             ESP_LOGI(TAG, "Isla: veo al gateway en " MACSTR " (canal %d)", MAC2STR(rec.bssid), rec.primary);
             gateway = true;
-        } else {
-            ESP_LOGI(TAG, "Isla: la raíz " MACSTR " no es el gateway (otra aula en isla)", MAC2STR(rec.bssid));
+            continue;
         }
+        if (ie_len != sizeof(assoc) || assoc.layer != 1 || memcmp(assoc.mesh_id, MESH_ID, 6) != 0) {
+            continue;
+        }
+        /* Una raíz de esta malla que no anuncia AURA_IE_GATEWAY: otro concentrador en isla */
+        ESP_LOGI(TAG, "Isla: la raíz " MACSTR " no es el gateway (otra aula en isla)", MAC2STR(rec.bssid));
     }
     esp_mesh_flush_scan_result();
+    if (!gateway) {
+        taskENTER_CRITICAL(&lock_gateways);
+        gateway = cant_gateways_vistos > 0;
+        taskEXIT_CRITICAL(&lock_gateways);
+        if (gateway) {
+            ESP_LOGI(TAG, "Isla: gateway detectado por Vendor IE durante el escaneo");
+        }
+    }
     if (gateway) {
         salir_de_isla();
     }
