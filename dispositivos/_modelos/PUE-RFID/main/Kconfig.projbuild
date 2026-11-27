@@ -20,6 +20,7 @@ menu "Puerta con llavero (PUE-RFID)"
 
     config PUERTA_ABRIR_REMOTO
         bool "Aceptar la orden remota 'abrir' desde AURA"
+        depends on !PUERTA_INDEPENDIENTE
         default n
         help
             Apagada por defecto (ADR-009, decision 8). Mientras la mesh no tenga la etapa 2 de
@@ -29,9 +30,29 @@ menu "Puerta con llavero (PUE-RFID)"
 
     config PUERTA_CARGA_POR_CONSOLA
         bool "Cargar llaveros por la consola USB (SOLO PARA BANCO)"
+        depends on !PUERTA_INDEPENDIENTE
         default n
         help
             Agrega comandos por el puerto serie (agregar/quitar/listar) para probar sin gateway.
             No hay autenticacion: quien tenga el cable puede cargar cualquier llavero. No se
             habilita en una puerta instalada.
+
+    config PUERTA_INDEPENDIENTE
+        bool "Modo independiente: sin mesh ni conexion a AURA"
+        default n
+        help
+            Apagada por defecto: la puerta es una hoja de la mesh (ADR-009). Encendida (etapa
+            transitoria del ADR-009): no se inicia el WiFi ni la mesh y no sale ningun dato de la
+            placa. Los llaveros se compilan desde llaveros/<codigo>.h, no hay registro, armado ni
+            intrusion, y la puerta abierta se avisa solo con el buzzer. La proteccion de la
+            cerradura es la misma. No pide main/config_local.h.
+
+    config PUERTA_CODIGO
+        string "Lista de llaveros: nombre del archivo en llaveros/, sin .h"
+        depends on PUERTA_INDEPENDIENTE
+        default ""
+        help
+            Codigo de la puerta, por ejemplo E2-P2-RECT-PUE01: se compila la lista de
+            llaveros/E2-P2-RECT-PUE01.h. Esos archivos no se versionan. Vacia o sin el archivo, no
+            compila. Para probar la compilacion sirve llaveros.ejemplo (UID inventados).
 endmenu
