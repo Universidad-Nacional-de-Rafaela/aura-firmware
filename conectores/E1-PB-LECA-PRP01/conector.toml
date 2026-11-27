@@ -1,0 +1,23 @@
+# Manifiesto del conector de E1-PB-LECA-PRP01 (presencia de personas por cámara, grupo MCCV).
+# Ver CONTRIBUTING.md, "Tu conector".
+nombre  = "E1-PB-LECA-PRP01"
+version = "0.1.0"
+sdk     = ">=1.2,<2"
+autores = ["MatiLang1", "AndresFranco1"]
+clase   = "conector:ConectorPresencia"
+
+# La hoja manda presencia como entero 1 (hay personas) o 0 (no hay), y conf_pct opcional.
+# El conector descarta presencia de otro tipo, incluidos booleanos y flotantes.
+[campos.presencia]
+unidad   = "adimensional"
+min      = 0
+max      = 1
+etiqueta = "Presencia (1 = hay personas)"
+rol      = "principal"
+
+[campos.conf_pct]
+unidad   = "%"
+min      = 0
+max      = 100
+etiqueta = "Confianza de la detección"
+rol      = "auxiliar"
