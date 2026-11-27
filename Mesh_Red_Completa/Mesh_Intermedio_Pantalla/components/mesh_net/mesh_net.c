@@ -68,9 +68,10 @@ esp_err_t mesh_net_anunciar_aula(void)
     esp_wifi_set_vendor_ie(false, WIFI_VND_IE_TYPE_BEACON, WIFI_VND_IE_ID_1, NULL);
     esp_wifi_set_vendor_ie(false, WIFI_VND_IE_TYPE_PROBE_RESP, WIFI_VND_IE_ID_1, NULL);
 
-    const char *aula_ie = (s_aula[0] != '\0') ? s_aula : CONFIG_AURA_AULA_DEFAULT;
+    // Sin aula no se anuncia nada: si no, el concentrador se llevaría hojas ajenas. El aula la asigna AURA.
+    const char *aula_ie = s_aula;
     if (aula_ie[0] == '\0') {
-        ESP_LOGW(TAG, "Sin aula configurada: no se anuncian beacons Vendor IE");
+        ESP_LOGW(TAG, "Sin aula asignada: no se anuncia el beacon Vendor IE");
         return ESP_OK;
     }
 
@@ -92,8 +93,7 @@ esp_err_t mesh_net_anunciar_aula(void)
     esp_err_t e2 = esp_wifi_set_vendor_ie(true, WIFI_VND_IE_TYPE_PROBE_RESP, WIFI_VND_IE_ID_1, v);
 
     if (e1 == ESP_OK && e2 == ESP_OK) {
-        ESP_LOGI(TAG, "Anunciando beacon Vendor IE '%s' (aula UI: '%s')",
-                 aula_ie, s_aula[0] ? s_aula : "Sin asignar");
+        ESP_LOGI(TAG, "Anunciando beacon Vendor IE '%s'", aula_ie);
         return ESP_OK;
     } else {
         ESP_LOGW(TAG, "Fallo al inyectar Vendor IE: beacon=%s, probe_resp=%s",

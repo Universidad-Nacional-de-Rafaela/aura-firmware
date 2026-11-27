@@ -17,7 +17,7 @@ extern "C" {
 typedef struct {
     uint8_t mac[6];
     char hw_id[AURA_HW_ID_BYTES];
-    char adaptador[32];     // Procedencia opcional (ej. "mac-e072a1d848b0" o "node_id")
+    char adaptador[32];     // Procedencia opcional (ej. "mac-020000000001" o "node_id")
     bool conectado;
     bool tiene_telemetria;
     uint32_t ts_ultimo;

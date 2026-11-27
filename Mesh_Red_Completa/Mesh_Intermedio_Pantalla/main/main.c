@@ -126,23 +126,24 @@ static void on_control_resultado(const mesh_control_resultado_t *res) {
 }
 
 #if CONFIG_AURA_ENABLE_DEMO_NODES
+// MACs de demo administradas localmente (02:...), no de placas reales
 static void tarea_demo_nodos(void *arg) {
-  static const uint8_t mac_a[6] = {0xE0, 0x72, 0xA1, 0xD8, 0x48, 0xB0};
-  static const uint8_t mac_b[6] = {0x40, 0x4C, 0xCA, 0x58, 0xB2, 0x14};
+  static const uint8_t mac_a[6] = {0x02, 0x00, 0x00, 0x00, 0x00, 0x01};
+  static const uint8_t mac_b[6] = {0x02, 0x00, 0x00, 0x00, 0x00, 0x02};
   while (true) {
     ui_bridge_on_mesh_telemetria(
         mac_a, 0,
         "{\"values\":{\"presencia\":1,\"luz_ventana_lx\":340.0,\"luz_aula_lx\":"
         "420.0,"
         "\"temp_c\":23.4,\"humedad_pct\":45.0,\"rele_canal1\":1},"
-        "\"adaptador\":\"mac-e072a1d848b0\"}",
+        "\"adaptador\":\"mac-020000000001\"}",
         false);
     ui_bridge_on_mesh_telemetria(
         mac_b, 0,
         "{\"values\":{\"presencia\":0,\"luz_ventana_lx\":180.0,\"luz_aula_lx\":"
         "290.0,"
         "\"temp_c\":24.1,\"humedad_pct\":48.0,\"rele_canal1\":0},"
-        "\"adaptador\":\"mac-404cca58b214\"}",
+        "\"adaptador\":\"mac-020000000002\"}",
         false);
     vTaskDelay(pdMS_TO_TICKS(3000));
   }

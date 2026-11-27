@@ -9,10 +9,6 @@
 extern "C" {
 #endif
 
-#ifndef CONFIG_AURA_AULA_DEFAULT
-#define CONFIG_AURA_AULA_DEFAULT "aula-1"
-#endif
-
 // Inicializa gestor de red del centralizador y carga el aula desde NVS
 esp_err_t mesh_net_init(void);
 
