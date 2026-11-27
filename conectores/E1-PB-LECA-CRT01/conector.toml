@@ -16,7 +16,7 @@ rol      = "principal"
 [campos.luz_lux]
 unidad   = "lx"
 min      = 0
-max      = 65535
+max      = 54612
 etiqueta = "Luz ambiental"
 rol      = "principal"
 

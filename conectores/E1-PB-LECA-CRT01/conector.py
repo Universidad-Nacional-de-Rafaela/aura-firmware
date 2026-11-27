@@ -1,6 +1,6 @@
 """Conector de E1-PB-LECA-CRT01 — Cortina automatizada Luflex (BH1750 + NEMA 23 sobre ESP-WIFI-MESH).
 
-La placa manda posicion_pct (0 a 100 %), luz_lux (0 a 65535 lx), estado_motor (0: detenido,
+La placa manda posicion_pct (0 a 100 %), luz_lux (0 a 54612 lx), estado_motor (0: detenido,
 1: moviendo, 2: calibrando) y modo (0: manual, 1: auto1, 2: auto2).
 
 El conector guarda las mediciones dentro de rango y vigila que el motor no quede activo

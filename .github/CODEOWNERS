@@ -35,6 +35,9 @@
 /dispositivos/E1-PB-LECA-CDC01/   @AgosBracaccini @JulietaCordoba @luisina-milanese
 /conectores/E1-PB-LECA-CDC01/     @AgosBracaccini @JulietaCordoba @luisina-milanese
 
+/dispositivos/E1-PB-LECA-CRT01/   @Facundo-Boide
+/conectores/E1-PB-LECA-CRT01/     @Facundo-Boide
+
 # Puertas del Edificio 2, piso 2 (modelo PUE-RFID y sus nueve instalaciones)
 /dispositivos/_modelos/PUE-RFID/   @romerof7
 /dispositivos/E2-P2-RECT-PUE01/   @romerof7
