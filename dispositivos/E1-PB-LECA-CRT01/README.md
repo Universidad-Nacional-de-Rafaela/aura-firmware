@@ -6,7 +6,7 @@ Control de apertura y cierre de cortina con motor paso a paso NEMA 23, fin de ca
 |---|---|
 | **Ubicación** | Edificio 1, planta baja, LabECA |
 | **Responsable** | Facundo Boide (`Facundo-Boide`) |
-| **Estado** | en desarrollo: firmware compilado, firmado y probado en banco de hardware (NEMA 23 + BH1750 + microswitch); pendiente las pruebas en malla del banco (`pruebas/`) |
+| **Estado** | en desarrollo: firmware compilado, firmado y probado en banco de hardware (NEMA 23 + BH1750 + fin de carrera); pendiente las 9 pruebas de malla con Gateway/Concentrador (Issue #103) |
 | **Instalado** | todavía no |
 | **Transporte** | mesh ESP-WIFI-MESH (interior), según [ADR-003](../../docs/adr/ADR-003-dos-transportes-mesh-interior-lorawan-exterior.md) y [ADR-006](../../docs/adr/ADR-006-esp-wifi-mesh-reemplaza-a-esp-now-en-interior.md) |
 | **Contrato que implementa** | [`CONTRATO_MQTT.md`](../../docs/CONTRATO_MQTT.md) v4.6 |
@@ -23,7 +23,7 @@ Al arrancar realiza el homing buscando el microswitch de fin de carrera de cierr
 |---|---|---|
 | Placa | ESP32-C3 SuperMini | — |
 | Driver y motor paso a paso | Toshiba TB67S109 (1/8 micropaso) + NEMA 23 | `STEP` → GPIO3, `DIR` → GPIO4, `ENABLE` (activo en bajo) → GPIO5 |
-| Fin de carrera (homing) | Microswitch con rodillo (`NO` + `C`, activo en bajo, pull-up interno) | Señal (`NO`) → GPIO10, Común (`C`) → GND |
+| Fin de carrera (homing) | Reed switch magnético de apertura (contacto seco `NO` + `C`, activo en bajo, pull-up interno; probado en banco con microswitch de rodillo equivalente) | Señal → GPIO10, Común → GND |
 | Sensor de luz ambiental | BH1750 (I2C `0x23`, 0 a 54 612 lx) | `SDA` → GPIO6, `SCL` → GPIO7, VCC → 3,3 V, GND → GND |
 | LED indicador de estado | LED integrado en placa (activo en bajo) | GPIO8 (encendido mientras el motor está energizado) |
 
