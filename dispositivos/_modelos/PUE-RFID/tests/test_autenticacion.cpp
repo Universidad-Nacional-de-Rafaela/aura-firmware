@@ -33,7 +33,7 @@ static int apdu_c(void *c, const uint8_t *cmd, size_t n, uint8_t *r, size_t m) {
 static bool derivar_c(void *c, const uint8_t *u, size_t l, uint8_t *o) { return derivar(((Ctx *)c)->sv, u, l, o); }
 static bool azar_c(void *c, uint8_t *o) { return azar(((Ctx *)c)->sv, o); }
 
-static const uint8_t UID[7] = {0x04, 0x45, 0x65, 0xBA, 0x77, 0x23, 0x90};
+static const uint8_t UID[7] = {0x04, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66};
 
 static void preparar(Servicios *sv, Tarjeta *t, lista_t *l, bool enrolada = true)
 {
@@ -142,7 +142,7 @@ int main()
     {   /* dos tarjetas enroladas tienen claves distintas: la de una no abre con el UID de la otra */
         Servicios sv; Tarjeta t; lista_t l;
         preparar(&sv, &t, &l);
-        const uint8_t otro[7] = {0x04, 0x45, 0x66, 0xBA, 0x77, 0x23, 0x90};
+        const uint8_t otro[7] = {0x04, 0x11, 0x22, 0x33, 0x44, 0x55, 0x77};
         lista_agregar(&l, otro, 7);
         Tarjeta t2;
         memcpy(t2.uid, otro, 7);
