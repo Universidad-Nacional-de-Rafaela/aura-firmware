@@ -7,7 +7,7 @@ static bool azar_ok(void *, uint8_t out[16]) {
 }
 static bool azar_falla(void *, uint8_t *) { return false; }
 
-static const uint8_t UID[7] = {0x04, 0x45, 0x65, 0xBA, 0x77, 0x23, 0x90};
+static const uint8_t UID[7] = {0x04, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66};
 
 static void nueva(Tarjeta *t, uint8_t base) {
   memcpy(t->uid, UID, 7);
