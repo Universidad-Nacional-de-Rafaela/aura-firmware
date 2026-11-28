@@ -59,8 +59,8 @@ static void test_hmac_rfc4231() {
 static void test_clave_de_tarjeta() {
   uint8_t maestra[32], a[16], b[16], c[16];
   for (int i = 0; i < 32; i++) maestra[i] = (uint8_t)i;
-  const uint8_t uid1[7] = {0x04, 0x45, 0x65, 0xBA, 0x77, 0x23, 0x90};
-  const uint8_t uid2[7] = {0x04, 0x45, 0x66, 0xBA, 0x77, 0x23, 0x90};
+  const uint8_t uid1[7] = {0x04, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66};
+  const uint8_t uid2[7] = {0x04, 0x11, 0x22, 0x33, 0x44, 0x55, 0x77};
   VERIFICAR(clave_de_tarjeta(maestra, uid1, 7, a) == 0);
   VERIFICAR(clave_de_tarjeta(maestra, uid1, 7, b) == 0);
   VERIFICAR(memcmp(a, b, 16) == 0);                         // determinista
