@@ -1,0 +1,4 @@
+{"values":{"puerta_1":0,"puerta_2":0,"puerta_3":0,"puerta_4":0,"cerradura_1":0,"cerradura_2":0,"cerradura_3":0,"cerradura_4":0},"ingest_id":"lck-001","ts":"2026-11-26T18:00:00Z"}
+{"values":{"puerta_1":0,"puerta_2":0,"puerta_3":0,"puerta_4":0,"cerradura_1":0,"cerradura_2":1,"cerradura_3":0,"cerradura_4":0},"ingest_id":"lck-002","ts":"2026-11-26T18:00:10Z"}
+{"values":{"puerta_1":0,"puerta_2":1,"puerta_3":0,"puerta_4":0,"cerradura_1":0,"cerradura_2":0,"cerradura_3":0,"cerradura_4":0},"ingest_id":"lck-003","ts":"2026-11-26T18:00:11Z"}
+{"values":{"puerta_1":0,"puerta_2":0,"puerta_3":0,"puerta_4":0,"cerradura_1":0,"cerradura_2":0,"cerradura_3":0,"cerradura_4":0},"ingest_id":"lck-004","ts":"2026-11-26T18:00:40Z"}

@@ -1,0 +1,19 @@
+menu "Gabinete de lockers del panol (E1-PB-LECA-LCK01)"
+    config LOCKER_ABRIR_REMOTO
+        bool "Aceptar la orden remota 'abrir' desde AURA"
+        default n
+        help
+            Apagada por defecto (ADR-009, decision 8): 'abrir' se rechaza con abrir_deshabilitado.
+            Mientras la mesh no tenga la etapa 2 de seguridad, un comando falso, o una orden que
+            quedo en el broker y se ejecuta horas despues, podria abrir un locker. Se enciende
+            SOLO en el banco para las pruebas; una imagen con la opcion encendida exige la firma
+            de la catedra (ADR-008) para llegar a una placa instalada.
+
+    config LOCKER_CORTAR_AL_ABRIR
+        bool "Cortar el pulso apenas el microswitch marca la puerta abierta"
+        default y
+        help
+            La traba de la FIT0620 es biselada: la puerta cierra sola con la traba afuera, asi que
+            una vez abierta no hace falta seguir energizando. Sin esto, si la persona abre al
+            segundo, la bobina sigue energizada el resto del pulso sin necesidad.
+endmenu

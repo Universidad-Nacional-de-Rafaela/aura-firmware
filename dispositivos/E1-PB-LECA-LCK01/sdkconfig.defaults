@@ -1,0 +1,29 @@
+# ESP32-C3 SuperMini (4 MB) - Gabinete de lockers del pañol (E1-PB-LECA-LCK01)
+CONFIG_IDF_TARGET="esp32c3"
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+# Tabla propia: dos lugares OTA + partición "cola" (respaldo de mediciones sin confirmar tras un corte)
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+# Una versión nueva que no logra hablar con la raíz vuelve sola a la anterior
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+# Imágenes firmadas: la placa solo instala por OTA una imagen firmada con la clave de la cátedra
+# (RSA-3072, esquema de Secure Boot V2, sin quemar eFuses). La compilación NO firma: se firma
+# aparte, en la máquina que tiene la clave privada, antes de grabar o de mandar por OTA
+# (GUIA_NODOS_HOJA.md, "Imágenes firmadas"). La clave nunca se sube al repo.
+CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT=y
+CONFIG_SECURE_SIGNED_APPS_RSA_SCHEME=y
+CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT=y
+# CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES is not set
+
+# Propio del locker
+# Watchdog de tareas: si la logica del locker se cuelga, la placa se reinicia (y el pin del gate
+# vuelve a 0 = cerradura trabada). Sin PANIC solo imprimiria un aviso. Igual que _modelos/PUE-RFID.
+CONFIG_ESP_TASK_WDT_EN=y
+CONFIG_ESP_TASK_WDT_INIT=y
+CONFIG_ESP_TASK_WDT_PANIC=y
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=5
+CONFIG_ESP_INT_WDT=y
+# Consola por el USB nativo de la SuperMini (no tiene chip USB-serie)
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+# Tick de 1 ms: el antirrebote del microswitch y el pulso se miden en milisegundos
+CONFIG_FREERTOS_HZ=1000

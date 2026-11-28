@@ -1,0 +1,2 @@
+# SOLO BANCO: habilita la orden remota "abrir" para las pruebas. Nunca en una placa instalada.
+CONFIG_LOCKER_ABRIR_REMOTO=y

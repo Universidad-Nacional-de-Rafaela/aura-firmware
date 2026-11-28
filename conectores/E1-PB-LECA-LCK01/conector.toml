@@ -1,0 +1,67 @@
+# Manifiesto del conector del gabinete de lockers del pañol (LabECA): una placa, 4 lockers.
+# Ver CONTRIBUTING.md, "Tu conector".
+nombre  = "E1-PB-LECA-LCK01"
+version = "0.3.0"
+sdk     = ">=1.2,<2"
+autores = ["MatuteBona", "agusferrero05", "bertolaco"]
+clase   = "conector:ConectorGabinete"
+
+# Un bloque por cada uno de los ocho campos que manda el firmware en "values"
+# (dispositivos/E1-PB-LECA-LCK01, "Lo que envía a AURA"; contrato v4.7, propuesto en este PR).
+# Son estados: 1 o 0. Lo que no esté acá, o esté fuera de rango, AURA no lo guarda.
+
+[campos.puerta_1]
+unidad   = "0/1"
+min      = 0
+max      = 1
+etiqueta = "Puerta del locker 1 (1 = abierta)"
+rol      = "principal"
+
+[campos.puerta_2]
+unidad   = "0/1"
+min      = 0
+max      = 1
+etiqueta = "Puerta del locker 2 (1 = abierta)"
+rol      = "principal"
+
+[campos.puerta_3]
+unidad   = "0/1"
+min      = 0
+max      = 1
+etiqueta = "Puerta del locker 3 (1 = abierta)"
+rol      = "principal"
+
+[campos.puerta_4]
+unidad   = "0/1"
+min      = 0
+max      = 1
+etiqueta = "Puerta del locker 4 (1 = abierta)"
+rol      = "principal"
+
+[campos.cerradura_1]
+unidad   = "0/1"
+min      = 0
+max      = 1
+etiqueta = "Cerradura del locker 1 (1 = energizada)"
+rol      = "auxiliar"
+
+[campos.cerradura_2]
+unidad   = "0/1"
+min      = 0
+max      = 1
+etiqueta = "Cerradura del locker 2 (1 = energizada)"
+rol      = "auxiliar"
+
+[campos.cerradura_3]
+unidad   = "0/1"
+min      = 0
+max      = 1
+etiqueta = "Cerradura del locker 3 (1 = energizada)"
+rol      = "auxiliar"
+
+[campos.cerradura_4]
+unidad   = "0/1"
+min      = 0
+max      = 1
+etiqueta = "Cerradura del locker 4 (1 = energizada)"
+rol      = "auxiliar"

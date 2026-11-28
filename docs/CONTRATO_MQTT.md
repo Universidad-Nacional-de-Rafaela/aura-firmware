@@ -7,7 +7,7 @@
 > (`docs/superpowers/…`) son de `aura-app`.
 
 **Estado**: normativo en `aura-app`. Ante una discrepancia con cualquier otro documento, manda el contrato; ante una discrepancia entre esta copia y la de `aura-app`, manda la de `aura-app`.
-**Versión del contrato**: 4.6 (propuesta) · **Última actualización**: 2026-11-19
+**Versión del contrato**: 4.7 (propuesta) · **Última actualización**: 2026-11-26
 **Alcance**: mensajería entre los dispositivos IoT y la plataforma (backend FastAPI). Hay **dos
 transportes**, cada uno con su adaptador
 ([ADR-003](adr/ADR-003-dos-transportes-mesh-interior-lorawan-exterior.md)):
@@ -313,6 +313,17 @@ la cola de la hoja (§5) y llenaría la base con filas que nadie consulta.
 campo: `{"temp_heladera_c": 4.5, "temp_freezer_c": -18.0}`. Si las sondas tienen intervalos
 distintos, cada mensaje lleva solo las que se midieron: `values` no tiene que traer todas.
 
+**Varias puertas en un dispositivo (v4.7).** Un dispositivo que maneja varias puertas con una sola
+placa (el gabinete de lockers `E1-PB-LECA-LCK01`: cuatro lockers, cada uno con su cerradura por
+pulso y su sensor de apertura) manda, en cada cambio y cada `intervalo_s`, el estado de cada una
+con el número de puerta en el nombre del campo, de 1 a N: `puerta_<n>` (1 = abierta, 0 = cerrada)
+y `cerradura_<n>` (1 = energizada, 0 = trabada):
+
+```json
+{ "values": { "puerta_1": 0, "puerta_2": 1, "puerta_3": 0, "puerta_4": 0,
+              "cerradura_1": 0, "cerradura_2": 0, "cerradura_3": 0, "cerradura_4": 0 } }
+```
+
 **Una sonda que falla no se publica como medición.** Su campo **no aparece** en `values`: ni
 un valor centinela (`327.67`, `-127`, `85`), ni `null`, ni la temperatura interna del
 microcontrolador. La falla se informa por `hw/<hw_id>/alerts/sensor` (§3.5). Si ninguna sonda
@@ -378,8 +389,10 @@ reporte dentro de `config`. Un dispositivo que necesita informar su estado actua
 para guardar) lo pone ahí, como campo **de solo lectura**: aparece en `config` pero no se cambia
 con `set_config`. AURA guarda `config` como la configuración vigente del dispositivo y la pisa con
 cada reporte, así que no queda historial. Lo usa la puerta (§3.3): `armada`, `abierta`, `tarjetas` y
-`hash`. Si el reporte no entra en los 180 B de la trama, la biblioteca de la mesh saca primero
-`descartadas`, `rssi`, `capa`, `alimentacion`, `modo` y `pendientes`, nunca `firmware` ni `config`.
+`hash`. Un dispositivo de varias puertas (v4.7) informa `abiertas`, una lista con una posición
+por puerta (`[0,1,0,0]`: la puerta 2 abierta), en lugar de `abierta`. Si el reporte no entra en
+los 180 B de la trama, la biblioteca de la mesh saca primero `descartadas`, `rssi`, `capa`,
+`alimentacion`, `modo` y `pendientes`, nunca `firmware` ni `config`.
 
 Qué pone el raíz en **su propio** `status`, cada 60 s: `rol: "raiz"`, `transporte: "mesh"`, `mac`,
 `canal`, `nodos_en_mesh`, contadores (`publicadas`, `confirmadas`, `acks_ignorados`,
@@ -612,6 +625,16 @@ futuro, y la puerta lo rechaza si no tiene hora válida.
 | `abrir_deshabilitado` | `abrir` con el firmware compilado sin apertura remota |
 | `sin_vencimiento`, `sin_hora_valida`, `orden_vencida`, `vencimiento_muy_lejano`, `ocupada` | `abrir` habilitado, pero la orden no vale o ya hay un pulso en curso |
 | `pulso_ms_fuera_de_rango`, `aviso_s_fuera_de_rango`, `parametro_desconocido`, `params_invalido` | `set_config` que no valida: no se aplica nada |
+| `puerta_invalida` | `abrir` en un dispositivo de varias puertas (v4.7) sin `puerta`, o con una que no existe |
+
+**Dispositivo de varias puertas (mesh, v4.7).** En un dispositivo que maneja varias puertas con
+una placa (§3.1), `abrir` lleva además el número de puerta, **obligatorio**:
+`{"puerta": <1 a N>, "vence": <segundos Unix>}`. Si falta, no es un entero o esa puerta no existe,
+se rechaza con `puerta_invalida`. En una puerta sola no se manda. Las mismas reglas de `abrir`
+valen para cada puerta (deshabilitado al compilar, `vence`, tope y límite por minuto **por
+cerradura**), y además el dispositivo energiza **una sola cerradura a la vez**: con cualquiera
+energizada, un `abrir` para otra puerta se rechaza con `ocupada` (la fuente es una). `pulso_ms` y
+`aviso_s` de `set_config` valen para todas las puertas.
 
 **AURA no manda `ota` a una puerta armada** (`config.armada: 1`): se actualiza desarmada, para que
 el reinicio no dé una alerta de "armada sin contacto".
@@ -757,6 +780,11 @@ Tipos especificados. El tipo va en el tópico (`[a-z_]{1,24}`; el raíz no publi
 | `intentos_rechazados` | `high` | muchos llaveros rechazados seguidos: el lector se frena |
 | `limite_pulsos` | `warning` | se llegó al límite de tiempo energizada por minuto de la cerradura |
 | `memoria_borrada` | `high` | arrancó con la memoria borrada: lista vacía, desarmada y sin aula. AURA recarga la lista |
+
+En un dispositivo de varias puertas (v4.7) cada alerta de la puerta lleva el número en
+`details.puerta` (de 1 a N): `{"tipo": "intrusion", "severity": "critical", "message": "…",
+"details": {"puerta": 2}}`. Un locker está siempre armado: una puerta que arranca abierta da
+`arranque_puerta_abierta` (`high`), y una que se abre sin pulso, `intrusion`.
 
 Ante una `intrusion`, AURA manda `estado` enseguida; si la puerta no responde, o vuelve
 `nodo_no_alcanzable`, es otra alerta crítica. Una puerta armada que pasa a `offline` también lo es.
@@ -1009,6 +1037,7 @@ MAC del medidor. Mientras no se decida, sus mensajes se descartan:
 
 | Versión | Fecha | Cambio |
 |---|---|---|
+| 4.7 | 2026-11-26 | **Propuesta. Dispositivos de varias puertas** (el gabinete de lockers `E1-PB-LECA-LCK01`, `aura-firmware` #94). Compatible: solo agrega. Nuevos: `puerta_<n>` y `cerradura_<n>` en `values` (§3.1); `abiertas` (lista) en el `config` del reporte en lugar de `abierta` (§3.2); `abrir` con `puerta` obligatorio, el motivo `puerta_invalida` y una sola cerradura energizada a la vez (§3.3); `details.puerta` en las alertas de la puerta (§3.5). Una puerta sola no cambia. |
 | 4.6 | 2026-11-18 | **Propuesta. Aviso de gateway caído.** Compatible: solo agrega. Nuevos: el prefijo **`gw-`** para gateways LoRaWAN (§2.1), su `status` publicado por el `lorawan-bridge` en cada revisión con el estado de ChirpStack (`details.ultimo_reporte`, `motivo: "sin_reportes"`), qué hace AURA con el `status` del gateway y del bridge (`last_seen` desde `ultimo_reporte`, semáforo por `connection_status`, `avisos` del tablero) (§3.2), y el rechazo con 409 de los comandos a `gw-` y `svc-` (§3.3). Un backend anterior descarta `hw/gw-…` como tópico no reconocido. |
 | 4.5 | 2026-11-13 (ajustada el 2026-11-19) | **Propuesta. Puertas con llavero** ([ADR-009](adr/ADR-009-puertas-con-llavero-la-puerta-decide-y-aura-supervisa.md), `aura-firmware` #40 y #42). Compatible: solo agrega. Nuevos: **registros de evento** en `values` (§3.1), estado de solo lectura en `config` (§3.2), comandos **`tarjeta_agregar`**, **`tarjeta_quitar`**, **`tarjetas_vaciar`**, **`estado`** y **`abrir`** con sus motivos, formato del `hash` de la lista (§3.3) y las alertas de la puerta (§3.5). Regla: no se manda `ota` a una puerta armada. Pendiente 24. |
 | 4.4 | 2026-10-30 | **Propuesta. Seguridad de la actualización por la malla** (revisión de seguridad de la red, etapa 1). **Incompatible solo para quien use `forzar_tipo`**, que se elimina (`forzar_tipo_deshabilitado`). Nuevo comando **`autorizar_concentrador`** y `details.concentrador_autorizado` (§3.2, §3.3): el `rol` que declara una placa es solo un dato y AURA nunca autoriza por él; hasta que AURA autoriza un concentrador, el raíz no acepta los datos de sus hojas. `params.url` pasa a ser `https://`. Las imágenes van **firmadas por la cátedra** y la placa rechaza una sin firma (`imagen_invalida`). Pendiente 23 resuelto en parte (firma sin Secure Boot). |
