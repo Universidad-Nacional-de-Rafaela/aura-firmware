@@ -4,6 +4,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_task_wdt.h"
+#include "driver/gpio.h"
 #include "driver/ledc.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -122,6 +123,7 @@ void sonido_iniciar(void)
         .hpoint = 0,
     };
     ESP_ERROR_CHECK(ledc_channel_config(&canal));
+    ESP_ERROR_CHECK(gpio_set_drive_capability(PIN_BUZZER, GPIO_DRIVE_CAP_3));   /* que se escuche fuerte */
     cola_puntuales = xQueueCreate(8, sizeof(sonido_t));
     xTaskCreate(tarea_sonido, "sonido", 3072, NULL, 3, NULL);
     ESP_LOGI(TAG, "Sonido listo");

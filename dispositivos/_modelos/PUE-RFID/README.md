@@ -32,7 +32,7 @@ va por `set_config` y por la lista de llaveros que carga AURA. Las instalaciones
 | Relé de la cerradura | módulo de 5 V. **Nivel bajo o alto según el módulo**: `CONFIG_PUERTA_RELE_ACTIVO_ALTO` (apagada = se activa con el pin en BAJO). El `sdkconfig.defaults` la deja en `y` (módulo de nivel alto, el del banco). Con la placa enchufada y sin hacer nada, **el LED del relé tiene que estar apagado**; si está prendido, la opción está mal elegida y la cerradura queda energizada en reposo | GPIO 5 |
 | Cerradura | pestillo eléctrico Luber 500 (8–12 V, 5 W), fuente de 12 V aparte | relé: COM al + de la fuente, **NO** al + de la cerradura (fail-secure: trabada sin corriente); **diodo 1N400x en paralelo con la cerradura** (banda del lado +) |
 | Sensor de puerta | MS14 (reed) entre el pin y GND, pull-up interna. **El tipo se fija al compilar** (ver abajo) | GPIO 4 |
-| Buzzer | pasivo (bobina), directo al pin | GPIO 3 |
+| Buzzer | pasivo (bobina), directo al pin, que va a máxima corriente para que se escuche | GPIO 3 |
 
 Los pines están en [`main/pines.h`](main/pines.h). **El SCK pasó del GPIO 9 al GPIO 6**: el GPIO 9 es
 el pin de BOOT de la C3 y si algo lo baja al arrancar, la placa entra en modo descarga. El GPIO 5 (relé)
@@ -53,12 +53,12 @@ La cerradura queda **trabada en reposo**. Se destraba solo con un **pulso** de c
 
 | | Comportamiento |
 |---|---|
-| U1 Llavero autorizado | Pulso (`pulso_ms`, con tope), pitido de OK (moneda) y registro. Si la puerta se abre, se corta el pulso; si nadie abre, traba al vencer |
-| U2 Llavero desconocido | Dos pitidos graves y registro del rechazo **con el UID** (sirve para dar de alta) |
+| U1 Llavero autorizado | Pulso (`pulso_ms`, con tope), un pitido largo de OK y registro. Si la puerta se abre, se corta el pulso; si nadie abre, traba al vencer |
+| U2 Llavero desconocido | Dos pitidos y registro del rechazo **con el UID** (sirve para dar de alta) |
 | U3 Llavero apoyado | Una sola lectura por cada vez que se apoya (la misma tarjeta se ignora 700 ms) |
 | U4 Muchos rechazos | 5 en 60 s: se frenan las lecturas 30 s y se manda la alerta `intentos_rechazados` |
 | U5 Salida por el picaporte | Desarmada: se registra como `apertura`, sin acceso ni alarma |
-| U6 Puerta abierta de más | Pasados `aviso_s` desde que se abre: aviso sonoro que sube de volumen y de ritmo (**tope de 2 min**) y alerta `puerta_abierta`; al cerrarse, otra alerta `info`. Con `aviso_s` en 0, nada (oficina que se deja abierta) |
+| U6 Puerta abierta de más | Pasados `aviso_s` desde que se abre: aviso sonoro de pitidos cada vez más seguidos (**tope de 2 min**) y alerta `puerta_abierta`; al cerrarse, otra alerta `info`. Con `aviso_s` en 0, nada (oficina que se deja abierta) |
 | U7 Armar | **Dos pasadas** de un llavero autorizado en ≤ 3 s, con la puerta **cerrada**: la segunda corta el pulso y traba; suenan tres notas bajando. Se guarda en NVS y se registra con el UID |
 | U8 Armar con la puerta abierta | No arma: pitido de error |
 | U9 Desarmar | **Una pasada** desarma y abre. Si se armó sin querer, la tercera pasada lo corrige. Con la sirena sonando, el llavero **corta la sirena y desarma** (la puerta ya está abierta, así que no da pulso) |
@@ -92,9 +92,9 @@ del resto de esta ficha. Encendida:
 | Llaveros | La lista se compila desde `llaveros/<código>.h`. Cambiar un llavero es recompilar y regrabar esa puerta por USB |
 | Memoria | No lee ni escribe la NVS: una lista, una configuración o un armado guardados antes no cuentan |
 | Llavero de la lista | Abre con el pulso por defecto (3000 ms) y la cerradura se vuelve a trabar sola. Dos pasadas seguidas son dos accesos |
-| Llavero desconocido | Dos pitidos graves. Con 5 en 60 s, se frenan las lecturas 30 s |
+| Llavero desconocido | Dos pitidos. Con 5 en 60 s, se frenan las lecturas 30 s |
 | Armado e intrusión | No hay |
-| Puerta abierta | A los 15 s, el aviso del buzzer (sube de volumen y de ritmo, tope de 2 min). El tiempo es fijo |
+| Puerta abierta | A los 15 s, el aviso del buzzer (pitidos cada vez más seguidos, tope de 2 min). El tiempo es fijo |
 | Cerradura | Igual que conectada: tope de 10 s, 20 s por minuto, corte por `esp_timer`, watchdog y ningún modo de puerta abierta |
 | Lector caído | Si no vuelve en 5 min, la placa se reinicia (queda trabada) |
 

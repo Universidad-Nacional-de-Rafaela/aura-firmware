@@ -30,7 +30,7 @@ int main() {
   VERIFICAR(sonido_aviso(AVISO_PUERTA_ABIERTA, 1000, 1000, 121000, 0, &p));
   VERIFICAR(p.volumen == VOLUMEN_MIN_AVISO);
   VERIFICAR(sonido_aviso(AVISO_PUERTA_ABIERTA, 1000 + RAMPA_AVISO_MS, 1000, 121000, 0, &p));
-  VERIFICAR(p.volumen == VOLUMEN_MAX && p.espera_ms == 150);
+  VERIFICAR(p.volumen == VOLUMEN_MAX && p.espera_ms == 450);
   VERIFICAR(sonido_aviso(AVISO_PUERTA_ABIERTA, 100000, 1000, 121000, 0, &p));
   VERIFICAR(p.volumen == VOLUMEN_MAX);
   // Tope de 2 min: despues de `hasta` calla
