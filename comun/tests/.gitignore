@@ -4,3 +4,10 @@ test_ingest_id
 test_cola
 test_nodo_logica
 test_cola_archivos
+test_aes_cmac
+test_ev2_auth
+test_ev2_seguro
+test_sha256_hmac
+test_ntag424
+test_iso_dep
+test_iso14443a
