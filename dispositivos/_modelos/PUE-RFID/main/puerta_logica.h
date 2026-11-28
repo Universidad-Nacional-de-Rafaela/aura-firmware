@@ -47,8 +47,8 @@
 #define AVISO_MAX_S 600
 
 typedef enum {
-    SON_OK = 1,                        /* llavero autorizado (moneda) */
-    SON_RECHAZO,                       /* dos pitidos graves */
+    SON_OK = 1,                        /* llavero autorizado (un pitido largo) */
+    SON_RECHAZO,                       /* dos pitidos */
     SON_ERROR,                         /* no se pudo (armar con la puerta abierta, limite de pulsos) */
     SON_ARMADO,                        /* tres notas bajando */
     SON_DESARMADO                      /* dos notas subiendo */
@@ -57,7 +57,7 @@ typedef enum {
 typedef enum {
     AVISO_NADA = 0,                    /* corta el aviso en curso */
     AVISO_PITIDOS_PULSO,               /* pi pi pi que sube mientras la cerradura esta destrabada */
-    AVISO_PUERTA_ABIERTA,              /* puerta abierta de mas: sube de volumen y de ritmo */
+    AVISO_PUERTA_ABIERTA,              /* puerta abierta de mas: pitidos cada vez mas seguidos */
     AVISO_INTRUSION                    /* sirena */
 } aviso_t;
 

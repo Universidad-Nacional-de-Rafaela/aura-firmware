@@ -1,0 +1,5 @@
+# Las listas de cada puerta tienen UID de personas: este repo es publico y no se suben.
+# Se ignora todo lo que haya en esta carpeta salvo el ejemplo (UID inventados) y este archivo.
+*
+!.gitignore
+!llaveros.ejemplo.h

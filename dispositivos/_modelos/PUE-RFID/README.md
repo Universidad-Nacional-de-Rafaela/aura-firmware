@@ -10,10 +10,15 @@ El mismo binario va en las nueve placas: la identidad es la MAC (`hw_id`) y lo p
 va por `set_config` y por la lista de llaveros que carga AURA. Las instalaciones son las carpetas
 `E2-P2-*-PUE01` de [`dispositivos/`](../); cada una tiene solo su ficha.
 
+> **Etapa transitoria (desde el 2026-11-26):** hasta acordar con Sistemas de la UNRaf cómo se trabaja,
+> las puertas se instalan **sin conexión a AURA**, con otra imagen por puerta: ver
+> [Modo independiente](#modo-independiente-sin-conexión). Lo demás de esta ficha describe la puerta
+> conectada, que es la opción por defecto.
+
 | | |
 |---|---|
 | **Tipo de firmware** | `aura-puerta-rfid` ([ADR-008](../../docs/adr/ADR-008-actualizacion-por-la-malla-y-tipo-de-firmware.md)) |
-| **Versión** | 0.2.0 (`PROJECT_VER` en [`CMakeLists.txt`](CMakeLists.txt)) |
+| **Versión** | 0.3.0 (`PROJECT_VER` en [`CMakeLists.txt`](CMakeLists.txt)) |
 | **Responsable** | losHijosDelStackOverFlow (IC IV 2026) |
 | **Estado** | compila y tiene tests de host; **sin probar en placa ni en la mesh** |
 | **Contrato** | [`CONTRATO_MQTT.md`](../../docs/CONTRATO_MQTT.md) v4.5 (copia; la normativa está en `aura-app`): comandos `tarjeta_agregar`, `tarjeta_quitar`, `tarjetas_vaciar`, `estado` y `abrir`, eventos, hash de la lista y alertas de la puerta |
@@ -27,7 +32,7 @@ va por `set_config` y por la lista de llaveros que carga AURA. Las instalaciones
 | Relé de la cerradura | módulo de 5 V. **Nivel bajo o alto según el módulo**: `CONFIG_PUERTA_RELE_ACTIVO_ALTO` (apagada = se activa con el pin en BAJO). El `sdkconfig.defaults` la deja en `y` (módulo de nivel alto, el del banco). Con la placa enchufada y sin hacer nada, **el LED del relé tiene que estar apagado**; si está prendido, la opción está mal elegida y la cerradura queda energizada en reposo | GPIO 5 |
 | Cerradura | pestillo eléctrico Luber 500 (8–12 V, 5 W), fuente de 12 V aparte | relé: COM al + de la fuente, **NO** al + de la cerradura (fail-secure: trabada sin corriente); **diodo 1N400x en paralelo con la cerradura** (banda del lado +) |
 | Sensor de puerta | MS14 (reed) entre el pin y GND, pull-up interna. **El tipo se fija al compilar** (ver abajo) | GPIO 4 |
-| Buzzer | pasivo (bobina), directo al pin | GPIO 3 |
+| Buzzer | pasivo (bobina), directo al pin, que va a máxima corriente para que se escuche | GPIO 3 |
 
 Los pines están en [`main/pines.h`](main/pines.h). **El SCK pasó del GPIO 9 al GPIO 6**: el GPIO 9 es
 el pin de BOOT de la C3 y si algo lo baja al arrancar, la placa entra en modo descarga. El GPIO 5 (relé)
@@ -48,12 +53,12 @@ La cerradura queda **trabada en reposo**. Se destraba solo con un **pulso** de c
 
 | | Comportamiento |
 |---|---|
-| U1 Llavero autorizado | Pulso (`pulso_ms`, con tope), pitido de OK (moneda) y registro. Si la puerta se abre, se corta el pulso; si nadie abre, traba al vencer |
-| U2 Llavero desconocido | Dos pitidos graves y registro del rechazo **con el UID** (sirve para dar de alta) |
+| U1 Llavero autorizado | Pulso (`pulso_ms`, con tope), un pitido largo de OK y registro. Si la puerta se abre, se corta el pulso; si nadie abre, traba al vencer |
+| U2 Llavero desconocido | Dos pitidos y registro del rechazo **con el UID** (sirve para dar de alta) |
 | U3 Llavero apoyado | Una sola lectura por cada vez que se apoya (la misma tarjeta se ignora 700 ms) |
 | U4 Muchos rechazos | 5 en 60 s: se frenan las lecturas 30 s y se manda la alerta `intentos_rechazados` |
 | U5 Salida por el picaporte | Desarmada: se registra como `apertura`, sin acceso ni alarma |
-| U6 Puerta abierta de más | Pasados `aviso_s` desde que se abre: aviso sonoro que sube de volumen y de ritmo (**tope de 2 min**) y alerta `puerta_abierta`; al cerrarse, otra alerta `info`. Con `aviso_s` en 0, nada (oficina que se deja abierta) |
+| U6 Puerta abierta de más | Pasados `aviso_s` desde que se abre: aviso sonoro de pitidos cada vez más seguidos (**tope de 2 min**) y alerta `puerta_abierta`; al cerrarse, otra alerta `info`. Con `aviso_s` en 0, nada (oficina que se deja abierta) |
 | U7 Armar | **Dos pasadas** de un llavero autorizado en ≤ 3 s, con la puerta **cerrada**: la segunda corta el pulso y traba; suenan tres notas bajando. Se guarda en NVS y se registra con el UID |
 | U8 Armar con la puerta abierta | No arma: pitido de error |
 | U9 Desarmar | **Una pasada** desarma y abre. Si se armó sin querer, la tercera pasada lo corrige. Con la sirena sonando, el llavero **corta la sirena y desarma** (la puerta ya está abierta, así que no da pulso) |
@@ -74,7 +79,66 @@ maestra** (una lista que se cambia en la puerta deja de coincidir con la de AURA
 ESP-NOW**, sin **horarios** (cada llavero habilitado abre su puerta las 24 h). Armar y desarmar se hace
 **solo en la puerta**, nunca desde AURA.
 
+## Modo independiente (sin conexión)
+
+`CONFIG_PUERTA_INDEPENDIENTE` (apagada por defecto), la etapa transitoria del
+[ADR-009](../../docs/adr/ADR-009-puertas-con-llavero-la-puerta-decide-y-aura-supervisa.md). Apagada, la puerta es la
+del resto de esta ficha. Encendida:
+
+| | En modo independiente |
+|---|---|
+| Radio | No se inicia el WiFi ni la mesh. No usa `main/config_local.h`: la imagen no lleva la clave de la mesh |
+| Datos | No sale nada de la placa: sin eventos, alertas ni reportes, y los UID tampoco se imprimen por el USB |
+| Llaveros | La lista se compila desde `llaveros/<código>.h`. Cambiar un llavero es recompilar y regrabar esa puerta por USB |
+| Memoria | No lee ni escribe la NVS: una lista, una configuración o un armado guardados antes no cuentan |
+| Llavero de la lista | Abre con el pulso por defecto (3000 ms) y la cerradura se vuelve a trabar sola. Dos pasadas seguidas son dos accesos |
+| Llavero desconocido | Dos pitidos. Con 5 en 60 s, se frenan las lecturas 30 s |
+| Armado e intrusión | No hay |
+| Puerta abierta | A los 15 s, el aviso del buzzer (pitidos cada vez más seguidos, tope de 2 min). El tiempo es fijo |
+| Cerradura | Igual que conectada: tope de 10 s, 20 s por minuto, corte por `esp_timer`, watchdog y ningún modo de puerta abierta |
+| Lector caído | Si no vuelve en 5 min, la placa se reinicia (queda trabada) |
+
+La consola de banco (`CONFIG_PUERTA_CARGA_POR_CONSOLA`) y `abrir` remoto no se pueden activar en este modo.
+
+**Se pierde** el registro de ingresos, la supervisión (nadie se entera de una puerta forzada o de una placa
+caída) y la administración de llaveros a distancia.
+
+### La lista de cada puerta
+
+Copiar [`llaveros/llaveros.ejemplo.h`](llaveros/llaveros.ejemplo.h) como `llaveros/<código>.h` (por ejemplo,
+`llaveros/E2-P2-RECT-PUE01.h`) y reemplazar los UID inventados por los que imprime `lector_banco/`. Entre 1 y
+32 UID. **Esos archivos no se suben**: el repo es público, un UID asociado a una persona es un dato personal y
+[`llaveros/.gitignore`](llaveros/.gitignore) ignora todo lo de la carpeta salvo el ejemplo. Los guarda la
+cátedra; el `.bin` compilado también los contiene.
+
+### Compilar y grabar una puerta
+
+Cada puerta con su carpeta de compilación, para no mezclar listas. En `menuconfig`, menú *Puerta con llavero*,
+encender *Modo independiente* y escribir el código (`CONFIG_PUERTA_CODIGO`, el nombre del archivo sin `.h`):
+
+```
+idf.py -B build/E2-P2-RECT-PUE01 -D SDKCONFIG=build/E2-P2-RECT-PUE01/sdkconfig menuconfig
+idf.py -B build/E2-P2-RECT-PUE01 -D SDKCONFIG=build/E2-P2-RECT-PUE01/sdkconfig build
+python ../../../Mesh_Red_Completa/Broker_MQTT/firmar.py --clave <ruta>/<clave>.pem build/E2-P2-RECT-PUE01/aura-puerta-rfid.bin
+idf.py -B build/E2-P2-RECT-PUE01 -D SDKCONFIG=build/E2-P2-RECT-PUE01/sdkconfig -p <puerto> erase-flash
+idf.py -B build/E2-P2-RECT-PUE01 -D SDKCONFIG=build/E2-P2-RECT-PUE01/sdkconfig -p <puerto> flash monitor
+```
+
+- Sin código, o sin el archivo, **no compila**. `llaveros.ejemplo` compila la lista inventada (no abre con
+  ningún llavero real).
+- La imagen **se firma antes de grabar**, igual que la conectada.
+- `erase-flash` borra lo que la placa haya guardado antes (lista y aula de una versión conectada).
+- Al arrancar, el monitor muestra `Lista <código>: <cantidad> llaveros, hash <hash>`: comprobar que sea la
+  puerta que se está instalando y que la cantidad coincida. Una línea de error avisa si alguna entrada del
+  archivo no sirve (mal escrita o repetida); las demás abren igual.
+
+**Para volver a la versión conectada:** regrabar por USB (la imagen independiente no recibe nada por la
+mesh), después de hacer en la mesh la prueba que quedó pendiente al mergear el #85. AURA carga la lista con
+`tarjetas_vaciar` y un `tarjeta_agregar` por UID, desde las mismas listas.
+
 ## Qué envía
+
+(Solo la puerta conectada.)
 
 **Eventos** (`hw/<hw_id>/data`, con `ingest_id`: sin red quedan en la cola de la placa y no se pierden):
 
@@ -164,7 +228,8 @@ ESP-IDF: compilar a mano antes de subir.
 **Tests de host** (la lógica va en headers C puros, sin placa): `make -C tests`. Cubren la lista de
 llaveros y su hash (y vaciarla), el tope y el límite por minuto del pulso, la máquina de estados (U1 a U11,
 `aviso_s` en 0, vigencia de `abrir`, 100 días de uptime sin rollover), el latido y el estado que lleva el
-reporte, y los patrones de sonido.
+reporte, y los patrones de sonido. Del modo independiente: la carga de la lista (con el ejemplo), que nunca
+se arme ni salga nada de la placa, el aviso de puerta abierta y que el límite de la cerradura siga valiendo.
 
 ## Cómo está hecho
 
@@ -182,7 +247,10 @@ reporte, y los patrones de sonido.
 | `main/sonido.c` | tarea propia: ningún sonido frena la lectura |
 | `main/lector.c` | RC522 sobre `abobija/rc522` 4.0.1; revisa que lea y, si no, reintenta el arranque o lo reinicia |
 | `main/almacen.c` | NVS, escribiendo solo si el valor cambia; la config va en un solo blob (todo o nada) |
-| `main/main.c` | cablea todo y ejecuta las acciones en orden |
+| `main/main.c` | cablea todo y ejecuta las acciones en orden (puerta conectada) |
+| `main/independiente_logica.h` | modo independiente: carga la lista compilada, sin armado, y deja pasar solo las acciones de la cerradura y del buzzer |
+| `main/main_independiente.c` | reemplaza a `main.c` y `almacen.c` en el modo independiente: sensor, lector y acciones, sin mesh ni NVS |
+| `llaveros/` | la lista de cada puerta para el modo independiente; en el repo, solo el ejemplo |
 
 - **Tiempo de 64 bits** (`esp_timer_get_time()`): no hay rollover de `millis()` a los 49,7 días, y aun así se
   comparan diferencias con signo.
