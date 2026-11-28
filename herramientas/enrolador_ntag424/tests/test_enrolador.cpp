@@ -19,7 +19,7 @@ static bool derivar_c(void *c, const uint8_t *u, size_t l, uint8_t *o)
 }
 static bool azar_c(void *, uint8_t *o) { for (int i = 0; i < 16; i++) o[i] = (uint8_t)(0xA0 + 5 * i); return true; }
 
-static const uint8_t UID[7] = {0x04, 0x45, 0x65, 0xBA, 0x77, 0x23, 0x90};
+static const uint8_t UID[7] = {0x04, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66};
 
 static void derivada(const Servicios &sv, uint8_t out[16]) { clave_de_tarjeta(sv.maestra, UID, 7, out); }
 
